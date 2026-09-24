@@ -91,7 +91,7 @@ Unblock-File -Path .\Add-MailboxPermissionToUser.ps1
 ## Screenshots & Examples
 
 ### Info run
-![PowerShell Output](assets/InfoRun.png)
+![PowerShell Output](assets/InfoRun.jpg)
 
 ### Changing persmission
 ![HTML Report](assets/Showing_and_changing_permission_to_userinbox.jpg)
