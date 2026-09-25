@@ -1,59 +1,64 @@
-<#
+﻿<#
 .SYNOPSIS
-    Exchange Online (V2) keessatti dhangala'aa xalayaa (message trace) sakatta'a fi qorata.
+    Śledzi przepływ wiadomości (Message Trace) oraz zarządza kwarantanną w Exchange Online.
 
 .DESCRIPTION
-    Skriiptiin kun ergamoota fi xalayaalee dhufan yookiin deeman sakatta'uuf gargaara.
-    Xalayaalee cufaman (blocked), kwarantiinii seenan yookiin akka 'spam' lakkaa'aman 
-    addaan baasuufis tajaajila kenna.
+    Narzędzie umożliwia:
+    1. Śledzenie wiadomości przychodzących i wychodzących (Get-MessageTraceV2).
+    2. Wykrywanie wiadomości zablokowanych, oznaczonych jako spam lub zatrzymanych w kwarantannie.
+    3. Wyświetlanie unikalnego identyfikatora kwarantanny (Quarantine Identity).
+    4. Przywracanie/zwalnianie wiadomości z kwarantanny bezpośrednio do skrzynki odbiorcy.
 
 .PARAMETER User
-    Teessoo imeelii fayyadamaa sakatta'amu (e.g., user@domain.com).
+    Adres e-mail sprawdzanej skrzynki (np. sekretariat@elektrimont.pl).
 
 .PARAMETER Days
-    Guyyoota meeqa duraa akka sakatta'amu (1 hanga 10 gidduutti). Qophii duraatiin: 7.
+    Liczba dni wstecz do przeszukania (od 1 do 10). Domyślnie: 7.
 
 .PARAMETER Direction
-    Kallattii xalayaa: 'Inbound' (kan dhufe) yookiin 'Outbound' (kan ergame). Qophii duraatiin: 'Inbound'.
+    Kierunek przepływu poczty: 'Inbound' lub 'Outbound'. Domyślnie: 'Inbound'.
 
 .PARAMETER OnlyBlockedOrSpam
-    Xalayaalee danqaman, cufaman yookiin akka spam/quarantine ta'an qofa calaluuf.
+    Filtruje wyniki wyłącznie do wiadomości zablokowanych, spamu lub kwarantanny.
+
+.PARAMETER ReleaseId
+    Identyfikator wiadomości w kwarantannie (Identity z kolumny QuarantineId), którą chcesz zwolnić.
 
 .PARAMETER Help
-    Gargaarsa fi qajeelfama fayyadama skriiptichaa agarsiisa.
+    Wyświetla pomoc i przykłady użycia.
 
 .EXAMPLE
-    .\Get-M365MessageTrace.ps1 -User "anna.szywala@elektrimont.pl" -Days 5
+    .\Get-M365MessageTrace.ps1 -User "sekretariat@elektrimont.pl" -OnlyBlockedOrSpam
 
 .EXAMPLE
-    .\Get-M365MessageTrace.ps1 -User "anna.szywala@elektrimont.pl" -Days 10 -OnlyBlockedOrSpam
-
-.EXAMPLE
-    .\Get-M365MessageTrace.ps1 -Help
+    .\Get-M365MessageTrace.ps1 -ReleaseId "c9e782e4-xxxx-xxxx-xxxx-xxxxxxxxxxxx\00000000-0000-0000-0000-000000000000"
 
 .NOTES
     Author:  Roman Pindela
     Email:   roman.pindela@gmail.com
     GitHub:  https://github.com/romanpindela
-    Version: 1.0.0
+    Version: 2.0.1
 #>
 
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = "Trace")]
 param(
-    [Parameter(Mandatory = $false, Position = 0)]
+    [Parameter(Mandatory = $false, Position = 0, ParameterSetName = "Trace")]
     [ValidatePattern('^[^@\s]+@[^@\s]+\.[^@\s]+$')]
     [string]$User,
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $false, ParameterSetName = "Trace")]
     [ValidateRange(1, 10)]
     [int]$Days = 7,
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $false, ParameterSetName = "Trace")]
     [ValidateSet("Inbound", "Outbound")]
     [string]$Direction = "Inbound",
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $false, ParameterSetName = "Trace")]
     [switch]$OnlyBlockedOrSpam,
+
+    [Parameter(Mandatory = $true, ParameterSetName = "Release")]
+    [string]$ReleaseId,
 
     [Parameter(Mandatory = $false)]
     [Alias("h")]
@@ -63,60 +68,69 @@ param(
 function Show-ScriptHelp {
     Clear-Host
     Write-Host "=======================================================================" -ForegroundColor Cyan
-    Write-Host "  M365 Message Trace Utility (Exchange Online) - v1.0.0" -ForegroundColor Cyan
+    Write-Host "  M365 Message Trace & Quarantine Manager - v2.0.1" -ForegroundColor Cyan
     Write-Host "  Author: Roman Pindela (roman.pindela@gmail.com) | github.com/romanpindela" -ForegroundColor DarkGray
     Write-Host "=======================================================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "DESCRIPTION:" -ForegroundColor Yellow
-    Write-Host "  Traces email messages for a specific Microsoft 365 mailbox using ExchangeOnlineManagement V2."
-    Write-Host "  Allows filtering for inbound/outbound emails and targeted detection of blocked/spam/quarantined items."
+    Write-Host "OPIS:" -ForegroundColor Yellow
+    Write-Host "  Skrypt audytuje ruch pocztowy w Exchange Online oraz pozwala zwalniać wiadomości z kwarantanny."
     Write-Host ""
-    Write-Host "SYNTAX:" -ForegroundColor Yellow
-    Write-Host "  .\Get-M365MessageTrace.ps1 -User <email> [-Days <1-10>] [-Direction <Inbound|Outbound>] [-OnlyBlockedOrSpam]"
-    Write-Host "  .\Get-M365MessageTrace.ps1 [-Help|-h]"
+    Write-Host "SKŁADNIA:" -ForegroundColor Yellow
+    Write-Host "  Trace wiadomości:" -ForegroundColor Green
+    Write-Host "    .\Get-M365MessageTrace.ps1 -User <email> [-Days <1-10>] [-Direction <Inbound|Outbound>] [-OnlyBlockedOrSpam]"
+    Write-Host "  Zwolnienie z kwarantanny:" -ForegroundColor Green
+    Write-Host "    .\Get-M365MessageTrace.ps1 -ReleaseId <QuarantineIdentity>"
     Write-Host ""
-    Write-Host "PARAMETERS:" -ForegroundColor Yellow
-    Write-Host "  -User               Target mailbox email address (required to trace)."
-    Write-Host "  -Days               Number of days to search back (1-10). Default: 7."
-    Write-Host "  -Direction          Filter by message flow ('Inbound' or 'Outbound'). Default: 'Inbound'."
-    Write-Host "  -OnlyBlockedOrSpam  Filter only messages that failed, were blocked, quarantined, or tagged as spam."
-    Write-Host "  -Help, -h           Displays this interactive help manual."
-    Write-Host ""
-    Write-Host "AUTHENTICATION & PERMISSIONS:" -ForegroundColor Yellow
-    Write-Host "  - Requires 'ExchangeOnlineManagement' PowerShell module."
-    Write-Host "  - The script checks active Exchange Online sessions; prompts for admin login if disconnected."
-    Write-Host ""
-    Write-Host "EXAMPLES:" -ForegroundColor Yellow
-    Write-Host "  .\Get-M365MessageTrace.ps1 -User user@domain.com -Days 3"
-    Write-Host "  .\Get-M365MessageTrace.ps1 -User user@domain.com -Direction Outbound -Days 10"
-    Write-Host "  .\Get-M365MessageTrace.ps1 -User user@domain.com -OnlyBlockedOrSpam"
+    Write-Host "PARAMETRY:" -ForegroundColor Yellow
+    Write-Host "  -User               Docelowa skrzynka pocztowa."
+    Write-Host "  -Days               Liczba dni wstecz (1-10). Domyślnie: 7."
+    Write-Host "  -Direction          Kierunek: 'Inbound' lub 'Outbound'. Domyślnie: 'Inbound'."
+    Write-Host "  -OnlyBlockedOrSpam  Filtruje tylko błędy, spam i kwarantannę."
+    Write-Host "  -ReleaseId          Zwalnia z kwarantanny wiadomość o wskazanym Identity."
+    Write-Host "  -Help, -h           Wyświetla niniejszą pomoc."
     Write-Host "=======================================================================" -ForegroundColor Cyan
 }
 
-if ($Help -or [string]::IsNullOrWhiteSpace($User)) {
+if ($Help -or ($PSCmdlet.ParameterSetName -eq "Trace" -and [string]::IsNullOrWhiteSpace($User))) {
     Show-ScriptHelp
     Exit 0
 }
 
-# 1. Checking Exchange Online Connection & Authenticating Admin
-Write-Host "[*] Checking Exchange Online session state..." -ForegroundColor Cyan
+# 1. Sprawdzenie połączenia z Exchange Online
+Write-Host "[*] Sprawdzanie aktywnej sesji Exchange Online..." -ForegroundColor Cyan
 $exoSession = Get-ConnectionInformation | Where-Object { $_.Name -like "*ExchangeOnline*" }
 
 if (-not $exoSession) {
-    Write-Host "[!] Active Exchange Online connection not found. Initiating administrator sign-in..." -ForegroundColor Yellow
+    Write-Host "[!] Brak aktywnej sesji. Rozpoczynanie logowania administratora..." -ForegroundColor Yellow
     try {
         Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
-        Write-Host "[+] Successfully connected to Exchange Online." -ForegroundColor Green
+        Write-Host "[+] Pomyślnie nawiązano połączenie z Exchange Online." -ForegroundColor Green
     }
     catch {
-        Write-Error "[-] Failed to authenticate to Exchange Online: $_"
+        Write-Error "[-] Błąd autoryzacji do Exchange Online: $_"
         Exit 1
     }
 } else {
-    Write-Host "[+] Existing Exchange Online session detected." -ForegroundColor Green
+    Write-Host "[+] Wykryto istniejącą sesję Exchange Online." -ForegroundColor Green
 }
 
-# 2. Date and Scope Definition
+# 2. Obsługa akcji: ZWOLNIENIE WIADOMOŚCI Z KWARANTANNY
+if ($PSCmdlet.ParameterSetName -eq "Release") {
+    Write-Host "[*] Próba zwolnienia wiadomości z kwarantanny..." -ForegroundColor Cyan
+    Write-Host "    Target Identity: $ReleaseId" -ForegroundColor Gray
+    try {
+        Release-QuarantineMessage -Identity $ReleaseId -ReleaseToAll -Confirm:$false -ErrorAction Stop
+        Write-Host "[+] Sukces: Wiadomość została pomyślnie zwolniona i przekazana do skrzynki odbiorcy!" -ForegroundColor Green
+    }
+    catch {
+        Write-Error "[-] Błąd podczas zwalniania wiadomości: $_"
+        Write-Host "[!] Upewnij się, czy identyfikator Identity jest poprawny oraz czy wiadomość nie wygasła." -ForegroundColor Yellow
+        Exit 1
+    }
+    Exit 0
+}
+
+# 3. Obsługa akcji: ŚLEDZENIE WIADOMOŚCI (MESSAGE TRACE)
 $startDate = (Get-Date).AddDays(-$Days)
 $endDate = Get-Date
 
@@ -135,27 +149,26 @@ if ($Direction -eq "Inbound") {
     $targetHeader = "Recipient"
 }
 
-Write-Host "[*] Fetching $Direction message trace for '$User' (Last $Days days)..." -ForegroundColor Cyan
+Write-Host "[*] Pobieranie śladu wiadomości ($Direction) dla '$User' (ostatnie $Days dni)..." -ForegroundColor Cyan
 
-# 3. Querying Message Trace V2
 try {
     $results = Get-MessageTraceV2 @traceParams -ErrorAction Stop
 }
 catch {
-    Write-Error "[-] Error executing Get-MessageTraceV2: $_"
+    Write-Error "[-] Błąd podczas wykonywania Get-MessageTraceV2: $_"
     Exit 1
 }
 
 if (-not $results -or $results.Count -eq 0) {
-    Write-Host "[!] No message trace entries found for $User in the specified timeframe." -ForegroundColor Yellow
+    Write-Host "[!] Nie znaleziono żadnych wpisów dla $User w wybranym okresie." -ForegroundColor Yellow
     Exit 0
 }
 
-# 4. Filter for Spam / Blocked / Quarantined
+# 4. Filtrowanie zdarzeń niepożądanych / spamu
 if ($OnlyBlockedOrSpam) {
-    Write-Host "[*] Filtering for blocked, failed, spam, and quarantined events..." -ForegroundColor Cyan
+    Write-Host "[*] Filtrowanie zdarzeń: zablokowane, błędy, spam i kwarantanna..." -ForegroundColor Cyan
     $spamKeywords = @("Quarantined", "Failed", "FilteredAsSpam", "Blocked", "Spam")
-    
+
     $results = $results | Where-Object {
         $status = $_.Status
         $matched = $false
@@ -169,20 +182,78 @@ if ($OnlyBlockedOrSpam) {
     }
 
     if (-not $results -or $results.Count -eq 0) {
-        Write-Host "[+] Clean record: No blocked, failed, or spam messages found." -ForegroundColor Green
+        Write-Host "[+] Czysto: Brak zablokowanych wiadomości ani spamu." -ForegroundColor Green
         Exit 0
     }
 }
 
-# 5. Output Results to Console
-Write-Host "[+] Found $($results.Count) matching message trace event(s):" -ForegroundColor Green
+# 5. Pobieranie metadanych z kwarantanny dla skorelowania wiadomości
+$quarantineMap = @{}
+if ($Direction -eq "Inbound") {
+    Write-Host "[*] Sprawdzanie kwarantanny EOP dla odbiorcy '$User'..." -ForegroundColor Cyan
+    try {
+        $quarantineItems = Get-QuarantineMessage -RecipientAddress $User -StartReceivedDate $startDate -EndReceivedDate $endDate -PageSize 1000 -ErrorAction SilentlyContinue
+        if ($quarantineItems) {
+            foreach ($q in $quarantineItems) {
+                if ($q.MessageId) {
+                    $quarantineMap[$q.MessageId] = $q.Identity
+                }
+                if ($q.NetworkMessageId) {
+                    $quarantineMap[$q.NetworkMessageId] = $q.Identity
+                }
+            }
+            Write-Host "[+] Znaleziono $($quarantineItems.Count) wiadomości w kwarantannie." -ForegroundColor Green
+        }
+    }
+    catch {
+        Write-Warning "[!] Nie udało się pobrać szczegółów kwarantanny: $_"
+    }
+}
 
-$results | Select-Object `
-    Received,
-    @{Name = $targetHeader; Expression = { $_.$displayTarget }},
-    Subject,
-    Status,
-    FromIP,
-    Size,
-    MessageId |
-    Format-Table -AutoSize
+# 6. Prezentacja wyników
+Write-Host "[+] Znaleziono $($results.Count) pasujących zdarzeń:" -ForegroundColor Green
+
+$index = 1
+$formattedResults = foreach ($item in $results) {
+    $qId = $null
+    if ($item.MessageId -and $quarantineMap.ContainsKey($item.MessageId)) {
+        $qId = $quarantineMap[$item.MessageId]
+    } elseif ($item.NetworkMessageId -and $quarantineMap.ContainsKey($item.NetworkMessageId)) {
+        $qId = $quarantineMap[$item.NetworkMessageId]
+    }
+
+    [PSCustomObject]@{
+        "#"            = $index++
+        "Received"     = $item.Received
+        $targetHeader  = $item.$displayTarget
+        "Subject"      = if ($item.Subject.Length -gt 45) { $item.Subject.Substring(0, 42) + "..." } else { $item.Subject }
+        "Status"       = $item.Status
+        "InQuarantine" = if ($qId) { "TAK" } elseif ($item.Status -like "*Quarantined*") { "TAK (szukaj)" } else { "NIE" }
+        "QuarantineId" = if ($qId) { $qId } else { "-" }
+    }
+}
+
+# Główna tabela
+$formattedResults | Format-Table -Property "#", "Received", $targetHeader, "Subject", "Status", "InQuarantine" -AutoSize
+
+# 7. Wyświetlenie listy wiadomości z kwarantanny
+$releasable = $formattedResults | Where-Object { $_.QuarantineId -ne "-" }
+
+if ($releasable) {
+    Write-Host "
+=======================================================================" -ForegroundColor Yellow
+    Write-Host " WIADOMOŚCI MOŻLIWE DO ZWOLNIENIA Z KWARANTANNY" -ForegroundColor Yellow
+    Write-Host "=======================================================================" -ForegroundColor Yellow
+
+    foreach ($r in $releasable) {
+        Write-Host "[$($r.'#')] Od: $($r.$targetHeader) | Temat: $($r.Subject)" -ForegroundColor White
+        Write-Host "    Identity: $($r.QuarantineId)" -ForegroundColor DarkCyan
+        Write-Host "    Aby przywrócić wykonaj:" -ForegroundColor Gray
+        Write-Host "    .\Get-M365MessageTrace.ps1 -ReleaseId "$($r.QuarantineId)"" -ForegroundColor Green
+        Write-Host ""
+    }
+} else {
+    Write-Host "
+[i] Brak bezpośrednio zmapowanych obiektów w kwarantannie." -ForegroundColor Gray
+    Write-Host "    Jeśli status to 'FilteredAsSpam', wiadomość trafiła bezpośrednio do folderu Wiadomości-śmieci w skrzynce użytkownika." -ForegroundColor Gray
+}
