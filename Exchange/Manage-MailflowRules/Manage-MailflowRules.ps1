@@ -370,18 +370,22 @@ function Find-TransportRule {
 
     try {
         $found = Get-TransportRule -Identity $Identity -ErrorAction SilentlyContinue
-        if ($found) { return $found }
+        if ($null -ne $found) { return $found }
     } catch {
         # Fall through to search by Name
     }
 
-    $allRules = Get-TransportRule -ErrorAction Stop
-    $matches = $allRules | Where-Object { $_.Name -eq $Identity -or $_.Identity -eq $Identity }
+    try {
+        $allRules = @(Get-TransportRule -ErrorAction Stop)
+        $matches = @($allRules | Where-Object { $_.Name -eq $Identity -or $_.Identity -eq $Identity })
 
-    if ($matches.Count -eq 1) {
-        return $matches[0]
-    } elseif ($matches.Count -gt 1) {
-        throw "Multiple rules found matching '$Identity'. Please specify the unique Rule Identity/GUID."
+        if ($matches.Count -eq 1) {
+            return $matches[0]
+        } elseif ($matches.Count -gt 1) {
+            throw "Multiple rules found matching '$Identity'. Please specify the unique Rule Identity/GUID."
+        }
+    } catch {
+        throw $_
     }
 
     return $null
@@ -397,28 +401,28 @@ function Get-MailflowRulesList {
 
     Write-Host "`n[*] Retrieving Mail Flow (Transport) rules from Exchange Online..." -ForegroundColor Cyan
     try {
-        $rules = Get-TransportRule -ErrorAction Stop
+        $rules = @(Get-TransportRule -ErrorAction Stop)
     } catch {
         Write-Error "Failed to retrieve transport rules: $_"
         return
     }
 
-    if (-not $rules -or $rules.Count -eq 0) {
+    if ($rules.Count -eq 0) {
         Write-Host "[i] No Mail Flow rules found in this tenant." -ForegroundColor Yellow
         return
     }
 
     # Apply State filter
     if ($State -ne 'All') {
-        $rules = $rules | Where-Object { $_.State.ToString() -eq $State }
+        $rules = @($rules | Where-Object { $_.State.ToString() -eq $State })
     }
 
     # Apply Name filter
     if (-not [string]::IsNullOrWhiteSpace($FilterName)) {
-        $rules = $rules | Where-Object { $_.Name -like $FilterName }
+        $rules = @($rules | Where-Object { $_.Name -like $FilterName })
     }
 
-    $ruleCount = @($rules).Count
+    $ruleCount = $rules.Count
     Write-Host "[+] Found $ruleCount rule(s) matching criteria (State: $State, NameFilter: $(if ($FilterName) { $FilterName } else { 'None' })):" -ForegroundColor Green
 
     if ($ruleCount -eq 0) {
@@ -427,7 +431,7 @@ function Get-MailflowRulesList {
     }
 
     # Sort by Priority
-    $sortedRules = $rules | Sort-Object Priority
+    $sortedRules = @($rules | Sort-Object Priority)
 
     if ($DetailedView) {
         foreach ($r in $sortedRules) {
@@ -475,7 +479,7 @@ function Set-MailflowRuleState {
         exit 1
     }
 
-    if (-not $rule) {
+    if ($null -eq $rule) {
         Write-Error "Mail flow rule '$Identity' was not found in Exchange Online."
         exit 1
     }
@@ -537,7 +541,7 @@ function New-BccMailflowRule {
     # Check if rule with this name already exists
     Write-Host "[*] Checking for duplicate rule name: '$RuleName'..." -ForegroundColor Cyan
     $existing = Find-TransportRule -Identity $RuleName
-    if ($existing) {
+    if ($null -ne $existing) {
         Write-Error "A mail flow rule named '$RuleName' already exists (State: $($existing.State), Priority: $($existing.Priority)). Choose a unique name."
         exit 1
     }

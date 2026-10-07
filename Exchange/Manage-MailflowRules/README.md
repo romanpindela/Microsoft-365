@@ -167,9 +167,17 @@ Launches a menu-driven console wizard allowing administrators to list, enable, d
 
 ---
 
+## Screenshots & Output Examples
+
+### Standard Execution (Help & Syntax Overview)
+![Standard Run](assets/Standard_run.jpg)
+
+---
+
 ## Author & Contact
 
 - **Author**: Roman Pindela
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
 - **Version**: 1.0.0
+
