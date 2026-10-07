@@ -70,13 +70,14 @@
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: https://github.com/romanpindela
-    Version: 1.4.2
+    Version: 1.4.3
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'ManageAccount')]
 param(
     [Parameter(ParameterSetName = 'ManageAccount', Mandatory = $false, Position = 0)]
-    [Parameter(ParameterSetName = 'ViewAccount', Mandatory = $false, Position = 0)]     [string]$UserIdentity,
+    [Parameter(ParameterSetName = 'ViewAccount', Mandatory = $false, Position = 0)]
+    [string]$UserIdentity,
 
     [Parameter(ParameterSetName = 'ViewAccount')]
     [Alias('v', 'ShowStatusOnly')]
@@ -112,7 +113,7 @@ function Show-ScriptHelp {
     $helpLines = @(
         "================================================================================",
         "SCRIPT: Manage-M365UserAccount.ps1",
-        "VERSION: 1.4.2",
+        "VERSION: 1.4.3",
         "AUTHOR: Roman Pindela",
         "CONTACT: roman.pindela@gmail.com | https://github.com/romanpindela",
         "================================================================================",
@@ -125,7 +126,7 @@ function Show-ScriptHelp {
         "",
         "AUTHENTICATION & PREREQUISITES:",
         "    Requires 'Microsoft.Graph.Users' and 'Microsoft.Graph.Authentication'.",
-        "    Required Microsoft Graph scopes: 'User.ReadWrite.All', 'AuditLog.Read.All', 'Organization.Read.All'.",
+        "    Required Microsoft Graph scopes: 'User.ReadWrite.All', 'User-PasswordProfile.ReadWrite.All', 'AuditLog.Read.All', 'Organization.Read.All'.",
         "",
         "USAGE EXAMPLES:",
         "    # View detailed account info (aliases, licenses, client apps, last login):",
@@ -208,13 +209,39 @@ if ($missingModules.Count -gt 0) {
 }
 
 # Connection handler
-$requiredScopes = @("User.ReadWrite.All", "AuditLog.Read.All", "Organization.Read.All")
+$requiredScopes = @(
+    "User.ReadWrite.All",
+    "User-PasswordProfile.ReadWrite.All",
+    "AuditLog.Read.All",
+    "Organization.Read.All"
+)
+
+$mgContext = $null
 try {
     $mgContext = Get-MgContext -ErrorAction Stop
-    if ($null -eq$mgContext) { throw "No active context" }
-    Write-Host "[+] Active Microsoft Graph session detected." -ForegroundColor Green
 } catch {
+    $mgContext = $null
+}
+
+$needConnect = $false
+if ($null -eq $mgContext) {
     Write-Host "[*] No active Microsoft Graph session detected. Initiating administrator login..." -ForegroundColor Cyan
+    $needConnect = $true
+} else {
+    $activeScopes = @($mgContext.Scopes)
+    $missingScopes = @($requiredScopes | Where-Object { $activeScopes -notcontains $_ })
+    if ($missingScopes.Count -gt 0) {
+        Write-Host "[!] Active Microsoft Graph session detected, but missing required scope(s):" -ForegroundColor Yellow
+        Write-Host "    Missing: $($missingScopes -join ', ')" -ForegroundColor Yellow
+        Write-Host "[*] Reconnecting to Microsoft Graph with all required scopes..." -ForegroundColor Cyan
+        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+        $needConnect = $true
+    } else {
+        Write-Host "[+] Active Microsoft Graph session detected with verified scopes." -ForegroundColor Green
+    }
+}
+
+if ($needConnect) {
     try {
         Connect-MgGraph -Scopes $requiredScopes -NoWelcome -ErrorAction Stop
         Write-Host "[+] Successfully connected to Microsoft Graph." -ForegroundColor Green
@@ -229,7 +256,8 @@ Write-Host "`n[*] Retrieving user details for: $UserIdentity..." -ForegroundColo
 $baseProperties = @(
     "Id", "DisplayName", "UserPrincipalName", "Mail", "AccountEnabled",
     "LastPasswordChangeDateTime", "CreatedDateTime",
-    "UserType", "JobTitle", "Department", "AssignedLicenses", "ProxyAddresses"
+    "UserType", "JobTitle", "Department", "AssignedLicenses", "ProxyAddresses",
+    "OnPremisesSyncEnabled"
 )
 
 try {
@@ -286,16 +314,37 @@ try {
     # Fallback if AuditLog query is not accessible
 }
 
+# Query administrative directory roles for the target user (to detect privileged accounts)
+$targetUserRoles = @()
+try {
+    $memberOf = Get-MgUserMemberOf -UserId $user.Id -All -ErrorAction Stop
+    if ($memberOf) {
+        foreach ($item in $memberOf) {
+            $isDirRole = ($item.AdditionalProperties -and $item.AdditionalProperties["@odata.type"] -eq "#microsoft.graph.directoryRole")
+            if ($isDirRole -and $item.AdditionalProperties.ContainsKey("displayName")) {
+                $targetUserRoles += [string]$item.AdditionalProperties["displayName"]
+            }
+        }
+    }
+} catch {
+    # Fallback if directory role query is restricted
+}
+
 function Show-DetailedUserAudit {
     param(
         [object]$TargetUser,
         [object]$SignInActivity,
         [array]$LicenseNames,
-        [array]$ClientApps
+        [array]$ClientApps,
+        [array]$AdminRoles = @()
     )
 
     $statusColor = if ($TargetUser.AccountEnabled) { "Green" } else { "Red" }
     $signInStatusText = if ($TargetUser.AccountEnabled) { "ALLOWED (Enabled)" } else { "BLOCKED (Disabled)" }
+
+    $isSynced = ($TargetUser.OnPremisesSyncEnabled -eq $true)
+    $syncStatus = if ($isSynced) { "SYNCHRONIZED (On-Premises AD)" } else { "Cloud-Only (Entra ID)" }
+    $syncColor  = if ($isSynced) { "Yellow" } else { "Gray" }
 
     $pwdChanged = if ($TargetUser.LastPasswordChangeDateTime) {
         $TargetUser.LastPasswordChangeDateTime.ToString("yyyy-MM-dd HH:mm:ss UTC")
@@ -333,11 +382,12 @@ function Show-DetailedUserAudit {
 
     $licenseArray = @($LicenseNames)
     $clientArray  = @($ClientApps)
+    $roleArray    = @($AdminRoles)
 
     Write-Host "`n========================= USER AUDIT & DETAILS =========================" -ForegroundColor Cyan
     Write-Host ("  Display Name           : " + $TargetUser.DisplayName) -ForegroundColor White
     Write-Host ("  User Principal Name    : " + $TargetUser.UserPrincipalName) -ForegroundColor White
-    Write-Host ("  Primary Email          : " + $(if ($TargetUser.Mail) {$TargetUser.Mail } else { "N/A" })) -ForegroundColor White
+    Write-Host ("  Primary Email          : " + $(if ($TargetUser.Mail) { $TargetUser.Mail } else { "N/A" })) -ForegroundColor White
     
     # Display Aliases
     if ($aliases.Length -gt 0) {
@@ -347,8 +397,18 @@ function Show-DetailedUserAudit {
     }
 
     Write-Host ("  Object ID              : " + $TargetUser.Id) -ForegroundColor Gray
+    Write-Host -NoNewline "  Directory Source       : " -ForegroundColor White
+    Write-Host $syncStatus -ForegroundColor $syncColor
     Write-Host -NoNewline "  Sign-In Status         : " -ForegroundColor White
-    Write-Host $signInStatusText -ForegroundColor$statusColor
+    Write-Host $signInStatusText -ForegroundColor $statusColor
+
+    # Display Directory Roles
+    if ($roleArray.Length -gt 0) {
+        Write-Host ("  Assigned Admin Roles   : " + ($roleArray -join ", ")) -ForegroundColor Magenta
+    } else {
+        Write-Host "  Assigned Admin Roles   : (None - Standard User)" -ForegroundColor Gray
+    }
+
     Write-Host ("  Last Password Change   : " + $pwdChanged) -ForegroundColor Yellow
     Write-Host ("  Last Interactive Login : " + $lastInteractive) -ForegroundColor Yellow
     Write-Host ("  Last Non-Interactive   : " + $lastNonInteractive) -ForegroundColor Yellow
@@ -368,17 +428,17 @@ function Show-DetailedUserAudit {
     }
 
     Write-Host ("  Account Created Date   : " + $created) -ForegroundColor White
-    Write-Host ("  User Type              : " + $(if ($TargetUser.UserType) {$TargetUser.UserType } else { "Member" })) -ForegroundColor White
+    Write-Host ("  User Type              : " + $(if ($TargetUser.UserType) { $TargetUser.UserType } else { "Member" })) -ForegroundColor White
     Write-Host ("  Department / Title     : " + "$($TargetUser.Department) / $($TargetUser.JobTitle)") -ForegroundColor White
     Write-Host "========================================================================`n" -ForegroundColor Cyan
 }
 
 if ($View) {
-    Show-DetailedUserAudit -TargetUser $user -SignInActivity $signInActivityData -LicenseNames $friendlyLicenses -ClientApps $detectedClients
+    Show-DetailedUserAudit -TargetUser $user -SignInActivity $signInActivityData -LicenseNames $friendlyLicenses -ClientApps $detectedClients -AdminRoles $targetUserRoles
     exit 0
 }
 
-Show-DetailedUserAudit -TargetUser $user -SignInActivity $signInActivityData -LicenseNames $friendlyLicenses -ClientApps $detectedClients
+Show-DetailedUserAudit -TargetUser $user -SignInActivity $signInActivityData -LicenseNames $friendlyLicenses -ClientApps $detectedClients -AdminRoles $targetUserRoles
 
 # Cryptographically strong password generator
 function New-RandomPassword {
@@ -441,7 +501,23 @@ if ($UnblockSignIn) { $plannedActions += "UNBLOCK Sign-In" }
 if ($RevokeSessions -and -not $BlockSignIn) { $plannedActions += "REVOKE Active Sessions" }
 if ($ResetPassword) { $plannedActions += "RESET Password (Forces change at next sign-in)" }
 
-Write-Host "Action Summary:" -ForegroundColor White
+if ($ResetPassword -and ($user.OnPremisesSyncEnabled -eq $true)) {
+    Write-Host "`n[!] ATTENTION / HYBRID AD WARNING:" -ForegroundColor Yellow
+    Write-Host "    User '$($user.UserPrincipalName)' is synchronized from On-Premises Active Directory (OnPremisesSyncEnabled = True)." -ForegroundColor Yellow
+    Write-Host "    Entra ID / Microsoft Graph rejects direct cloud password resets (Update-MgUser) for synced accounts." -ForegroundColor Yellow
+    Write-Host "    In hybrid environments, passwords must be reset on the on-premises Domain Controller (AD DS)," -ForegroundColor Yellow
+    Write-Host "    unless Self-Service Password Reset (SSPR) with Password Writeback is explicitly configured." -ForegroundColor Yellow
+}
+
+if ($ResetPassword -and ($targetUserRoles.Length -gt 0)) {
+    Write-Host "`n[!] PRIVILEGED ACCOUNT WARNING:" -ForegroundColor Yellow
+    Write-Host "    Target user holds administrative role(s): $($targetUserRoles -join ', ')." -ForegroundColor Yellow
+    Write-Host "    Resetting passwords of privileged accounts requires the 'Privileged Authentication Administrator'" -ForegroundColor Yellow
+    Write-Host "    or 'Global Administrator' directory role in Entra ID." -ForegroundColor Yellow
+    Write-Host "    Standard User Administrators or Helpdesk Administrators will receive 403 Forbidden (Authorization_RequestDenied)." -ForegroundColor Yellow
+}
+
+Write-Host "`nAction Summary:" -ForegroundColor White
 Write-Host "  Target User : $($user.UserPrincipalName)" -ForegroundColor White
 Write-Host "  Actions     : $($plannedActions -join ', ')" -ForegroundColor White
 Write-Host ""
@@ -481,7 +557,7 @@ try {
     }
 
     # Revoke sessions if requested or if blocking sign-in
-    if ($BlockSignIn -or$RevokeSessions) {
+    if ($BlockSignIn -or $RevokeSessions) {
         Write-Host "`n[*] Revoking all active sign-in sessions (terminating Outlook, Teams, OWA access)..." -ForegroundColor Cyan
         try {
             Revoke-MgUserAllRefreshToken -UserId $user.Id -ErrorAction Stop | Out-Null
@@ -493,7 +569,7 @@ try {
 
     # Fetch updated user status
     $updatedUser = Get-MgUser -UserId $user.Id -Property $baseProperties -ErrorAction Stop
-    Show-DetailedUserAudit -TargetUser $updatedUser -SignInActivity $signInActivityData -LicenseNames $friendlyLicenses -ClientApps $detectedClients
+    Show-DetailedUserAudit -TargetUser $updatedUser -SignInActivity $signInActivityData -LicenseNames $friendlyLicenses -ClientApps $detectedClients -AdminRoles $targetUserRoles
 
     if ($ResetPassword) {
         $pwdNotice = @(
@@ -514,6 +590,31 @@ try {
     }
 
 } catch {
+    $errDetail = $_.Exception.Message
     Write-Error "An error occurred while modifying the user account: $_"
+
+    if ($errDetail -match "Authorization_RequestDenied" -or $errDetail -match "Insufficient privileges" -or "$_" -match "403") {
+        Write-Host "`n========================= 403 FORBIDDEN / PRIVILEGE DIAGNOSIS =========================" -ForegroundColor Red
+        Write-Host "The operation was rejected by Microsoft Graph (Authorization_RequestDenied / 403 Forbidden)." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "MOST COMMON ROOT CAUSES AND HOW TO RESOLVE:" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "1. MISSING GRAPH API SCOPE (User-PasswordProfile.ReadWrite.All):" -ForegroundColor Cyan
+        Write-Host "   Resetting passwords requires 'User-PasswordProfile.ReadWrite.All'. Standard 'User.ReadWrite.All' is not enough." -ForegroundColor White
+        Write-Host "   Fix: Disconnect existing session and reconnect with required scopes:" -ForegroundColor White
+        Write-Host "        Disconnect-MgGraph" -ForegroundColor Gray
+        Write-Host "        Connect-MgGraph -Scopes 'User.ReadWrite.All','User-PasswordProfile.ReadWrite.All','AuditLog.Read.All','Organization.Read.All'" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "2. TARGET USER IS SYNCHRONIZED FROM ON-PREMISES ACTIVE DIRECTORY (HYBRID):" -ForegroundColor Cyan
+        Write-Host "   Status for this user: OnPremisesSyncEnabled = $(if ($user.OnPremisesSyncEnabled) { '$true' } else { '$false' })" -ForegroundColor White
+        Write-Host "   In hybrid environments, password authority belongs to on-premises AD DS." -ForegroundColor White
+        Write-Host "   Fix: Reset the password on your on-premises Domain Controller, or use SSPR with Password Writeback." -ForegroundColor White
+        Write-Host ""
+        Write-Host "3. INSUFFICIENT ENTRA ID DIRECTORY ROLE:" -ForegroundColor Cyan
+        Write-Host "   - For non-admin accounts: Ensure your account has 'User Administrator' or 'Authentication Administrator'." -ForegroundColor White
+        Write-Host "   - If the target has ANY administrative role: You MUST have 'Privileged Authentication Administrator'" -ForegroundColor White
+        Write-Host "     or 'Global Administrator' assigned in Entra ID." -ForegroundColor White
+        Write-Host "======================================================================================`n" -ForegroundColor Red
+    }
     exit 1
 }

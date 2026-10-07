@@ -34,7 +34,7 @@ A production-ready PowerShell management and audit script designed for Microsoft
 
   ```
 
-* **Privileges**: Microsoft 365 Administrator (Global Admin, Privileged Authentication Admin, or User Admin) with consent for `User.ReadWrite.All` and `AuditLog.Read.All`.
+* **Privileges**: Microsoft 365 Administrator (Global Admin, Privileged Authentication Admin, or User Admin) with consent for `User.ReadWrite.All`, `User-PasswordProfile.ReadWrite.All`, and `AuditLog.Read.All`.
 > *Note: Reading `SignInActivity` timestamps requires an Entra ID P1 or P2 license in the tenant.*
 
 
@@ -118,10 +118,13 @@ Unblock-File -Path .\Manage-M365UserAccount.ps1
 ### Info about user
 ![HTML Report](assets/Info_about_user.jpg)
 
+### Changing password
+![HTML Report](assets/Changing_password.jpg)
+
 ## Author
 
 * **Author**: Roman Pindela
 * **Email**: [roman.pindela@gmail.com](https://www.google.com/search?q=mailto%3Aroman.pindela%40gmail.com)
 * **GitHub**: [romanpindela](https://github.com/romanpindela?utm_source=gemini)
-* **Version**: 1.3.1
+* **Version**: 1.4.3
 
