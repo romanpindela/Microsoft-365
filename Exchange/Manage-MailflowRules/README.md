@@ -169,8 +169,14 @@ Launches a menu-driven console wizard allowing administrators to list, enable, d
 
 ## Screenshots & Output Examples
 
-### Standard Execution (Help & Syntax Overview)
+### 1. Standard Execution (Overview)
 ![Standard Run](assets/Standard_run.jpg)
+
+### 2. Help & Syntax Documentation (`-h` / `-Help`)
+![Help Run](assets/Help_run.jpg)
+
+### 3. Creating New BCC (UDW) Mail Flow Rule
+![Creating New Rule](assets/Creating_new_rule.jpg)
 
 ---
 
