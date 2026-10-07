@@ -178,6 +178,9 @@ Launches a menu-driven console wizard allowing administrators to list, enable, d
 ### 3. Creating New BCC (UDW) Mail Flow Rule
 ![Creating New Rule](assets/Creating_new_rule.jpg)
 
+### 4. Disabling a Mail Flow Rule
+![Disable Rule](assets/Disable_rule.jpg)
+
 ---
 
 ## Author & Contact
