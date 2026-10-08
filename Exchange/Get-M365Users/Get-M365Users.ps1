@@ -7,7 +7,7 @@
     and Microsoft Graph (to retrieve tenant license inventory, consumed/free license counts, and
     assigned license SKUs). Displays all licensed users in a formatted, grouped tabular layout with:
     - Row numbering (Nr) at the beginning of each list
-    - Single consolidated email column and full display name (Imię i nazwisko)
+    - Single consolidated email column and full display name (Imie i nazwisko)
     - Assigned licenses column in every view (both Simple and Detailed modes)
     - Executive summary at the bottom with total user count, consumed licenses, and free licenses by type
     - Filtering by partial license name (-LicenseFilter) and user search (-Search)
@@ -78,7 +78,7 @@
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: https://github.com/romanpindela
-    Version: 1.2.0
+    Version: 1.2.1
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Default')]
@@ -128,7 +128,7 @@ function Show-ScriptHelp {
     $helpLines = @(
         "================================================================================",
         "SCRIPT: Get-M365Users.ps1",
-        "VERSION: 1.2.0",
+        "VERSION: 1.2.1",
         "AUTHOR: Roman Pindela",
         "CONTACT: roman.pindela@gmail.com | https://github.com/romanpindela",
         "================================================================================",
@@ -731,24 +731,24 @@ Write-Host "`n[+] Found $($processedUsers.Count) licensed user(s) matching crite
 if ($Details) {
     $tableColumns = @(
         @{ Label = 'Nr';                Expression = { $_.Nr };                   Width = 4 },
-        @{ Label = 'Imię i nazwisko';   Expression = { $_.DisplayName };          Width = 22 },
+        @{ Label = 'Display Name';      Expression = { $_.DisplayName };          Width = 22 },
         @{ Label = 'Email';             Expression = { $_.Email };                Width = 28 },
-        @{ Label = 'Przypisane licencje'; Expression = { $_.License };            Width = 30 },
-        @{ Label = 'Dział';             Expression = { $_.Department };           Width = 14 },
-        @{ Label = 'Stanowisko';        Expression = { $_.Title };                Width = 18 },
-        @{ Label = 'Biuro / Miasto';    Expression = { if ($_.Office -ne '-' -and $_.City -ne '-') { "$($_.Office) / $($_.City)" } elseif ($_.Office -ne '-') { $_.Office } else { $_.City } }; Width = 16 },
-        @{ Label = 'Kraj';              Expression = { $_.CountryOrRegion };      Width = 6 },
-        @{ Label = 'Typ konta';         Expression = { $_.RecipientTypeDetails }; Width = 14 },
-        @{ Label = 'Utworzono';         Expression = { $_.WhenCreated };          Width = 16 },
-        @{ Label = 'Archiwum';          Expression = { $_.ArchiveStatus };        Width = 9 }
+        @{ Label = 'Assigned Licenses'; Expression = { $_.License };            Width = 30 },
+        @{ Label = 'Department';        Expression = { $_.Department };           Width = 14 },
+        @{ Label = 'Job Title';         Expression = { $_.Title };                Width = 18 },
+        @{ Label = 'Office / City';     Expression = { if ($_.Office -ne '-' -and $_.City -ne '-') { "$($_.Office) / $($_.City)" } elseif ($_.Office -ne '-') { $_.Office } else { $_.City } }; Width = 16 },
+        @{ Label = 'Country';           Expression = { $_.CountryOrRegion };      Width = 8 },
+        @{ Label = 'Recipient Type';    Expression = { $_.RecipientTypeDetails }; Width = 14 },
+        @{ Label = 'Created Date';      Expression = { $_.WhenCreated };          Width = 16 },
+        @{ Label = 'Archive';           Expression = { $_.ArchiveStatus };        Width = 9 }
     )
 } else {
     $tableColumns = @(
         @{ Label = 'Nr';                Expression = { $_.Nr };                   Width = 4 },
-        @{ Label = 'Imię i nazwisko';   Expression = { $_.DisplayName };          Width = 25 },
+        @{ Label = 'Display Name';      Expression = { $_.DisplayName };          Width = 25 },
         @{ Label = 'Email';             Expression = { $_.Email };                Width = 32 },
-        @{ Label = 'Przypisane licencje'; Expression = { $_.License };            Width = 35 },
-        @{ Label = 'Typ konta';         Expression = { $_.RecipientTypeDetails }; Width = 16 }
+        @{ Label = 'Assigned Licenses'; Expression = { $_.License };            Width = 35 },
+        @{ Label = 'Recipient Type';    Expression = { $_.RecipientTypeDetails }; Width = 16 }
     )
 }
 
@@ -759,13 +759,13 @@ $groups = $processedUsers | Group-Object -Property PrimaryLicense | Sort-Object 
 
 if ($NoGrouping) {
     Write-Host "================================================================================" -ForegroundColor Cyan
-    Write-Host "  LISTA LICENCJONOWANYCH UŻYTKOWNIKÓW (WIDOK PŁASKI - $($processedUsers.Count) użytkowników)" -ForegroundColor White
+    Write-Host "  ALL LICENSED USERS (Flat View - $($processedUsers.Count) users)" -ForegroundColor White
     Write-Host "================================================================================" -ForegroundColor Cyan
     $processedUsers | Format-Table -Property $tableColumns -AutoSize | Out-String | Write-Host
 } else {
     foreach ($grp in $groups) {
         Write-Host "================================================================================" -ForegroundColor Cyan
-        Write-Host "  GRUPA LICENCJI: $($grp.Name) ($($grp.Count) użytkowników)" -ForegroundColor White
+        Write-Host "  LICENSE GROUP: $($grp.Name) ($($grp.Count) users)" -ForegroundColor White
         Write-Host "================================================================================" -ForegroundColor Cyan
         
         $grp.Group | Format-Table -Property $tableColumns -AutoSize | Out-String | Write-Host
@@ -776,20 +776,20 @@ if ($NoGrouping) {
 # Executive Summary Breakdown: Total Users, Free Licenses, Used by Type
 # ----------------------------------------------------------------------
 Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host "PODSUMOWANIE LICENCJI I UŻYTKOWNIKÓW (EXECUTIVE SUMMARY)" -ForegroundColor White
+Write-Host "EXECUTIVE LICENSING SUMMARY" -ForegroundColor White
 Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host ("  Łączna liczba licencjonowanych użytkowników : {0}" -f $processedUsers.Count) -ForegroundColor Green
-Write-Host ("  Liczba typów licencji / planów w zestawieniu: {0}" -f $groups.Count) -ForegroundColor Green
+Write-Host ("  Total Licensed Users Found : {0}" -f $processedUsers.Count) -ForegroundColor Green
+Write-Host ("  Total License Plan Groups  : {0}" -f $groups.Count) -ForegroundColor Green
 Write-Host ""
 
 if ($tenantSkuInventory.Count -gt 0) {
-    Write-Host "  ZESTAWIENIE LICENCJI TENANTA (SUBKRYPCJE M365):" -ForegroundColor White
+    Write-Host "  TENANT SUBSCRIPTION LICENSE INVENTORY (MICROSOFT 365):" -ForegroundColor White
     
     $inventoryColumns = @(
-        @{ Label = 'Typ licencji / SKU';     Expression = { $_.'License Plan / SKU' };   Width = 35 },
-        @{ Label = 'Wykorzystane (Used)';    Expression = { $_.'Used (Wykorzystane)' };  Width = 20; Alignment = 'Right' },
-        @{ Label = 'Wolne (Free)';           Expression = { $_.'Free (Wolne)' };         Width = 15; Alignment = 'Right' },
-        @{ Label = 'Łącznie (Total)';        Expression = { $_.'Total (Zakupione)' };    Width = 16; Alignment = 'Right' }
+        @{ Label = 'License Plan / SKU';     Expression = { $_.'License Plan / SKU' };   Width = 35 },
+        @{ Label = 'Used (Wykorzystane)';    Expression = { $_.'Used (Wykorzystane)' };  Width = 20; Alignment = 'Right' },
+        @{ Label = 'Free (Wolne)';           Expression = { $_.'Free (Wolne)' };         Width = 15; Alignment = 'Right' },
+        @{ Label = 'Total (Zakupione)';      Expression = { $_.'Total (Zakupione)' };    Width = 16; Alignment = 'Right' }
     )
     $tenantSkuInventory | Format-Table -Property $inventoryColumns -AutoSize | Out-String | Write-Host
 
@@ -797,28 +797,28 @@ if ($tenantSkuInventory.Count -gt 0) {
     $totalFree     = ($tenantSkuInventory | Measure-Object -Property 'Free (Wolne)' -Sum).Sum
     $totalPurchased= ($tenantSkuInventory | Measure-Object -Property 'Total (Zakupione)' -Sum).Sum
 
-    Write-Host ("  SUMA POZYCJI SUBSKRYPCJI: Wykorzystane = {0} | Wolne = {1} | Łącznie = {2}" -f $totalConsumed, $totalFree, $totalPurchased) -ForegroundColor Yellow
+    Write-Host ("  SUBSCRIPTION TOTALS: Used = {0} | Free = {1} | Total = {2}" -f $totalConsumed, $totalFree, $totalPurchased) -ForegroundColor Yellow
 } else {
-    Write-Host "  ZESTAWIENIE WYKORZYSTANYCH LICENCJI WG TYPU (EXCHANGE ONLINE):" -ForegroundColor White
+    Write-Host "  EXCHANGE ONLINE LICENSED USERS BY PLAN:" -ForegroundColor White
     
     $localSummary = [System.Collections.Generic.List[PSCustomObject]]::new()
     foreach ($grp in $groups) {
         $localSummary.Add([PSCustomObject]@{
-            'Typ licencji / Plan skrzynki' = $grp.Name
-            'Wykorzystane (Used)'         = $grp.Count
-            'Wolne (Free)'                = '(Wymaga Graph)'
+            'License Plan / SKU'          = $grp.Name
+            'Used (Wykorzystane)'         = $grp.Count
+            'Free (Wolne)'                = '(Requires Graph)'
         })
     }
     
     $localColumns = @(
-        @{ Label = 'Typ licencji / Plan skrzynki'; Expression = { $_.'Typ licencji / Plan skrzynki' }; Width = 45 },
-        @{ Label = 'Wykorzystane (Used)';          Expression = { $_.'Wykorzystane (Used)' };          Width = 20; Alignment = 'Right' },
-        @{ Label = 'Wolne (Free)';                 Expression = { $_.'Wolne (Free)' };                 Width = 18; Alignment = 'Right' }
+        @{ Label = 'License Plan / SKU';   Expression = { $_.'License Plan / SKU' };   Width = 45 },
+        @{ Label = 'Used (Wykorzystane)';  Expression = { $_.'Used (Wykorzystane)' };  Width = 20; Alignment = 'Right' },
+        @{ Label = 'Free (Wolne)';         Expression = { $_.'Free (Wolne)' };         Width = 18; Alignment = 'Right' }
     )
     $localSummary | Format-Table -Property $localColumns -AutoSize | Out-String | Write-Host
 
-    Write-Host "  [i] Uwaga: Liczba wolnych licencji w tenancie wymaga połączenia z Microsoft Graph." -ForegroundColor Gray
-    Write-Host "      Uruchom skrypt z modułem Microsoft.Graph.Authentication, aby zobaczyć pule wolnych licencji." -ForegroundColor Gray
+    Write-Host "  [i] Notice: Available (Free) license pool counts require Microsoft Graph." -ForegroundColor Gray
+    Write-Host "      Run without -SkipGraph with Microsoft.Graph.Authentication to view free quotas." -ForegroundColor Gray
 }
 
 Write-Host "================================================================================" -ForegroundColor Cyan
@@ -833,7 +833,7 @@ if (-not [string]::IsNullOrWhiteSpace($ExportCsv)) {
             New-Item -ItemType Directory -Path $exportDir -Force | Out-Null
         }
         $processedUsers | Export-Csv -Path $ExportCsv -NoTypeInformation -Encoding UTF8 -Force
-        Write-Host "`n[+] Pomyślnie wyeksportowano $($processedUsers.Count) rekordów do pliku CSV:" -ForegroundColor Green
+        Write-Host "`n[+] Successfully exported $($processedUsers.Count) user records to CSV:" -ForegroundColor Green
         Write-Host "    $ExportCsv" -ForegroundColor White
     } catch {
         Write-Error "Failed to export data to CSV: $_"
