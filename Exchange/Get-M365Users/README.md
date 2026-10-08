@@ -19,6 +19,25 @@ A production-ready PowerShell audit and reporting script for Microsoft 365 admin
 
 ---
 
+## Screenshots
+
+### 1. Standard Run (`.\Get-M365Users.ps1 -All`)
+Grouped tabular view showing row numbers, single email column, base licenses, add-ons, and department:
+
+![Standard Run](assets/Standard_run.jpg)
+
+### 2. Detailed View (`.\Get-M365Users.ps1 -All -Details`)
+Extended audit layout with consolidated department/title, location, recipient type, clean creation dates, and archive status:
+
+![Detailed Users View](assets/Users_details.jpg)
+
+### 3. Executive Licensing Summary (`.\Get-M365Users.ps1 -LicenseSummary`)
+Paid commercial subscriptions with utilization % and capacity alerts, complimentary services, and user plan distribution:
+
+![Executive License Summary](assets/License_summary.jpg)
+
+---
+
 ## Features
 
 - **Automated Connection Handling**: Automatically detects active Exchange Online and Microsoft Graph sessions or prompts for modern administrator sign-in.
@@ -83,6 +102,8 @@ Retrieves all licensed accounts grouped by base plan with assigned licenses, row
 .\Get-M365Users.ps1 -All
 ```
 
+![Standard Run Example](assets/Standard_run.jpg)
+
 ### 3. List All Licensed Users with Extended Details
 Includes organizational columns (Department / Title, Location, Mailbox Type, Creation Date, Archive Status):
 
@@ -90,12 +111,16 @@ Includes organizational columns (Department / Title, Location, Mailbox Type, Cre
 .\Get-M365Users.ps1 -All -Details
 ```
 
+![Detailed View Example](assets/Users_details.jpg)
+
 ### 4. Display Executive License Summary Only
 Displays only the tenant quota tables and user breakdown without printing user accounts:
 
 ```powershell
 .\Get-M365Users.ps1 -LicenseSummary
 ```
+
+![License Summary Example](assets/License_summary.jpg)
 
 ### 5. Filter by Partial License Name
 Filter for Business-tier users:
