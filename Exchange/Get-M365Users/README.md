@@ -7,33 +7,35 @@ A production-ready PowerShell audit and reporting script for Microsoft 365 admin
 ## Overview
 
 `Get-M365Users.ps1` connects to Microsoft 365 Exchange Online (using modern REST cmdlets) and Microsoft Graph to:
-1. List all licensed users with sequential row numbering (`Nr`).
-2. Present a clean, deduplicated table with a single `Email` column and full name (`Imię i nazwisko` / `Display Name`).
-3. Display the user's **Assigned Licenses** (`Przypisane licencje`) in **every** tabular view (both Simple and Detailed modes).
-4. Provide an **Executive Summary** at the bottom displaying:
-   - Total number of licensed users (`Łączna liczba licencjonowanych użytkowników`).
-   - Number of consumed/used licenses per type (`Wykorzystane wg typu`).
-   - Number of free/available licenses per type (`Wolne wg typu`).
-   - Total purchased subscription units (`Łącznie zakupione`).
+1. **Intelligent License Classification**: Distinguishes between **Base Commercial Plans** (e.g. *Microsoft 365 Business Standard*, *Business Premium*, *Office 365 E3/E5*) and **Add-ons / Free Services** (*Defender for Office 365*, *Power Automate Free*, *Power BI Free*, *Azure Rights Management*).
+2. **Unified Grouping**: Groups users by their primary commercial base plan, eliminating fragmentation where users with the same base plan were previously scattered across secondary add-on groups.
+3. **Sequential Row Numbering (`Nr`)**: Provides continuous numbering at the beginning of each user list and summary table.
+4. **Consolidated Email & Display Name**: Single clear `Email` column and full name (`Display Name`).
+5. **Assigned Licenses in Every View**: Clearly details both Base Plan and Add-on licenses across all views.
+6. **Executive Licensing Summary**:
+   - **Commercial Subscriptions (Paid)**: Assigned (Used), Available (Free), Total purchased quotas, utilization percentage, and capacity status tags (`[OK]`, `[LOW]`, `[FULL - 0 FREE]`).
+   - **Complimentary & Free Pools**: Isolated from commercial subscriptions so multi-seat viral/free pools (e.g. 1M Power BI Free) do not distort financial metrics.
+   - **User Count by Base Plan**: Exact user count and percentage share per primary subscription.
 
 ---
 
 ## Features
 
 - **Automated Connection Handling**: Automatically detects active Exchange Online and Microsoft Graph sessions or prompts for modern administrator sign-in.
+- **Base Plan vs. Add-on Separation**: Clearly isolates primary commercial licenses from security add-ons and complimentary cloud services.
 - **Row Numbering (`Nr`)**: Consecutive index column at the start of each user list.
 - **Consolidated Email Column**: Cleaned up layout with a single `Email` column and full display name.
-- **Assigned Licenses Column in All Views**: Every table view clearly shows which licenses/plans are assigned to each user.
-- **Tenant License Inventory Summary**: Displays total users, consumed licenses, and available (free) pool units per subscription SKU.
-- **Grouped Tabular Reporting**: Users are automatically grouped by assigned license plan with summary statistics.
-- **Partial License Filter (`-LicenseFilter`)**: Quickly filter users by partial plan names (e.g., `-LicenseFilter "Business"`, `-LicenseFilter "Enterprise"`, `-LicenseFilter "Kiosk"`).
-- **Simple vs. Detailed Mode (`-Details`)**: Toggle between a streamlined identity view and an extended audit view with Department, Job Title, Office, City, Country, Creation Date, and Archive status.
-- **User Search (`-Search`)**: Quickly find users by DisplayName, email, or department.
+- **Executive Licensing Summary**: Dual-table inventory reporting paid subscriptions and free pools with real-time capacity tags.
+- **Summary-Only Mode (`-LicenseSummary`)**: Instantly inspect tenant license quotas and utilization without dumping individual user accounts.
+- **Grouped Tabular Reporting**: Users are automatically grouped by base license plan with summary statistics and zero header wrapping.
+- **Partial License Filter (`-LicenseFilter`)**: Quickly filter users by partial plan names (e.g., `-LicenseFilter "Business"`, `-LicenseFilter "Defender"`).
+- **Simple vs. Detailed Mode (`-Details`)**: Toggle between a streamlined view and an extended audit view with Department, Job Title, Location, Creation Date, and Archive status.
+- **User Search (`-Search`)**: Quickly find users by DisplayName, email, department, or job title.
 - **CSV Export (`-ExportCsv`)**: Save clean, UTF-8 encoded audit reports directly to disk.
 - **Pipeline Integration (`-PassThru`)**: Emit custom PowerShell objects to the pipeline for downstream commands or `Out-GridView`.
 - **Offline / Skip Graph Option (`-SkipGraph`)**: Audit solely via Exchange Online without connecting to Microsoft Graph.
 - **Security & Input Sanitization**: Robust defense against command injection or illegal parameter characters.
-- **Cross-Platform & Bilingual Compatibility**: Fully compatible with PowerShell 5.1 and 7+ across English and Polish Windows operating systems.
+- **Cross-Platform Compatibility**: Fully compatible with Windows PowerShell 5.1 and PowerShell 7+ across English and Polish environments.
 
 ---
 
@@ -44,7 +46,7 @@ A production-ready PowerShell audit and reporting script for Microsoft 365 admin
   ```powershell
   Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser
   ```
-- **Optional Module** (for tenant-wide free/used license pools): `Microsoft.Graph.Authentication` and `Microsoft.Graph.Users`:
+- **Optional Module** (for tenant-wide free/used license pools and assigned SKU details): `Microsoft.Graph.Authentication` and `Microsoft.Graph.Users`:
   ```powershell
   Install-Module -Name Microsoft.Graph.Authentication, Microsoft.Graph.Users -Scope CurrentUser
   ```
@@ -75,54 +77,61 @@ Running without arguments displays the built-in help banner, parameters, and exa
 ```
 
 ### 2. List All Licensed Users (Simple Grouped View)
-Retrieves all licensed accounts with row numbers, single email column, and license summary:
+Retrieves all licensed accounts grouped by base plan with assigned licenses, row numbers, and executive licensing summary:
 
 ```powershell
 .\Get-M365Users.ps1 -All
 ```
 
 ### 3. List All Licensed Users with Extended Details
-Includes organizational columns (Department, Job Title, Office/City, Country, Creation Date, Archive):
+Includes organizational columns (Department / Title, Location, Mailbox Type, Creation Date, Archive Status):
 
 ```powershell
 .\Get-M365Users.ps1 -All -Details
 ```
 
-### 4. Filter by Partial License Name
+### 4. Display Executive License Summary Only
+Displays only the tenant quota tables and user breakdown without printing user accounts:
+
+```powershell
+.\Get-M365Users.ps1 -LicenseSummary
+```
+
+### 5. Filter by Partial License Name
 Filter for Business-tier users:
 
 ```powershell
 .\Get-M365Users.ps1 -LicenseFilter "Business"
 ```
 
-Filter for Enterprise (E3/E5) users with full details:
+Filter for Defender-licensed users with full details:
 
 ```powershell
-.\Get-M365Users.ps1 -LicenseFilter "Enterprise" -Details
+.\Get-M365Users.ps1 -LicenseFilter "Defender" -Details
 ```
 
-### 5. Search for a Specific User
-Search by name, email, or department:
+### 6. Search for a Specific User
+Search by name, email, department, or job title:
 
 ```powershell
 .\Get-M365Users.ps1 -Search "kowalski" -Details
 ```
 
-### 6. Export Report to CSV File
+### 7. Export Report to CSV File
 Audit all licensed users and export the report to a CSV file:
 
 ```powershell
 .\Get-M365Users.ps1 -All -ExportCsv "C:\Reports\M365_LicensedUsers.csv"
 ```
 
-### 7. Interactive GridView / Pipeline Output
+### 8. Interactive GridView / Pipeline Output
 Output flat records directly into an interactive GUI grid:
 
 ```powershell
 .\Get-M365Users.ps1 -All -NoGrouping -PassThru | Out-GridView
 ```
 
-### 8. Run Strictly via Exchange Online (Skip Microsoft Graph)
+### 9. Run Strictly via Exchange Online (Skip Microsoft Graph)
 ```powershell
 .\Get-M365Users.ps1 -All -SkipGraph
 ```
@@ -131,41 +140,70 @@ Output flat records directly into an interactive GUI grid:
 
 ## Output Modes & Columns
 
-| Column Name | Simple Mode | Detailed Mode (`-Details`) | Description |
-| :--- | :---: | :---: | :--- |
-| **Nr** | Yes | Yes | Sequential row number (1..N) |
-| **Imię i nazwisko** | Yes | Yes | User's full display name |
-| **Email** | Yes | Yes | Consolidated primary email address / UPN |
-| **Przypisane licencje** | Yes | Yes | Assigned M365 license(s) or Exchange mailbox plan |
-| **Dział** | - | Yes | User's assigned department |
-| **Stanowisko** | - | Yes | Job title / position |
-| **Biuro / Miasto** | - | Yes | Physical office location or city |
-| **Kraj** | - | Yes | Country / region code |
-| **Typ konta** | Yes | Yes | Mailbox classification (`UserMailbox`, `SharedMailbox`, etc.) |
-| **Utworzono** | - | Yes | Account or mailbox creation timestamp |
-| **Archiwum** | - | Yes | In-Place Archive status (`None`, `Active`, `Local`) |
+### Simple Mode (`-All`)
+
+| Column Name | Width | Description |
+| :--- | :---: | :--- |
+| **Nr** | 4 | Sequential row index (1..N) |
+| **Display Name** | 25 | Full user display name |
+| **Email** | 34 | Consolidated primary email address |
+| **Base License** | 32 | Core commercial subscription plan (e.g. *Microsoft 365 Business Standard*) |
+| **Add-on Licenses** | 26 | Assigned security/feature add-ons (e.g. *Defender for Office 365 (Plan 1)*) |
+| **Department** | 20 | User's organizational department |
+
+### Detailed Mode (`-All -Details`)
+
+| Column Name | Width | Description |
+| :--- | :---: | :--- |
+| **Nr** | 4 | Sequential row index (1..N) |
+| **Display Name** | 22 | Full user display name |
+| **Email** | 32 | Consolidated primary email address |
+| **Base License** | 32 | Core commercial subscription plan |
+| **Add-on Licenses** | 22 | Secondary add-on and complimentary licenses |
+| **Dept / Job Title** | 20 | Consolidated department and job title |
+| **Location** | 15 | City, office, or country |
+| **Type** | 12 | Recipient type (`UserMailbox`, `EntraUser`) |
+| **Created** | 11 | Creation date (`yyyy-MM-dd`) |
+| **Archive** | 7 | In-Place Archive status (`None`, `Active`) |
 
 ---
 
-## Summary Section at the Bottom
+## Executive Licensing Summary
 
-At the end of every execution, the script renders a structured summary:
+Rendered at the end of every user report or as the standalone output of `-LicenseSummary`:
 
 ```text
 ================================================================================
-PODSUMOWANIE LICENCJI I UŻYTKOWNIKÓW (EXECUTIVE SUMMARY)
+EXECUTIVE LICENSING SUMMARY (PODSUMOWANIE LICENCJI)
 ================================================================================
-  Łączna liczba licencjonowanych użytkowników : 54
-  Liczba typów licencji / planów w zestawieniu: 3
+  Total Licensed Users Found : 55
+  Primary Base License Plans : 2
+  Total Subscription Pools   : 8
 
-  ZESTAWIENIE LICENCJI TENANTA (SUBKRYPCJE M365):
-Typ licencji / SKU                  Wykorzystane (Used)   Wolne (Free)   Łącznie (Total)
-------------------                  -------------------   ------------   ---------------
-Microsoft 365 Business Premium                       25              5                30
-Exchange Online Plan 2                               15              2                17
-Microsoft 365 Apps for business                      14              1                15
+[1] COMMERCIAL SUBSCRIPTIONS (PLATNE LICENCJE I DODATKI):
+  Nr License / Plan Name                    Used     Free    Total   Util % Status
+  -- -------------------                    ----     ----    -----   ------ ------
+   1 Microsoft 365 Business Standard          53        4       57    93.0% [OK]
+   2 Microsoft 365 Business Premium            1        0        1   100.0% [FULL - 0 FREE]
+   3 Defender for Office 365 (Plan 1)         23        2       25    92.0% [OK]
+  -----------------------------------------------------------------------------
+     COMMERCIAL TOTALS: Used = 77 | Free = 6 | Total = 83 (92.8% Utilized)
 
-  SUMA POZYCJI SUBSKRYPCJI: Wykorzystane = 54 | Wolne = 8 | Łącznie = 62
+[2] COMPLIMENTARY & FREE CLOUD SERVICES (BEZPLATNE USLUGI W CHMURZE):
+  Nr Service / Pool Name                    Used     Free    Total Status
+  -- -------------------                    ----     ----    ----- ------
+   1 Power Automate (Free)                    15    9,985   10,000 [Available]
+   2 Power BI (Free)                           1  999,999 1,000,000 [Available]
+   3 Azure Rights Management (Free)            1   49,999   50,000 [Available]
+
+[3] USER COUNT BY PRIMARY BASE LICENSE (LICZBA UZYTKOWNIKOW WG LICENCJI BAZOWEJ):
+  Nr Primary Base License Plan        User Count   Share %
+  -- -------------------------        ----------   -------
+   1 Microsoft 365 Business Standard          53     96.4%
+   2 Microsoft 365 Business Premium            1      1.8%
+   3 EntraUser (No Mailbox)                    1      1.8%
+  --------------------------------------------------------
+     TOTAL LICENSED USERS:                    55    100.0%
 ================================================================================
 ```
 
@@ -176,9 +214,10 @@ Microsoft 365 Apps for business                      14              1          
 | Parameter | Alias | Type | Description |
 | :--- | :--- | :--- | :--- |
 | `-All` | - | `Switch` | Lists all licensed users in the tenant. |
-| `-LicenseFilter` | `-License`, `-Plan` | `String` | Filters users matching a partial license or mailbox plan name. |
+| `-LicenseFilter` | `-License`, `-Plan` | `String` | Filters users matching a partial license or plan name. |
 | `-Details` | `-d`, `-Detailed` | `Switch` | Displays extended user attributes in additional columns. |
-| `-Search` | `-FilterUser`, `-User` | `String` | Searches users by DisplayName, email, or department. |
+| `-Search` | `-FilterUser`, `-User` | `String` | Searches users by DisplayName, email, department, or title. |
+| `-LicenseSummary` | `-SummaryOnly`, `-Quota` | `Switch` | Displays only the executive licensing summary tables. |
 | `-ExportCsv` | `-CsvPath`, `-Export` | `String` | Exports the retrieved records to a UTF-8 CSV report. |
 | `-NoGrouping` | - | `Switch` | Displays a single flat table instead of grouped plan sections. |
 | `-PassThru` | - | `Switch` | Emits custom `PSCustomObject` items to the PowerShell pipeline. |
@@ -193,4 +232,4 @@ Microsoft 365 Apps for business                      14              1          
 - **Author**: Roman Pindela
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
-- **Version**: 1.2.0
+- **Version**: 1.3.0

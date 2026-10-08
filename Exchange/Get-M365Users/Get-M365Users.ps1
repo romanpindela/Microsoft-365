@@ -1,34 +1,41 @@
 <#
 .SYNOPSIS
-    Lists and audits licensed Microsoft 365 users via Exchange Online and Microsoft Graph in a grouped tabular format.
+    Lists and audits licensed Microsoft 365 users via Exchange Online and Microsoft Graph in a structured, grouped tabular format.
 
 .DESCRIPTION
     This script connects to Exchange Online (prompting for administrator authentication if needed)
-    and Microsoft Graph (to retrieve tenant license inventory, consumed/free license counts, and
+    and Microsoft Graph (to retrieve tenant license inventory, consumed/free license quotas, and
     assigned license SKUs). Displays all licensed users in a formatted, grouped tabular layout with:
     - Row numbering (Nr) at the beginning of each list
-    - Single consolidated email column and full display name (Imie i nazwisko)
-    - Assigned licenses column in every view (both Simple and Detailed modes)
-    - Executive summary at the bottom with total user count, consumed licenses, and free licenses by type
-    - Filtering by partial license name (-LicenseFilter) and user search (-Search)
-    - Detailed mode (-Details) with organizational attributes (Department, Title, Location, Archive)
+    - Consolidated single email column and full display name (Imie i nazwisko)
+    - Intelligent license separation: Base Commercial Plan vs. Add-ons & Free services
+    - Clear user grouping by primary commercial plan (prevents scattering across add-ons)
+    - Executive Licensing Summary with paid commercial subscriptions separated from free pools
+    - Real-time utilization percentage and capacity status tags ([OK], [LOW], [FULL])
+    - Filtering by partial license name (-LicenseFilter), user search (-Search), and summary-only mode (-LicenseSummary)
+    - Detailed mode (-Details) with organizational attributes (Department, Title, Location, Creation Date, Archive)
     - CSV export (-ExportCsv) and pipeline pass-through (-PassThru)
 
 .PARAMETER All
     Switch parameter. Lists all licensed users in the tenant.
 
 .PARAMETER LicenseFilter
-    Filters users by matching a partial license name or plan (e.g. "Enterprise", "Deskless", "Business", "E3").
+    Filters users by matching a partial license name or plan (e.g. "Business", "Enterprise", "Standard", "Defender").
     Aliases: -License, -Plan.
 
 .PARAMETER Details
-    Switch parameter. Displays extended user attributes in additional columns (Department, Title, Office/City,
-    Country, Creation Date, Archive Status).
+    Switch parameter. Displays extended user attributes in additional columns (Department, Title, Location,
+    Recipient Type, Creation Date, Archive Status).
     Aliases: -d, -Detailed.
 
 .PARAMETER Search
-    Optional string filter for matching DisplayName, Email, or Department.
+    Optional string filter for matching DisplayName, Email, Department, or Title.
     Aliases: -FilterUser, -User.
+
+.PARAMETER LicenseSummary
+    Switch parameter. Displays only the Executive Licensing Summary tables (quotas, free/used counts,
+    and user distribution) without printing the individual user lists.
+    Aliases: -SummaryOnly, -Quota, -Summary.
 
 .PARAMETER ExportCsv
     Optional file path to export the collected user data into a UTF-8 CSV report.
@@ -56,29 +63,40 @@
 
 .EXAMPLE
     .\Get-M365Users.ps1 -All
-    Lists all licensed users with assigned licenses, row numbers, single email column, and tenant license summary.
+    Lists all licensed users grouped by their base license plan with assigned licenses, row numbers,
+    single email column, and tenant license quota summary.
 
 .EXAMPLE
     .\Get-M365Users.ps1 -All -Details
-    Lists all licensed users with full detailed columns (Department, Title, Office, Archive) and license summary.
+    Lists all licensed users with extended organizational columns (Department, Title, Location, Archive)
+    and tenant license quota summary.
+
+.EXAMPLE
+    .\Get-M365Users.ps1 -LicenseSummary
+    Displays only the executive licensing summary tables (commercial subscriptions, free services,
+    and user distribution) without listing individual users.
 
 .EXAMPLE
     .\Get-M365Users.ps1 -LicenseFilter "Business"
-    Filters users who hold a Business-tier license plan (e.g. Microsoft 365 Business Premium / Standard).
+    Filters users holding a Business-tier plan (e.g. Microsoft 365 Business Standard / Premium).
+
+.EXAMPLE
+    .\Get-M365Users.ps1 -Search "kowalski" -Details
+    Searches for users matching "kowalski" and displays detailed organizational information.
 
 .EXAMPLE
     .\Get-M365Users.ps1 -All -ExportCsv "C:\Reports\LicensedUsers.csv"
-    Audits all licensed users and saves the tabular report to a CSV file.
+    Audits all licensed users and saves the comprehensive report to a UTF-8 CSV file.
 
 .EXAMPLE
     .\Get-M365Users.ps1 -All -NoGrouping -PassThru | Out-GridView
-    Lists all licensed users in a flat table and passes objects to Out-GridView.
+    Lists all licensed users in a flat table and pipes custom objects to Out-GridView.
 
 .NOTES
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: https://github.com/romanpindela
-    Version: 1.2.1
+    Version: 1.3.0
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Default')]
@@ -97,6 +115,10 @@ param(
     [Parameter(ParameterSetName = 'Default')]
     [Alias('FilterUser', 'User')]
     [string]$Search,
+
+    [Parameter(ParameterSetName = 'Default')]
+    [Alias('SummaryOnly', 'Quota', 'Summary')]
+    [switch]$LicenseSummary,
 
     [Parameter(ParameterSetName = 'Default')]
     [Alias('CsvPath', 'Export')]
@@ -128,7 +150,7 @@ function Show-ScriptHelp {
     $helpLines = @(
         "================================================================================",
         "SCRIPT: Get-M365Users.ps1",
-        "VERSION: 1.2.1",
+        "VERSION: 1.3.0",
         "AUTHOR: Roman Pindela",
         "CONTACT: roman.pindela@gmail.com | https://github.com/romanpindela",
         "================================================================================",
@@ -137,33 +159,37 @@ function Show-ScriptHelp {
         "    Lists and audits licensed Microsoft 365 users via Exchange Online & Graph.",
         "    Presents users in a structured tabular format with row numbering (Nr),",
         "    single email column, full names, and assigned licenses in every view.",
-        "    Displays an executive summary at the bottom with total user count,",
-        "    consumed licenses, and free (available) licenses by type.",
+        "    Intelligently classifies Base Commercial Plans vs Add-ons to avoid scattering",
+        "    users into disjoint groups. Displays an Executive Licensing Summary at the",
+        "    bottom with commercial vs free pools, free quotas, and utilization alerts.",
         "",
         "AUTHENTICATION & PREREQUISITES:",
         "    Requires 'ExchangeOnlineManagement' and optionally 'Microsoft.Graph.Authentication'.",
         "    Automatically detects active Exchange Online sessions or prompts for sign-in.",
         "",
         "USAGE EXAMPLES:",
-        "    # 1. List all licensed users with license inventory summary:",
+        "    # 1. List all licensed users with executive license summary:",
         "    .\Get-M365Users.ps1 -All",
         "",
         "    # 2. List all licensed users with extended organizational attributes:",
         "    .\Get-M365Users.ps1 -All -Details",
         "",
-        "    # 3. Filter users by partial license name (e.g., Enterprise, Business, Kiosk):",
+        "    # 3. Display only the executive license quota summary (no user list):",
+        "    .\Get-M365Users.ps1 -LicenseSummary",
+        "",
+        "    # 4. Filter users by partial license name (e.g., Business, Enterprise, Defender):",
         "    .\Get-M365Users.ps1 -LicenseFilter `"Business`"",
         "",
-        "    # 4. Search for a specific user and inspect details:",
+        "    # 5. Search for a specific user and inspect details:",
         "    .\Get-M365Users.ps1 -Search `"kowalski`" -Details",
         "",
-        "    # 5. Export report to CSV file:",
+        "    # 6. Export report to CSV file:",
         "    .\Get-M365Users.ps1 -All -ExportCsv `"C:\Reports\LicensedUsers.csv`"",
         "",
-        "    # 6. Run strictly via Exchange Online without Microsoft Graph:",
+        "    # 7. Run strictly via Exchange Online without Microsoft Graph:",
         "    .\Get-M365Users.ps1 -All -SkipGraph",
         "",
-        "    # 7. Pipe custom objects to Out-GridView (flat view):",
+        "    # 8. Pipe custom objects to Out-GridView (flat view):",
         "    .\Get-M365Users.ps1 -All -NoGrouping -PassThru | Out-GridView",
         "",
         "PARAMETERS:",
@@ -171,6 +197,7 @@ function Show-ScriptHelp {
         "    -LicenseFilter, -License  Filter users by partial license or plan name.",
         "    -Details, -d            Display detailed attributes in additional columns.",
         "    -Search, -User          Filter users by DisplayName, Email, or Department.",
+        "    -LicenseSummary, -Quota Display only the executive licensing summary tables.",
         "    -ExportCsv, -Export     File path to export results to CSV (UTF-8).",
         "    -NoGrouping             Output a single flat table instead of grouped sections.",
         "    -PassThru               Emit custom PSObjects to the pipeline.",
@@ -246,15 +273,41 @@ function Get-ObjectPropertyValue {
         [object]$DefaultValue = '-'
     )
     if ($null -eq $InputObject) { return $DefaultValue }
-    
-    $prop = $InputObject.PSObject.Properties[$PropertyName]
-    if ($null -ne $prop -and $null -ne $prop.Value) {
-        $val = [string]$prop.Value
-        if (-not [string]::IsNullOrWhiteSpace($val)) {
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        if ($InputObject.Contains($PropertyName) -and $null -ne $InputObject[$PropertyName]) {
+            $val = $InputObject[$PropertyName]
+            if ($val -is [string] -and [string]::IsNullOrWhiteSpace($val)) { return $DefaultValue }
             return $val
         }
+        return $DefaultValue
+    }
+
+    $prop = $InputObject.PSObject.Properties[$PropertyName]
+    if ($null -ne $prop -and $null -ne $prop.Value) {
+        $val = $prop.Value
+        if ($val -is [string] -and [string]::IsNullOrWhiteSpace($val)) { return $DefaultValue }
+        return $val
     }
     return $DefaultValue
+}
+
+# ----------------------------------------------------------------------
+# Helper: Safe Date Formatter (Prevents Console Width Truncation)
+# ----------------------------------------------------------------------
+function Format-DateValue {
+    param([object]$DateValue)
+    if ($null -eq $DateValue -or $DateValue -eq '-' -or [string]::IsNullOrWhiteSpace([string]$DateValue)) {
+        return '-'
+    }
+    if ($DateValue -is [datetime]) {
+        return $DateValue.ToString("yyyy-MM-dd")
+    }
+    $parsedDate = [datetime]::MinValue
+    if ([datetime]::TryParse([string]$DateValue, [ref]$parsedDate)) {
+        return $parsedDate.ToString("yyyy-MM-dd")
+    }
+    return [string]$DateValue
 }
 
 # ----------------------------------------------------------------------
@@ -290,28 +343,138 @@ try {
 # Friendly M365 SKU Names Dictionary
 # ----------------------------------------------------------------------
 $knownSkuDictionary = @{
+    # Microsoft 365 Commercial Suites
+    "O365_BUSINESS_PREMIUM"     = "Microsoft 365 Business Standard"
+    "SMB_BUSINESS_PREMIUM"      = "Microsoft 365 Business Premium"
+    "SPB"                       = "Microsoft 365 Business Premium"
+    "O365_BUSINESS_ESSENTIALS"  = "Microsoft 365 Business Basic"
+    "SMB_BUSINESS"              = "Microsoft 365 Apps for business"
+    "OFFICESUBSCRIPTION"        = "Microsoft 365 Apps for enterprise"
     "ENTERPRISEPACK"            = "Office 365 E3"
     "ENTERPRISEPREMIUM"         = "Office 365 E5"
     "STANDARDPACK"              = "Office 365 E1"
     "SPE_E3"                    = "Microsoft 365 E3"
     "SPE_E5"                    = "Microsoft 365 E5"
-    "SPB"                       = "Microsoft 365 Business Premium"
-    "O365_BUSINESS_PREMIUM"     = "Microsoft 365 Business Standard"
-    "O365_BUSINESS_ESSENTIALS"  = "Microsoft 365 Business Basic"
-    "SMB_BUSINESS_PREMIUM"      = "Microsoft 365 Business Premium"
-    "SMB_BUSINESS"              = "Microsoft 365 Apps for business"
-    "OFFICESUBSCRIPTION"        = "Microsoft 365 Apps for enterprise"
+    "SPE_F1"                    = "Microsoft 365 F1"
+    "DESKLESSPACK"              = "Office 365 F3"
+    "TEAMS_EXPLORATORY"         = "Microsoft Teams Exploratory"
+    "TEAMS_ESSENTIALS"          = "Microsoft Teams Essentials"
+
+    # Exchange Online Standalone Plans
     "EXCHANGEENTERPRISE"        = "Exchange Online Plan 2"
     "EXCHANGESTANDARD"          = "Exchange Online Plan 1"
     "EXCHANGEDESKLESS"          = "Exchange Online Kiosk"
-    "TEAMS_EXPLORATORY"         = "Microsoft Teams Exploratory"
+    "EXCHANGEARCHIVE"           = "Exchange Online Archiving"
+    "EXCHANGEARCHIVE_ADDON"     = "Exchange Online Archiving"
+
+    # Security & Compliance Add-ons
+    "ATP_ENTERPRISE"            = "Defender for Office 365 (Plan 1)"
+    "THREAT_INTELLIGENCE"       = "Defender for Office 365 (Plan 2)"
+    "CCIBEAGLE"                 = "Microsoft Defender for Cloud Apps"
+    "EMS"                       = "Enterprise Mobility + Security E3"
+    "EMSPREMIUM"                = "Enterprise Mobility + Security E5"
+    "AAD_PREMIUM"               = "Microsoft Entra ID P1"
+    "AAD_PREMIUM_P2"            = "Microsoft Entra ID P2"
+    "INTUNE_A"                  = "Microsoft Intune Plan 1"
+
+    # Power Platform & Productivity
     "POWER_BI_STANDARD"         = "Power BI (Free)"
     "POWER_BI_PRO"              = "Power BI Pro"
     "POWER_BI_PREMIUM_PER_USER" = "Power BI Premium Per User"
+    "FLOW_FREE"                 = "Power Automate (Free)"
+    "POWERAPPS_VIRAL"           = "Power Apps (Free)"
     "VISIOCLIENT"               = "Visio Plan 2"
     "PROJECTCLIENT"             = "Project Plan 3"
-    "EMS"                       = "Enterprise Mobility + Security E3"
-    "EMSPREMIUM"                = "Enterprise Mobility + Security E5"
+
+    # Other Free / Add-on Pools
+    "RIGHTSMANAGEMENT_ADHOC"    = "Azure Rights Management (Free)"
+    "WINDOWS_STORE"             = "Windows Store for Business"
+    "MCOMEETADV"                = "Teams Audio Conferencing"
+    "PHONERF"                   = "Teams Phone Standard"
+    "COMMUNICATION_CREDITS"     = "Communication Credits"
+}
+
+# ----------------------------------------------------------------------
+# Helper: SKU Friendly Name & Rank Resolvers
+# ----------------------------------------------------------------------
+function Get-FriendlySkuName {
+    param([string]$SkuIdentifier)
+    if ([string]::IsNullOrWhiteSpace($SkuIdentifier)) { return "-" }
+    $clean = $SkuIdentifier.Trim()
+    if ($knownSkuDictionary.ContainsKey($clean)) {
+        return $knownSkuDictionary[$clean]
+    }
+    return $clean
+}
+
+function Get-SkuRank {
+    param([string]$SkuName)
+    # Higher rank indicates a primary base commercial subscription plan
+    if ($SkuName -match "Business Premium|Business Standard|Business Basic|Apps for|Office 365 E[135]|Microsoft 365 E[35]|Microsoft 365 F[13]|Exchange Online Plan [12]|Exchange Online Kiosk|Teams Exploratory") {
+        return 100
+    }
+    if ($SkuName -match "Defender|Archiving|Entra ID|Intune|Power BI Pro|Power BI Premium|Visio|Project|Security|Mobility") {
+        return 50
+    }
+    if ($SkuName -match "Free|AdHoc|Viral|Windows Store") {
+        return 10
+    }
+    return 30
+}
+
+function Get-SkuClassification {
+    param(
+        [string]$SkuPartNumber,
+        [string]$FriendlyName
+    )
+    if ($SkuPartNumber -in @('FLOW_FREE', 'POWER_BI_STANDARD', 'RIGHTSMANAGEMENT_ADHOC', 'WINDOWS_STORE', 'POWERAPPS_VIRAL') -or
+        $FriendlyName -match '\(Free\)' -or $FriendlyName -match 'Free|AdHoc|Viral') {
+        return @{
+            Category = 'Free / Complimentary'
+            Priority = 10
+            IsPaid   = $false
+        }
+    }
+    if ($SkuPartNumber -in @('ATP_ENTERPRISE', 'THREAT_INTELLIGENCE', 'CCIBEAGLE', 'EMS', 'EMSPREMIUM', 'AAD_PREMIUM', 'AAD_PREMIUM_P2', 'INTUNE_A', 'POWER_BI_PRO', 'POWER_BI_PREMIUM_PER_USER', 'VISIOCLIENT', 'PROJECTCLIENT', 'EXCHANGEARCHIVE', 'EXCHANGEARCHIVE_ADDON', 'MCOMEETADV', 'PHONERF') -or
+        $FriendlyName -match 'Defender|Archiving|Mobility|Entra ID|Intune|Visio|Project|Conferencing') {
+        return @{
+            Category = 'Paid Commercial Add-on'
+            Priority = 50
+            IsPaid   = $true
+        }
+    }
+    return @{
+        Category = 'Commercial Suite / Core Plan'
+        Priority = 100
+        IsPaid   = $true
+    }
+}
+
+function Split-UserLicenses {
+    param([string]$AssignedLicensesString)
+    if ([string]::IsNullOrWhiteSpace($AssignedLicensesString)) {
+        return @{ BaseLicense = "-"; AddOns = "-" }
+    }
+    $rawParts = @($AssignedLicensesString -split "," | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $friendlyParts = @($rawParts | ForEach-Object { Get-FriendlySkuName $_ })
+    if ($friendlyParts.Count -eq 0) {
+        return @{ BaseLicense = "-"; AddOns = "-" }
+    }
+    $ranked = @($friendlyParts | ForEach-Object {
+        [PSCustomObject]@{
+            Name = $_
+            Rank = Get-SkuRank $_
+        }
+    } | Sort-Object Rank -Descending)
+
+    $basePlan = $ranked[0].Name
+    $addOnList = @($ranked | Select-Object -Skip 1 | ForEach-Object { $_.Name })
+    $addOnStr = if ($addOnList.Count -gt 0) { $addOnList -join ", " } else { "-" }
+
+    return @{
+        BaseLicense = $basePlan
+        AddOns      = $addOnStr
+    }
 }
 
 # ----------------------------------------------------------------------
@@ -319,7 +482,8 @@ $knownSkuDictionary = @{
 # ----------------------------------------------------------------------
 $graphSkusMap = @{}
 $graphUsersMap = @{}
-$tenantSkuInventory = [System.Collections.Generic.List[PSCustomObject]]::new()
+$tenantCommercialSkus = [System.Collections.Generic.List[PSCustomObject]]::new()
+$tenantFreeSkus       = [System.Collections.Generic.List[PSCustomObject]]::new()
 $usingGraph = $false
 
 if (-not $SkipGraph) {
@@ -328,7 +492,7 @@ if (-not $SkipGraph) {
         try {
             $mgContext = Get-MgContext -ErrorAction SilentlyContinue
             if ($null -eq $mgContext) {
-                Write-Host "[*] Connecting to Microsoft Graph for tenant license inventory (total/free counts)..." -ForegroundColor Cyan
+                Write-Host "[*] Connecting to Microsoft Graph for tenant license inventory (total/free quotas)..." -ForegroundColor Cyan
                 Connect-MgGraph -Scopes "User.Read.All", "Organization.Read.All" -NoWelcome -ErrorAction Stop
             }
             Write-Host "[+] Microsoft Graph connection established." -ForegroundColor Green
@@ -342,11 +506,7 @@ if (-not $SkipGraph) {
                 foreach ($sku in $skusResponse.value) {
                     $skuId = $sku.skuId
                     $skuPart = $sku.skuPartNumber
-                    $friendlyName = if ($knownSkuDictionary.ContainsKey($skuPart)) {
-                        $knownSkuDictionary[$skuPart]
-                    } else {
-                        $skuPart
-                    }
+                    $friendlyName = Get-FriendlySkuName $skuPart
 
                     $graphSkusMap[$skuId] = $friendlyName
 
@@ -357,16 +517,45 @@ if (-not $SkipGraph) {
                     $consumed = [int]$sku.consumedUnits
                     $free = [Math]::Max(0, ($prepaid - $consumed))
 
-                    $skuRow = [PSCustomObject]@{
-                        'License Plan / SKU'    = $friendlyName
-                        'SKU Part'              = $skuPart
-                        'Used (Wykorzystane)'   = $consumed
-                        'Free (Wolne)'          = $free
-                        'Total (Zakupione)'     = $prepaid
+                    $classification = Get-SkuClassification -SkuPartNumber $skuPart -FriendlyName $friendlyName
+
+                    $utilizationPct = if ($prepaid -gt 0) {
+                        ([double]$consumed / [double]$prepaid * 100).ToString("N1") + "%"
+                    } else {
+                        "N/A"
                     }
-                    $tenantSkuInventory.Add($skuRow)
+
+                    $statusTag = if ($prepaid -eq 0) {
+                        "[Unlimited / N/A]"
+                    } elseif ($free -eq 0) {
+                        "[FULL - 0 FREE]"
+                    } elseif ($free -le 2) {
+                        "[LOW - $free FREE]"
+                    } else {
+                        "[OK]"
+                    }
+
+                    $rowObj = [PSCustomObject]@{
+                        Nr          = 0
+                        Plan        = $friendlyName
+                        SkuPart     = $skuPart
+                        Used        = $consumed
+                        Free        = $free
+                        Total       = $prepaid
+                        Utilization = $utilizationPct
+                        Status      = $statusTag
+                        Category    = $classification.Category
+                        IsPaid      = $classification.IsPaid
+                    }
+
+                    if ($classification.IsPaid) {
+                        $tenantCommercialSkus.Add($rowObj)
+                    } else {
+                        $rowObj.Status = "[Available]"
+                        $tenantFreeSkus.Add($rowObj)
+                    }
                 }
-                Write-Host "    Found $($tenantSkuInventory.Count) subscription license pool(s)." -ForegroundColor Gray
+                Write-Host "    Found $($tenantCommercialSkus.Count) commercial and $($tenantFreeSkus.Count) free subscription pool(s)." -ForegroundColor Gray
             }
 
             # Fetch licensed user details via Graph if Microsoft.Graph.Users is available
@@ -426,10 +615,10 @@ function Get-FriendlyLicenseName {
     }
 
     switch -Regex ($cleanPlan) {
-        "ExchangeOnlineEnterprise"  { return "Exchange Online Plan 2 (Enterprise / E3 / E5)" }
-        "ExchangeOnlineDeskless"    { return "Exchange Online Kiosk (Deskless / F1 / F3)" }
-        "ExchangeOnlineEssentials"  { return "Exchange Online Plan 1 (Essentials / Business)" }
-        "ExchangeOnline"            { return "Exchange Online Plan 1 (Standard / E1)" }
+        "ExchangeOnlineEnterprise"  { return "Exchange Online Plan 2" }
+        "ExchangeOnlineDeskless"    { return "Exchange Online Kiosk" }
+        "ExchangeOnlineEssentials"  { return "Exchange Online Plan 1" }
+        "ExchangeOnline"            { return "Exchange Online Plan 1" }
         "ExchangeOnlineDevice"      { return "Exchange Online Device" }
         "ExchangeOnlineArchive"     { return "Exchange Online Archiving" }
         default                     { return $cleanPlan }
@@ -567,6 +756,9 @@ foreach ($mbx in $licensedMailboxes) {
         }
     }
 
+    # Classify Base License vs Add-ons
+    $licClassification = Split-UserLicenses -AssignedLicensesString $assignedLicenses
+
     # Retrieve Department, Title, Office, City, CountryOrRegion
     $dept    = '-'
     $title   = '-'
@@ -589,17 +781,12 @@ foreach ($mbx in $licensedMailboxes) {
         $country = Get-ObjectPropertyValue $mbx 'CountryOrRegion' '-'
     }
 
-    # Creation date formatting
+    # Format creation date cleanly (yyyy-MM-dd)
     $createdRaw = Get-ObjectPropertyValue $mbx 'WhenMailboxCreated' $null
     if ($null -eq $createdRaw -or $createdRaw -eq '-') {
         $createdRaw = Get-ObjectPropertyValue $mbx 'WhenCreated' $null
     }
-    $createdDate = '-'
-    if ($null -ne $createdRaw -and $createdRaw -is [datetime]) {
-        $createdDate = $createdRaw.ToString("yyyy-MM-dd HH:mm")
-    } elseif ($null -ne $createdRaw -and $createdRaw -ne '-') {
-        $createdDate = [string]$createdRaw
-    }
+    $createdDate = Format-DateValue $createdRaw
 
     $archiveVal  = Get-ObjectPropertyValue $mbx 'ArchiveStatus' 'None'
     $hiddenVal   = Get-ObjectPropertyValue $mbx 'HiddenFromAddressListsEnabled' 'False'
@@ -613,20 +800,49 @@ foreach ($mbx in $licensedMailboxes) {
         '-'
     }
 
+    # Compact compound values for detailed display
+    $deptTitle = if ($dept -ne '-' -and $title -ne '-') {
+        "$dept / $title"
+    } elseif ($dept -ne '-') {
+        $dept
+    } elseif ($title -ne '-') {
+        $title
+    } else {
+        '-'
+    }
+
+    $location = if ($city -ne '-' -and $country -ne '-') {
+        "$city / $country"
+    } elseif ($office -ne '-' -and $country -ne '-') {
+        "$office / $country"
+    } elseif ($country -ne '-') {
+        $country
+    } elseif ($city -ne '-') {
+        $city
+    } elseif ($office -ne '-') {
+        $office
+    } else {
+        '-'
+    }
+
     $userObj = [PSCustomObject]@{
         Nr                     = 0
         DisplayName            = $dispName
         Email                  = $email
         UserPrincipalName      = $upn
+        BaseLicense            = $licClassification.BaseLicense
+        AddOns                 = $licClassification.AddOns
         License                = $assignedLicenses
-        PrimaryLicense         = if (-not [string]::IsNullOrWhiteSpace($assignedLicenses)) { ($assignedLicenses -split ',')[0].Trim() } else { $friendlyPlan }
+        PrimaryLicense         = $licClassification.BaseLicense
         MailboxPlan            = $cleanPlanName
         RecipientTypeDetails   = $recipType
         Department             = $dept
         Title                  = $title
+        DeptTitle              = $deptTitle
         Office                 = $office
         City                   = $city
         CountryOrRegion        = $country
+        Location               = $location
         UsageLocation          = $usageLoc
         WhenCreated            = $createdDate
         ArchiveStatus          = $archiveVal
@@ -636,15 +852,14 @@ foreach ($mbx in $licensedMailboxes) {
     $processedUsers.Add($userObj)
 }
 
-# If Graph is enabled, also add licensed users without an Exchange mailbox (e.g. Teams-only / PowerBI accounts)
+# If Graph is enabled, also add licensed users without an Exchange mailbox (e.g. Teams-only / Entra accounts)
 if ($usingGraph) {
     foreach ($entry in $graphUsersMap.GetEnumerator()) {
         $gUpn = $entry.Key
         if (-not $seenUpns.Contains($gUpn)) {
             $gu         = $entry.Value.GraphUser
             $gLic       = $entry.Value.Licenses
-            $rawCreated = Get-ObjectPropertyValue $gu 'CreatedDateTime' $null
-            $gCreated   = if ($null -ne $rawCreated -and $rawCreated -is [datetime]) { $rawCreated.ToString("yyyy-MM-dd HH:mm") } elseif ($null -ne $rawCreated) { [string]$rawCreated } else { "-" }
+            $gCreated   = Format-DateValue (Get-ObjectPropertyValue $gu 'CreatedDateTime' $null)
             $gDispName  = Get-ObjectPropertyValue $gu 'DisplayName' '-'
             $gUpnVal    = Get-ObjectPropertyValue $gu 'UserPrincipalName' '-'
             $gMail      = Get-ObjectPropertyValue $gu 'Mail' '-'
@@ -657,21 +872,48 @@ if ($usingGraph) {
             $gUsageLoc  = Get-ObjectPropertyValue $gu 'UsageLocation' '-'
 
             $licStr = if ($gLic) { $gLic } else { "Assigned License (No Mailbox)" }
+            $gLicClassification = Split-UserLicenses -AssignedLicensesString $licStr
+
+            $gDeptTitle = if ($gDept -ne '-' -and $gTitle -ne '-') {
+                "$gDept / $gTitle"
+            } elseif ($gDept -ne '-') {
+                $gDept
+            } elseif ($gTitle -ne '-') {
+                $gTitle
+            } else {
+                '-'
+            }
+
+            $gLocation = if ($gCity -ne '-' -and $gCountry -ne '-') {
+                "$gCity / $gCountry"
+            } elseif ($gOffice -ne '-' -and $gCountry -ne '-') {
+                "$gOffice / $gCountry"
+            } elseif ($gCountry -ne '-') {
+                $gCountry
+            } elseif ($gCity -ne '-') {
+                $gCity
+            } else {
+                '-'
+            }
 
             $nonMbxObj = [PSCustomObject]@{
                 Nr                     = 0
                 DisplayName            = $gDispName
                 Email                  = $gEmail
                 UserPrincipalName      = $gUpnVal
+                BaseLicense            = $gLicClassification.BaseLicense
+                AddOns                 = $gLicClassification.AddOns
                 License                = $licStr
-                PrimaryLicense         = ($licStr -split ',')[0].Trim()
+                PrimaryLicense         = $gLicClassification.BaseLicense
                 MailboxPlan            = "NoExchangeMailbox"
                 RecipientTypeDetails   = "EntraUser (No Mailbox)"
                 Department             = $gDept
                 Title                  = $gTitle
+                DeptTitle              = $gDeptTitle
                 Office                 = $gOffice
                 City                   = $gCity
                 CountryOrRegion        = $gCountry
+                Location               = $gLocation
                 UsageLocation          = $gUsageLoc
                 WhenCreated            = $gCreated
                 ArchiveStatus          = "N/A"
@@ -689,8 +931,9 @@ if (-not [string]::IsNullOrWhiteSpace($LicenseFilter)) {
     Write-Host "[*] Applying license filter: '$LicenseFilter'..." -ForegroundColor Cyan
     $processedUsers = [System.Collections.Generic.List[PSCustomObject]]::new(
         @($processedUsers | Where-Object {
+            $_.BaseLicense -like "*$LicenseFilter*" -or
+            $_.AddOns -like "*$LicenseFilter*" -or
             $_.License -like "*$LicenseFilter*" -or
-            $_.PrimaryLicense -like "*$LicenseFilter*" -or
             $_.MailboxPlan -like "*$LicenseFilter*"
         })
     )
@@ -703,7 +946,8 @@ if (-not [string]::IsNullOrWhiteSpace($Search)) {
             $_.DisplayName -like "*$Search*" -or
             $_.Email -like "*$Search*" -or
             $_.UserPrincipalName -like "*$Search*" -or
-            $_.Department -like "*$Search*"
+            $_.Department -like "*$Search*" -or
+            $_.Title -like "*$Search*"
         })
     )
 }
@@ -714,110 +958,194 @@ if ($processedUsers.Count -eq 0) {
 }
 
 # ----------------------------------------------------------------------
-# Assign Sequential Row Numbers (Nr)
+# Grouping & Sequential Numbering
 # ----------------------------------------------------------------------
-$userIndex = 1
-foreach ($u in $processedUsers) {
-    $u.Nr = $userIndex
-    $userIndex++
+# Order groups by user count descending, then sort users by DisplayName within each group
+$groups = @($processedUsers | Group-Object -Property BaseLicense | Sort-Object Count -Descending)
+
+$globalIndex = 1
+foreach ($grp in $groups) {
+    $sortedMembers = @($grp.Group | Sort-Object -Property DisplayName)
+    foreach ($member in $sortedMembers) {
+        $member.Nr = $globalIndex
+        $globalIndex++
+    }
 }
 
 Write-Host "`n[+] Found $($processedUsers.Count) licensed user(s) matching criteria.`n" -ForegroundColor Green
 
 # ----------------------------------------------------------------------
-# Define Tabular Columns (Simple vs Detailed)
-# Single email column, row number (Nr) at start, assigned licenses in all views
+# Render User Tables (Grouped vs Flat)
+# Skipped if -LicenseSummary is specified
 # ----------------------------------------------------------------------
-if ($Details) {
-    $tableColumns = @(
-        @{ Label = 'Nr';                Expression = { $_.Nr };                   Width = 4 },
-        @{ Label = 'Display Name';      Expression = { $_.DisplayName };          Width = 22 },
-        @{ Label = 'Email';             Expression = { $_.Email };                Width = 28 },
-        @{ Label = 'Assigned Licenses'; Expression = { $_.License };            Width = 30 },
-        @{ Label = 'Department';        Expression = { $_.Department };           Width = 14 },
-        @{ Label = 'Job Title';         Expression = { $_.Title };                Width = 18 },
-        @{ Label = 'Office / City';     Expression = { if ($_.Office -ne '-' -and $_.City -ne '-') { "$($_.Office) / $($_.City)" } elseif ($_.Office -ne '-') { $_.Office } else { $_.City } }; Width = 16 },
-        @{ Label = 'Country';           Expression = { $_.CountryOrRegion };      Width = 8 },
-        @{ Label = 'Recipient Type';    Expression = { $_.RecipientTypeDetails }; Width = 14 },
-        @{ Label = 'Created Date';      Expression = { $_.WhenCreated };          Width = 16 },
-        @{ Label = 'Archive';           Expression = { $_.ArchiveStatus };        Width = 9 }
-    )
-} else {
-    $tableColumns = @(
-        @{ Label = 'Nr';                Expression = { $_.Nr };                   Width = 4 },
-        @{ Label = 'Display Name';      Expression = { $_.DisplayName };          Width = 25 },
-        @{ Label = 'Email';             Expression = { $_.Email };                Width = 32 },
-        @{ Label = 'Assigned Licenses'; Expression = { $_.License };            Width = 35 },
-        @{ Label = 'Recipient Type';    Expression = { $_.RecipientTypeDetails }; Width = 16 }
-    )
-}
+if (-not $LicenseSummary) {
+    if ($Details) {
+        $tableColumns = @(
+            @{ Label = 'Nr';              Expression = { $_.Nr };          Width = 4 },
+            @{ Label = 'Display Name';    Expression = { $_.DisplayName }; Width = 22 },
+            @{ Label = 'Email';           Expression = { $_.Email };       Width = 32 },
+            @{ Label = 'Base License';    Expression = { $_.BaseLicense }; Width = 32 },
+            @{ Label = 'Add-on Licenses'; Expression = { $_.AddOns };      Width = 24 },
+            @{ Label = 'Dept / Title';    Expression = { $_.DeptTitle };   Width = 20 },
+            @{ Label = 'Location';        Expression = { $_.Location };    Width = 15 },
+            @{ Label = 'Type';            Expression = { $_.RecipientTypeDetails }; Width = 12 },
+            @{ Label = 'Created';         Expression = { $_.WhenCreated }; Width = 11 },
+            @{ Label = 'Archive';         Expression = { $_.ArchiveStatus }; Width = 7 }
+        )
+    } else {
+        $tableColumns = @(
+            @{ Label = 'Nr';              Expression = { $_.Nr };          Width = 4 },
+            @{ Label = 'Display Name';    Expression = { $_.DisplayName }; Width = 25 },
+            @{ Label = 'Email';           Expression = { $_.Email };       Width = 34 },
+            @{ Label = 'Base License';    Expression = { $_.BaseLicense }; Width = 32 },
+            @{ Label = 'Add-on Licenses'; Expression = { $_.AddOns };      Width = 26 },
+            @{ Label = 'Department';      Expression = { $_.Department };  Width = 20 }
+        )
+    }
 
-# ----------------------------------------------------------------------
-# Render Tabular Display (Grouped vs Flat)
-# ----------------------------------------------------------------------
-$groups = $processedUsers | Group-Object -Property PrimaryLicense | Sort-Object Count -Descending
+    $renderWidth = 205
 
-if ($NoGrouping) {
-    Write-Host "================================================================================" -ForegroundColor Cyan
-    Write-Host "  ALL LICENSED USERS (Flat View - $($processedUsers.Count) users)" -ForegroundColor White
-    Write-Host "================================================================================" -ForegroundColor Cyan
-    $processedUsers | Format-Table -Property $tableColumns -AutoSize | Out-String | Write-Host
-} else {
-    foreach ($grp in $groups) {
+    if ($NoGrouping) {
         Write-Host "================================================================================" -ForegroundColor Cyan
-        Write-Host "  LICENSE GROUP: $($grp.Name) ($($grp.Count) users)" -ForegroundColor White
+        Write-Host "  ALL LICENSED USERS (Flat View - $($processedUsers.Count) users)" -ForegroundColor White
         Write-Host "================================================================================" -ForegroundColor Cyan
-        
-        $grp.Group | Format-Table -Property $tableColumns -AutoSize | Out-String | Write-Host
+        $flatUsers = @($processedUsers | Sort-Object Nr)
+        $flatUsers | Format-Table -Property $tableColumns | Out-String -Width $renderWidth | Write-Host
+    } else {
+        foreach ($grp in $groups) {
+            Write-Host "================================================================================" -ForegroundColor Cyan
+            Write-Host "  LICENSE GROUP: $($grp.Name) ($($grp.Count) users)" -ForegroundColor White
+            Write-Host "================================================================================" -ForegroundColor Cyan
+            
+            $grpUsers = @($grp.Group | Sort-Object Nr)
+            $grpUsers | Format-Table -Property $tableColumns | Out-String -Width $renderWidth | Write-Host
+        }
     }
 }
 
 # ----------------------------------------------------------------------
-# Executive Summary Breakdown: Total Users, Free Licenses, Used by Type
+# Executive Licensing Summary: Commercial vs Free Quotas & User Breakdown
 # ----------------------------------------------------------------------
 Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host "EXECUTIVE LICENSING SUMMARY" -ForegroundColor White
+Write-Host "EXECUTIVE LICENSING SUMMARY (PODSUMOWANIE LICENCJI)" -ForegroundColor White
 Write-Host "================================================================================" -ForegroundColor Cyan
 Write-Host ("  Total Licensed Users Found : {0}" -f $processedUsers.Count) -ForegroundColor Green
-Write-Host ("  Total License Plan Groups  : {0}" -f $groups.Count) -ForegroundColor Green
+Write-Host ("  Primary Base License Plans : {0}" -f $groups.Count) -ForegroundColor Green
+if ($usingGraph) {
+    Write-Host ("  Total Subscription Pools   : {0}" -f ($tenantCommercialSkus.Count + $tenantFreeSkus.Count)) -ForegroundColor Green
+}
 Write-Host ""
 
-if ($tenantSkuInventory.Count -gt 0) {
-    Write-Host "  TENANT SUBSCRIPTION LICENSE INVENTORY (MICROSOFT 365):" -ForegroundColor White
-    
-    $inventoryColumns = @(
-        @{ Label = 'License Plan / SKU';     Expression = { $_.'License Plan / SKU' };   Width = 35 },
-        @{ Label = 'Used (Wykorzystane)';    Expression = { $_.'Used (Wykorzystane)' };  Width = 20; Alignment = 'Right' },
-        @{ Label = 'Free (Wolne)';           Expression = { $_.'Free (Wolne)' };         Width = 15; Alignment = 'Right' },
-        @{ Label = 'Total (Zakupione)';      Expression = { $_.'Total (Zakupione)' };    Width = 16; Alignment = 'Right' }
+if ($usingGraph -and ($tenantCommercialSkus.Count -gt 0 -or $tenantFreeSkus.Count -gt 0)) {
+    # 1. Commercial Subscriptions
+    if ($tenantCommercialSkus.Count -gt 0) {
+        Write-Host "[1] COMMERCIAL SUBSCRIPTIONS (PLATNE LICENCJE I DODATKI):" -ForegroundColor White
+        
+        $commIdx = 1
+        foreach ($c in $tenantCommercialSkus) {
+            $c.Nr = $commIdx
+            $commIdx++
+        }
+
+        $commCols = @(
+            @{ Label = 'Nr';                  Expression = { $_.Nr };          Width = 4 },
+            @{ Label = 'License / Plan Name'; Expression = { $_.Plan };        Width = 34 },
+            @{ Label = 'Used';                Expression = { $_.Used };        Width = 8; Alignment = 'Right' },
+            @{ Label = 'Free';                Expression = { $_.Free };        Width = 8; Alignment = 'Right' },
+            @{ Label = 'Total';               Expression = { $_.Total };       Width = 8; Alignment = 'Right' },
+            @{ Label = 'Util %';              Expression = { $_.Utilization }; Width = 8; Alignment = 'Right' },
+            @{ Label = 'Status';              Expression = { $_.Status };      Width = 18 }
+        )
+        $tenantCommercialSkus | Format-Table -Property $commCols | Out-String -Width 120 | Write-Host
+
+        $totalCommUsed = ($tenantCommercialSkus | Measure-Object -Property 'Used' -Sum).Sum
+        $totalCommFree = ($tenantCommercialSkus | Measure-Object -Property 'Free' -Sum).Sum
+        $totalCommPrepaid = ($tenantCommercialSkus | Measure-Object -Property 'Total' -Sum).Sum
+        $totalCommUtil = if ($totalCommPrepaid -gt 0) {
+            ([double]$totalCommUsed / [double]$totalCommPrepaid * 100).ToString("N1") + "%"
+        } else {
+            "N/A"
+        }
+
+        Write-Host ("    COMMERCIAL TOTALS: Used = {0} | Free = {1} | Total = {2} ({3} Utilized)" -f $totalCommUsed, $totalCommFree, $totalCommPrepaid, $totalCommUtil) -ForegroundColor Yellow
+        Write-Host ""
+    }
+
+    # 2. Complimentary & Free Pools
+    if ($tenantFreeSkus.Count -gt 0) {
+        Write-Host "[2] COMPLIMENTARY & FREE CLOUD SERVICES (BEZPLATNE USLUGI W CHMURZE):" -ForegroundColor White
+        
+        $freeIdx = 1
+        foreach ($f in $tenantFreeSkus) {
+            $f.Nr = $freeIdx
+            $freeIdx++
+        }
+
+        $freeCols = @(
+            @{ Label = 'Nr';                  Expression = { $_.Nr };          Width = 4 },
+            @{ Label = 'Service / Pool Name'; Expression = { $_.Plan };        Width = 34 },
+            @{ Label = 'Used';                Expression = { $_.Used };        Width = 8; Alignment = 'Right' },
+            @{ Label = 'Free';                Expression = { if ($_.Free -gt 0) { ($_.Free).ToString("N0") } else { "-" } }; Width = 10; Alignment = 'Right' },
+            @{ Label = 'Total';               Expression = { if ($_.Total -gt 0) { ($_.Total).ToString("N0") } else { "-" } }; Width = 11; Alignment = 'Right' },
+            @{ Label = 'Status';              Expression = { $_.Status };      Width = 14 }
+        )
+        $tenantFreeSkus | Format-Table -Property $freeCols | Out-String -Width 120 | Write-Host
+        Write-Host ""
+    }
+
+    # 3. User Count Breakdown by Base License Plan
+    Write-Host "[3] USER COUNT BY PRIMARY BASE LICENSE (LICZBA UZYTKOWNIKOW WG LICENCJI BAZOWEJ):" -ForegroundColor White
+    $userDistribution = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $distIdx = 1
+    $totalUsersCount = $processedUsers.Count
+    foreach ($grp in $groups) {
+        $pct = if ($totalUsersCount -gt 0) {
+            ([double]$grp.Count / [double]$totalUsersCount * 100).ToString("N1") + "%"
+        } else {
+            "0.0%"
+        }
+        $userDistribution.Add([PSCustomObject]@{
+            Nr    = $distIdx
+            Plan  = $grp.Name
+            Users = $grp.Count
+            Share = $pct
+        })
+        $distIdx++
+    }
+
+    $distCols = @(
+        @{ Label = 'Nr';                        Expression = { $_.Nr };    Width = 4 },
+        @{ Label = 'Primary Base License Plan'; Expression = { $_.Plan };  Width = 34 },
+        @{ Label = 'User Count';                Expression = { $_.Users }; Width = 11; Alignment = 'Right' },
+        @{ Label = 'Share %';                   Expression = { $_.Share }; Width = 9;  Alignment = 'Right' }
     )
-    $tenantSkuInventory | Format-Table -Property $inventoryColumns -AutoSize | Out-String | Write-Host
+    $userDistribution | Format-Table -Property $distCols | Out-String -Width 100 | Write-Host
+    Write-Host ("    TOTAL LICENSED USERS: {0} (100.0%)" -f $totalUsersCount) -ForegroundColor Green
 
-    $totalConsumed = ($tenantSkuInventory | Measure-Object -Property 'Used (Wykorzystane)' -Sum).Sum
-    $totalFree     = ($tenantSkuInventory | Measure-Object -Property 'Free (Wolne)' -Sum).Sum
-    $totalPurchased= ($tenantSkuInventory | Measure-Object -Property 'Total (Zakupione)' -Sum).Sum
-
-    Write-Host ("  SUBSCRIPTION TOTALS: Used = {0} | Free = {1} | Total = {2}" -f $totalConsumed, $totalFree, $totalPurchased) -ForegroundColor Yellow
 } else {
     Write-Host "  EXCHANGE ONLINE LICENSED USERS BY PLAN:" -ForegroundColor White
     
     $localSummary = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $localIdx = 1
     foreach ($grp in $groups) {
         $localSummary.Add([PSCustomObject]@{
+            Nr                            = $localIdx
             'License Plan / SKU'          = $grp.Name
             'Used (Wykorzystane)'         = $grp.Count
             'Free (Wolne)'                = '(Requires Graph)'
         })
+        $localIdx++
     }
     
     $localColumns = @(
-        @{ Label = 'License Plan / SKU';   Expression = { $_.'License Plan / SKU' };   Width = 45 },
+        @{ Label = 'Nr';                   Expression = { $_.Nr };                     Width = 4 },
+        @{ Label = 'License Plan / SKU';   Expression = { $_.'License Plan / SKU' };   Width = 40 },
         @{ Label = 'Used (Wykorzystane)';  Expression = { $_.'Used (Wykorzystane)' };  Width = 20; Alignment = 'Right' },
         @{ Label = 'Free (Wolne)';         Expression = { $_.'Free (Wolne)' };         Width = 18; Alignment = 'Right' }
     )
-    $localSummary | Format-Table -Property $localColumns -AutoSize | Out-String | Write-Host
+    $localSummary | Format-Table -Property $localColumns | Out-String -Width 100 | Write-Host
 
-    Write-Host "  [i] Notice: Available (Free) license pool counts require Microsoft Graph." -ForegroundColor Gray
+    Write-Host "  [i] Notice: Available (Free) license pool quotas require Microsoft Graph." -ForegroundColor Gray
     Write-Host "      Run without -SkipGraph with Microsoft.Graph.Authentication to view free quotas." -ForegroundColor Gray
 }
 
