@@ -1,34 +1,33 @@
 <#
 .SYNOPSIS
-    Lists and audits licensed Microsoft 365 users via Exchange Online in a grouped tabular format.
+    Lists and audits licensed Microsoft 365 users via Exchange Online and Microsoft Graph in a grouped tabular format.
 
 .DESCRIPTION
-    This script connects to Exchange Online (prompting for administrator authentication if needed),
-    retrieves all licensed mailboxes and users, maps their mailbox plans and license assignments to
-    friendly names, and presents them in a formatted, grouped tabular layout.
-    
-    Supports:
-    - Displaying help and usage examples when executed without parameters
-    - Filtering by partial license or plan name (e.g. -LicenseFilter "Enterprise", "Deskless", "Basic")
-    - Simple tabular output vs. comprehensive Detailed mode (-Details) with extra user attributes
-    - Exporting audit reports to CSV (-ExportCsv)
-    - Pass-through pipeline support (-PassThru)
-    - Optional Microsoft Graph integration (-UseGraph) for tenant-wide Entra ID license SKUs
+    This script connects to Exchange Online (prompting for administrator authentication if needed)
+    and Microsoft Graph (to retrieve tenant license inventory, consumed/free license counts, and
+    assigned license SKUs). Displays all licensed users in a formatted, grouped tabular layout with:
+    - Row numbering (Nr) at the beginning of each list
+    - Single consolidated email column and full display name (Imię i nazwisko)
+    - Assigned licenses column in every view (both Simple and Detailed modes)
+    - Executive summary at the bottom with total user count, consumed licenses, and free licenses by type
+    - Filtering by partial license name (-LicenseFilter) and user search (-Search)
+    - Detailed mode (-Details) with organizational attributes (Department, Title, Location, Archive)
+    - CSV export (-ExportCsv) and pipeline pass-through (-PassThru)
 
 .PARAMETER All
     Switch parameter. Lists all licensed users in the tenant.
 
 .PARAMETER LicenseFilter
-    Filters users by matching a partial license name or MailboxPlan (e.g. "Enterprise", "Deskless", "Essentials", "E3").
+    Filters users by matching a partial license name or plan (e.g. "Enterprise", "Deskless", "Business", "E3").
     Aliases: -License, -Plan.
 
 .PARAMETER Details
-    Switch parameter. Displays extended user attributes in additional columns (Department, Title, Office,
-    City, Country, Creation Date, Archive Status, Hidden from Address Lists).
+    Switch parameter. Displays extended user attributes in additional columns (Department, Title, Office/City,
+    Country, Creation Date, Archive Status).
     Aliases: -d, -Detailed.
 
 .PARAMETER Search
-    Optional string filter for matching DisplayName, UserPrincipalName, or PrimarySmtpAddress.
+    Optional string filter for matching DisplayName, Email, or Department.
     Aliases: -FilterUser, -User.
 
 .PARAMETER ExportCsv
@@ -41,12 +40,13 @@
 .PARAMETER PassThru
     Switch parameter. Returns custom PowerShell objects to the pipeline for downstream commands or Out-GridView.
 
+.PARAMETER SkipGraph
+    Switch parameter. Bypasses Microsoft Graph connection and audits solely via Exchange Online.
+    Alias: -NoGraph.
+
 .PARAMETER AdminUserPrincipalName
     Optional UPN to pre-populate during interactive Connect-ExchangeOnline administrator login.
     Alias: -AdminUPN.
-
-.PARAMETER UseGraph
-    Switch parameter. Queries Microsoft Graph (if available) for tenant-wide Entra ID license SKUs and non-mailbox accounts.
 
 .PARAMETER Help
     Displays custom help, usage instructions, author information, and exits.
@@ -56,23 +56,15 @@
 
 .EXAMPLE
     .\Get-M365Users.ps1 -All
-    Lists all licensed users grouped by their assigned license/mailbox plan in simple tabular view.
+    Lists all licensed users with assigned licenses, row numbers, single email column, and tenant license summary.
 
 .EXAMPLE
     .\Get-M365Users.ps1 -All -Details
-    Lists all licensed users grouped by license with detailed columns (Department, Job Title, Office, Country, etc.).
+    Lists all licensed users with full detailed columns (Department, Title, Office, Archive) and license summary.
 
 .EXAMPLE
-    .\Get-M365Users.ps1 -LicenseFilter "Enterprise"
-    Lists users who hold an Enterprise-tier license plan (e.g. Exchange Online Plan 2 / E3 / E5).
-
-.EXAMPLE
-    .\Get-M365Users.ps1 -LicenseFilter "Deskless" -Details
-    Lists all Kiosk/Deskless users (F1/F3) with full detailed user attributes.
-
-.EXAMPLE
-    .\Get-M365Users.ps1 -Search "smith" -Details
-    Searches for users matching "smith" and displays their detailed licensing and profile information.
+    .\Get-M365Users.ps1 -LicenseFilter "Business"
+    Filters users who hold a Business-tier license plan (e.g. Microsoft 365 Business Premium / Standard).
 
 .EXAMPLE
     .\Get-M365Users.ps1 -All -ExportCsv "C:\Reports\LicensedUsers.csv"
@@ -86,7 +78,7 @@
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: https://github.com/romanpindela
-    Version: 1.0.0
+    Version: 1.2.0
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Default')]
@@ -117,11 +109,12 @@ param(
     [switch]$PassThru,
 
     [Parameter(ParameterSetName = 'Default')]
-    [Alias('AdminUPN')]
-    [string]$AdminUserPrincipalName,
+    [Alias('NoGraph')]
+    [switch]$SkipGraph,
 
     [Parameter(ParameterSetName = 'Default')]
-    [switch]$UseGraph,
+    [Alias('AdminUPN')]
+    [string]$AdminUserPrincipalName,
 
     [Parameter(ParameterSetName = 'Help')]
     [Alias('h')]
@@ -135,40 +128,40 @@ function Show-ScriptHelp {
     $helpLines = @(
         "================================================================================",
         "SCRIPT: Get-M365Users.ps1",
-        "VERSION: 1.0.0",
+        "VERSION: 1.2.0",
         "AUTHOR: Roman Pindela",
         "CONTACT: roman.pindela@gmail.com | https://github.com/romanpindela",
         "================================================================================",
         "",
         "DESCRIPTION:",
-        "    Lists and audits licensed Microsoft 365 users via Exchange Online.",
-        "    Displays users in a formatted, grouped tabular layout categorized by assigned",
-        "    license plan. Supports filtering by partial license name, detailed attribute views,",
-        "    CSV export, and pipeline pass-through.",
+        "    Lists and audits licensed Microsoft 365 users via Exchange Online & Graph.",
+        "    Presents users in a structured tabular format with row numbering (Nr),",
+        "    single email column, full names, and assigned licenses in every view.",
+        "    Displays an executive summary at the bottom with total user count,",
+        "    consumed licenses, and free (available) licenses by type.",
         "",
         "AUTHENTICATION & PREREQUISITES:",
-        "    Requires the 'ExchangeOnlineManagement' PowerShell module.",
-        "    Automatically detects active Exchange Online sessions or prompts for administrator sign-in.",
-        "    Optionally supports Microsoft Graph (-UseGraph) for tenant-wide Entra ID license SKUs.",
+        "    Requires 'ExchangeOnlineManagement' and optionally 'Microsoft.Graph.Authentication'.",
+        "    Automatically detects active Exchange Online sessions or prompts for sign-in.",
         "",
         "USAGE EXAMPLES:",
-        "    # 1. List all licensed users grouped by license in simple tabular view:",
+        "    # 1. List all licensed users with license inventory summary:",
         "    .\Get-M365Users.ps1 -All",
         "",
-        "    # 2. List all licensed users with detailed user attributes (Department, Title, etc.):",
+        "    # 2. List all licensed users with extended organizational attributes:",
         "    .\Get-M365Users.ps1 -All -Details",
         "",
-        "    # 3. Filter users by partial license name (e.g., Enterprise, Deskless, Essentials):",
-        "    .\Get-M365Users.ps1 -LicenseFilter `"Enterprise`"",
+        "    # 3. Filter users by partial license name (e.g., Enterprise, Business, Kiosk):",
+        "    .\Get-M365Users.ps1 -LicenseFilter `"Business`"",
         "",
-        "    # 4. Filter by license name and display detailed attributes:",
-        "    .\Get-M365Users.ps1 -LicenseFilter `"Deskless`" -Details",
+        "    # 4. Search for a specific user and inspect details:",
+        "    .\Get-M365Users.ps1 -Search `"kowalski`" -Details",
         "",
-        "    # 5. Search for a specific user and inspect details:",
-        "    .\Get-M365Users.ps1 -Search `"smith`" -Details",
-        "",
-        "    # 6. Export report to CSV file:",
+        "    # 5. Export report to CSV file:",
         "    .\Get-M365Users.ps1 -All -ExportCsv `"C:\Reports\LicensedUsers.csv`"",
+        "",
+        "    # 6. Run strictly via Exchange Online without Microsoft Graph:",
+        "    .\Get-M365Users.ps1 -All -SkipGraph",
         "",
         "    # 7. Pipe custom objects to Out-GridView (flat view):",
         "    .\Get-M365Users.ps1 -All -NoGrouping -PassThru | Out-GridView",
@@ -177,12 +170,12 @@ function Show-ScriptHelp {
         "    -All                    Switch to list all licensed users in the tenant.",
         "    -LicenseFilter, -License  Filter users by partial license or plan name.",
         "    -Details, -d            Display detailed attributes in additional columns.",
-        "    -Search, -User          Filter users by DisplayName, UPN, or email.",
+        "    -Search, -User          Filter users by DisplayName, Email, or Department.",
         "    -ExportCsv, -Export     File path to export results to CSV (UTF-8).",
         "    -NoGrouping             Output a single flat table instead of grouped sections.",
         "    -PassThru               Emit custom PSObjects to the pipeline.",
+        "    -SkipGraph, -NoGraph    Bypass Microsoft Graph connection.",
         "    -AdminUserPrincipalName Administrator UPN for Exchange Online login.",
-        "    -UseGraph               Query Microsoft Graph for tenant-wide license SKUs.",
         "    -Help, -h               Display this help documentation.",
         "",
         "SECURITY & UNBLOCKING:",
@@ -244,6 +237,27 @@ if (-not [string]::IsNullOrWhiteSpace($ExportCsv)) {
 }
 
 # ----------------------------------------------------------------------
+# Helper: Safe Object Property Value Resolver (Set-StrictMode Safe)
+# ----------------------------------------------------------------------
+function Get-ObjectPropertyValue {
+    param(
+        [object]$InputObject,
+        [string]$PropertyName,
+        [object]$DefaultValue = '-'
+    )
+    if ($null -eq $InputObject) { return $DefaultValue }
+    
+    $prop = $InputObject.PSObject.Properties[$PropertyName]
+    if ($null -ne $prop -and $null -ne $prop.Value) {
+        $val = [string]$prop.Value
+        if (-not [string]::IsNullOrWhiteSpace($val)) {
+            return $val
+        }
+    }
+    return $DefaultValue
+}
+
+# ----------------------------------------------------------------------
 # Microsoft 365 Exchange Online Authentication
 # ----------------------------------------------------------------------
 if (-not (Get-Module -Name ExchangeOnlineManagement -ListAvailable)) {
@@ -273,84 +287,123 @@ try {
 }
 
 # ----------------------------------------------------------------------
-# Optional Microsoft Graph Handler (if -UseGraph is requested)
+# Friendly M365 SKU Names Dictionary
 # ----------------------------------------------------------------------
-$graphUsersMap = @{}
+$knownSkuDictionary = @{
+    "ENTERPRISEPACK"            = "Office 365 E3"
+    "ENTERPRISEPREMIUM"         = "Office 365 E5"
+    "STANDARDPACK"              = "Office 365 E1"
+    "SPE_E3"                    = "Microsoft 365 E3"
+    "SPE_E5"                    = "Microsoft 365 E5"
+    "SPB"                       = "Microsoft 365 Business Premium"
+    "O365_BUSINESS_PREMIUM"     = "Microsoft 365 Business Standard"
+    "O365_BUSINESS_ESSENTIALS"  = "Microsoft 365 Business Basic"
+    "SMB_BUSINESS_PREMIUM"      = "Microsoft 365 Business Premium"
+    "SMB_BUSINESS"              = "Microsoft 365 Apps for business"
+    "OFFICESUBSCRIPTION"        = "Microsoft 365 Apps for enterprise"
+    "EXCHANGEENTERPRISE"        = "Exchange Online Plan 2"
+    "EXCHANGESTANDARD"          = "Exchange Online Plan 1"
+    "EXCHANGEDESKLESS"          = "Exchange Online Kiosk"
+    "TEAMS_EXPLORATORY"         = "Microsoft Teams Exploratory"
+    "POWER_BI_STANDARD"         = "Power BI (Free)"
+    "POWER_BI_PRO"              = "Power BI Pro"
+    "POWER_BI_PREMIUM_PER_USER" = "Power BI Premium Per User"
+    "VISIOCLIENT"               = "Visio Plan 2"
+    "PROJECTCLIENT"             = "Project Plan 3"
+    "EMS"                       = "Enterprise Mobility + Security E3"
+    "EMSPREMIUM"                = "Enterprise Mobility + Security E5"
+}
+
+# ----------------------------------------------------------------------
+# Microsoft Graph Connection & Tenant Subscribed SKUs Inventory
+# ----------------------------------------------------------------------
 $graphSkusMap = @{}
+$graphUsersMap = @{}
+$tenantSkuInventory = [System.Collections.Generic.List[PSCustomObject]]::new()
 $usingGraph = $false
 
-if ($UseGraph) {
-    Write-Host "[*] Checking Microsoft Graph module availability..." -ForegroundColor Cyan
-    $graphModuleAvailable = (Get-Module -Name Microsoft.Graph.Users -ListAvailable) -and (Get-Module -Name Microsoft.Graph.Authentication -ListAvailable)
-    
-    if (-not $graphModuleAvailable) {
-        Write-Warning "Microsoft.Graph module is not installed. Falling back to Exchange Online native plan mapping.`nTo enable Graph: Install-Module Microsoft.Graph.Users, Microsoft.Graph.Authentication -Scope CurrentUser"
-    } else {
+if (-not $SkipGraph) {
+    $graphAuthAvailable = Get-Module -Name Microsoft.Graph.Authentication -ListAvailable
+    if ($graphAuthAvailable) {
         try {
             $mgContext = Get-MgContext -ErrorAction SilentlyContinue
             if ($null -eq $mgContext) {
-                Write-Host "[*] Connecting to Microsoft Graph..." -ForegroundColor Cyan
+                Write-Host "[*] Connecting to Microsoft Graph for tenant license inventory (total/free counts)..." -ForegroundColor Cyan
                 Connect-MgGraph -Scopes "User.Read.All", "Organization.Read.All" -NoWelcome -ErrorAction Stop
             }
             Write-Host "[+] Microsoft Graph connection established." -ForegroundColor Green
+            $usingGraph = $true
 
-            # Fetch Subscribed SKUs
-            $subscribedSkus = @(Get-MgSubscribedSku -All -ErrorAction SilentlyContinue)
-            foreach ($sku in $subscribedSkus) {
-                $graphSkusMap[$sku.SkuId] = $sku.SkuPartNumber
+            # Fetch Subscribed SKUs via Graph REST
+            Write-Host "[*] Retrieving tenant subscription license quotas (SubscribedSkus)..." -ForegroundColor Cyan
+            $skusResponse = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/subscribedSkus" -ErrorAction Stop
+            
+            if ($skusResponse -and $skusResponse.value) {
+                foreach ($sku in $skusResponse.value) {
+                    $skuId = $sku.skuId
+                    $skuPart = $sku.skuPartNumber
+                    $friendlyName = if ($knownSkuDictionary.ContainsKey($skuPart)) {
+                        $knownSkuDictionary[$skuPart]
+                    } else {
+                        $skuPart
+                    }
+
+                    $graphSkusMap[$skuId] = $friendlyName
+
+                    $prepaid = 0
+                    if ($sku.prepaidUnits -and $sku.prepaidUnits.enabled) {
+                        $prepaid = [int]$sku.prepaidUnits.enabled
+                    }
+                    $consumed = [int]$sku.consumedUnits
+                    $free = [Math]::Max(0, ($prepaid - $consumed))
+
+                    $skuRow = [PSCustomObject]@{
+                        'License Plan / SKU'    = $friendlyName
+                        'SKU Part'              = $skuPart
+                        'Used (Wykorzystane)'   = $consumed
+                        'Free (Wolne)'          = $free
+                        'Total (Zakupione)'     = $prepaid
+                    }
+                    $tenantSkuInventory.Add($skuRow)
+                }
+                Write-Host "    Found $($tenantSkuInventory.Count) subscription license pool(s)." -ForegroundColor Gray
             }
 
-            # Fetch licensed Graph users
-            Write-Host "[*] Querying licensed users via Microsoft Graph..." -ForegroundColor Cyan
-            $graphUsers = @(Get-MgUser -Filter 'assignedLicenses/$count ne 0' -ConsistencyLevel eventual -CountVariable count -All -Property "id,displayName,userPrincipalName,mail,accountEnabled,assignedLicenses,department,jobTitle,officeLocation,city,country,usageLocation,createdDateTime" -ErrorAction Stop)
-            
-            foreach ($gu in $graphUsers) {
-                $userLicNames = @()
-                if ($gu.AssignedLicenses) {
-                    foreach ($lic in @($gu.AssignedLicenses)) {
-                        if ($graphSkusMap.ContainsKey($lic.SkuId)) {
-                            $userLicNames += $graphSkusMap[$lic.SkuId]
-                        } else {
-                            $userLicNames += $lic.SkuId
+            # Fetch licensed user details via Graph if Microsoft.Graph.Users is available
+            if (Get-Module -Name Microsoft.Graph.Users -ListAvailable) {
+                Write-Host "[*] Querying user assigned licenses from Microsoft Graph..." -ForegroundColor Cyan
+                $graphUsers = @(Get-MgUser -Filter 'assignedLicenses/$count ne 0' -ConsistencyLevel eventual -CountVariable count -All -Property "id,displayName,userPrincipalName,mail,accountEnabled,assignedLicenses,department,jobTitle,officeLocation,city,country,usageLocation,createdDateTime" -ErrorAction SilentlyContinue)
+                
+                foreach ($gu in $graphUsers) {
+                    $userLicNames = [System.Collections.Generic.List[string]]::new()
+                    if ($gu.AssignedLicenses) {
+                        foreach ($lic in @($gu.AssignedLicenses)) {
+                            $licId = $lic.SkuId
+                            if ($graphSkusMap.ContainsKey($licId)) {
+                                $userLicNames.Add($graphSkusMap[$licId])
+                            } else {
+                                $userLicNames.Add($licId)
+                            }
                         }
                     }
+                    $graphUsersMap[$gu.UserPrincipalName.ToLowerInvariant()] = @{
+                        GraphUser = $gu
+                        Licenses  = ($userLicNames -join ", ")
+                    }
                 }
-                $graphUsersMap[$gu.UserPrincipalName.ToLowerInvariant()] = @{
-                    GraphUser = $gu
-                    Licenses  = ($userLicNames -join ", ")
-                }
+                Write-Host "    Cached $($graphUsers.Count) user license profile(s) from Graph." -ForegroundColor Gray
             }
-            $usingGraph = $true
-            Write-Host "    Found $($graphUsers.Count) licensed users in Microsoft Graph." -ForegroundColor Gray
         } catch {
-            Write-Warning "Failed to query Microsoft Graph: $_. Falling back to Exchange Online native plan mapping."
+            Write-Host "    [i] Microsoft Graph connection skipped or unavailable ($($_)). Proceeding with Exchange Online data." -ForegroundColor Gray
+            $usingGraph = $false
         }
+    } else {
+        Write-Host "    [i] Microsoft.Graph.Authentication module not installed. Proceeding with Exchange Online licensing." -ForegroundColor Gray
     }
 }
 
 # ----------------------------------------------------------------------
-# Helper: Safe Object Property Value Resolver (Set-StrictMode Safe)
-# ----------------------------------------------------------------------
-function Get-ObjectPropertyValue {
-    param(
-        [object]$InputObject,
-        [string]$PropertyName,
-        [object]$DefaultValue = '-'
-    )
-    if ($null -eq $InputObject) { return $DefaultValue }
-    
-    $prop = $InputObject.PSObject.Properties[$PropertyName]
-    if ($null -ne $prop -and $null -ne $prop.Value) {
-        $val = [string]$prop.Value
-        if (-not [string]::IsNullOrWhiteSpace($val)) {
-            return $val
-        }
-    }
-    return $DefaultValue
-}
-
-# ----------------------------------------------------------------------
-# Helper: Friendly License Plan Name Resolver
+# Helper: Friendly License Plan Name Resolver (Exchange Online Plans)
 # ----------------------------------------------------------------------
 function Get-FriendlyLicenseName {
     param(
@@ -362,20 +415,16 @@ function Get-FriendlyLicenseName {
         return "Unassigned / No Mailbox Plan"
     }
 
-    # 1. Exact match in Get-MailboxPlan lookup
     if ($LookupTable.ContainsKey($MailboxPlanId) -and -not [string]::IsNullOrWhiteSpace($LookupTable[$MailboxPlanId])) {
         return $LookupTable[$MailboxPlanId]
     }
 
-    # 2. Extract base plan name (before GUID or hyphenated hash)
     $cleanPlan = ($MailboxPlanId -split '-')[0]
 
-    # Check lookup by clean plan name
     if ($LookupTable.ContainsKey($cleanPlan) -and -not [string]::IsNullOrWhiteSpace($LookupTable[$cleanPlan])) {
         return $LookupTable[$cleanPlan]
     }
 
-    # 3. Known standard Microsoft 365 Exchange Online Mailbox Plan mappings
     switch -Regex ($cleanPlan) {
         "ExchangeOnlineEnterprise"  { return "Exchange Online Plan 2 (Enterprise / E3 / E5)" }
         "ExchangeOnlineDeskless"    { return "Exchange Online Kiosk (Deskless / F1 / F3)" }
@@ -454,7 +503,6 @@ if ($Details -or (-not [string]::IsNullOrWhiteSpace($Search))) {
 # ----------------------------------------------------------------------
 Write-Host "[*] Querying Microsoft 365 Exchange Online mailboxes..." -ForegroundColor Cyan
 
-# Valid properties supported by Get-EXOMailbox
 $validExoProps = @(
     'MailboxPlan',
     'ArchiveStatus',
@@ -494,25 +542,32 @@ $seenUpns = [System.Collections.Generic.HashSet[string]]::new([System.StringComp
 
 foreach ($mbx in $licensedMailboxes) {
     $upn = Get-ObjectPropertyValue $mbx 'UserPrincipalName' ''
-    if ([string]::IsNullOrWhiteSpace($upn)) {
-        $upn = Get-ObjectPropertyValue $mbx 'PrimarySmtpAddress' ''
+    $primarySmtp = Get-ObjectPropertyValue $mbx 'PrimarySmtpAddress' ''
+    
+    # Consolidate email into a single column
+    $email = if (-not [string]::IsNullOrWhiteSpace($primarySmtp) -and $primarySmtp -ne '-') {
+        $primarySmtp
+    } else {
+        $upn
     }
-    if ([string]::IsNullOrWhiteSpace($upn)) { continue }
-    $seenUpns.Add($upn) | Out-Null
+    if ([string]::IsNullOrWhiteSpace($email)) { continue }
+    $seenUpns.Add($email) | Out-Null
+    if (-not [string]::IsNullOrWhiteSpace($upn)) { $seenUpns.Add($upn) | Out-Null }
 
-    $upnLower = $upn.ToLowerInvariant()
+    $upnLower = if (-not [string]::IsNullOrWhiteSpace($upn)) { $upn.ToLowerInvariant() } else { $email.ToLowerInvariant() }
     $mailboxPlanRaw = Get-ObjectPropertyValue $mbx 'MailboxPlan' ''
-    $friendlyLicense = Get-FriendlyLicenseName -MailboxPlanId $mailboxPlanRaw -LookupTable $planLookup
+    $friendlyPlan = Get-FriendlyLicenseName -MailboxPlanId $mailboxPlanRaw -LookupTable $planLookup
 
-    # If Graph data is available, enrich or use Graph SKU details
+    # Resolve assigned licenses (from Graph if available, otherwise from Exchange mailbox plan)
+    $assignedLicenses = $friendlyPlan
     if ($usingGraph -and $graphUsersMap.ContainsKey($upnLower)) {
         $graphInfo = $graphUsersMap[$upnLower]
         if (-not [string]::IsNullOrWhiteSpace($graphInfo.Licenses)) {
-            $friendlyLicense = "$friendlyLicense ($($graphInfo.Licenses))"
+            $assignedLicenses = $graphInfo.Licenses
         }
     }
 
-    # Retrieve Department, Title, Office, City, CountryOrRegion from recipient lookup or mailbox
+    # Retrieve Department, Title, Office, City, CountryOrRegion
     $dept    = '-'
     $title   = '-'
     $office  = '-'
@@ -549,7 +604,6 @@ foreach ($mbx in $licensedMailboxes) {
     $archiveVal  = Get-ObjectPropertyValue $mbx 'ArchiveStatus' 'None'
     $hiddenVal   = Get-ObjectPropertyValue $mbx 'HiddenFromAddressListsEnabled' 'False'
     $dispName    = Get-ObjectPropertyValue $mbx 'DisplayName' '-'
-    $primarySmtp = Get-ObjectPropertyValue $mbx 'PrimarySmtpAddress' '-'
     $recipType   = Get-ObjectPropertyValue $mbx 'RecipientTypeDetails' 'UserMailbox'
     $usageLoc    = Get-ObjectPropertyValue $mbx 'UsageLocation' '-'
 
@@ -560,10 +614,12 @@ foreach ($mbx in $licensedMailboxes) {
     }
 
     $userObj = [PSCustomObject]@{
+        Nr                     = 0
         DisplayName            = $dispName
+        Email                  = $email
         UserPrincipalName      = $upn
-        PrimarySmtpAddress     = $primarySmtp
-        License                = $friendlyLicense
+        License                = $assignedLicenses
+        PrimaryLicense         = if (-not [string]::IsNullOrWhiteSpace($assignedLicenses)) { ($assignedLicenses -split ',')[0].Trim() } else { $friendlyPlan }
         MailboxPlan            = $cleanPlanName
         RecipientTypeDetails   = $recipType
         Department             = $dept
@@ -580,7 +636,7 @@ foreach ($mbx in $licensedMailboxes) {
     $processedUsers.Add($userObj)
 }
 
-# If Graph is enabled, also add any licensed users who do not have an Exchange mailbox (e.g. Teams-only or PowerBI accounts)
+# If Graph is enabled, also add licensed users without an Exchange mailbox (e.g. Teams-only / PowerBI accounts)
 if ($usingGraph) {
     foreach ($entry in $graphUsersMap.GetEnumerator()) {
         $gUpn = $entry.Key
@@ -589,21 +645,26 @@ if ($usingGraph) {
             $gLic       = $entry.Value.Licenses
             $rawCreated = Get-ObjectPropertyValue $gu 'CreatedDateTime' $null
             $gCreated   = if ($null -ne $rawCreated -and $rawCreated -is [datetime]) { $rawCreated.ToString("yyyy-MM-dd HH:mm") } elseif ($null -ne $rawCreated) { [string]$rawCreated } else { "-" }
-            $gDispName = Get-ObjectPropertyValue $gu 'DisplayName' '-'
-            $gUpnVal   = Get-ObjectPropertyValue $gu 'UserPrincipalName' '-'
-            $gMail     = Get-ObjectPropertyValue $gu 'Mail' '-'
-            $gDept     = Get-ObjectPropertyValue $gu 'Department' '-'
-            $gTitle    = Get-ObjectPropertyValue $gu 'JobTitle' '-'
-            $gOffice   = Get-ObjectPropertyValue $gu 'OfficeLocation' '-'
-            $gCity     = Get-ObjectPropertyValue $gu 'City' '-'
-            $gCountry  = Get-ObjectPropertyValue $gu 'Country' '-'
-            $gUsageLoc = Get-ObjectPropertyValue $gu 'UsageLocation' '-'
+            $gDispName  = Get-ObjectPropertyValue $gu 'DisplayName' '-'
+            $gUpnVal    = Get-ObjectPropertyValue $gu 'UserPrincipalName' '-'
+            $gMail      = Get-ObjectPropertyValue $gu 'Mail' '-'
+            $gEmail     = if (-not [string]::IsNullOrWhiteSpace($gMail) -and $gMail -ne '-') { $gMail } else { $gUpnVal }
+            $gDept      = Get-ObjectPropertyValue $gu 'Department' '-'
+            $gTitle     = Get-ObjectPropertyValue $gu 'JobTitle' '-'
+            $gOffice    = Get-ObjectPropertyValue $gu 'OfficeLocation' '-'
+            $gCity      = Get-ObjectPropertyValue $gu 'City' '-'
+            $gCountry   = Get-ObjectPropertyValue $gu 'Country' '-'
+            $gUsageLoc  = Get-ObjectPropertyValue $gu 'UsageLocation' '-'
+
+            $licStr = if ($gLic) { $gLic } else { "Assigned License (No Mailbox)" }
 
             $nonMbxObj = [PSCustomObject]@{
+                Nr                     = 0
                 DisplayName            = $gDispName
+                Email                  = $gEmail
                 UserPrincipalName      = $gUpnVal
-                PrimarySmtpAddress     = $gMail
-                License                = if ($gLic) { $gLic } else { "Assigned License (No Mailbox)" }
+                License                = $licStr
+                PrimaryLicense         = ($licStr -split ',')[0].Trim()
                 MailboxPlan            = "NoExchangeMailbox"
                 RecipientTypeDetails   = "EntraUser (No Mailbox)"
                 Department             = $gDept
@@ -629,6 +690,7 @@ if (-not [string]::IsNullOrWhiteSpace($LicenseFilter)) {
     $processedUsers = [System.Collections.Generic.List[PSCustomObject]]::new(
         @($processedUsers | Where-Object {
             $_.License -like "*$LicenseFilter*" -or
+            $_.PrimaryLicense -like "*$LicenseFilter*" -or
             $_.MailboxPlan -like "*$LicenseFilter*"
         })
     )
@@ -639,63 +701,71 @@ if (-not [string]::IsNullOrWhiteSpace($Search)) {
     $processedUsers = [System.Collections.Generic.List[PSCustomObject]]::new(
         @($processedUsers | Where-Object {
             $_.DisplayName -like "*$Search*" -or
+            $_.Email -like "*$Search*" -or
             $_.UserPrincipalName -like "*$Search*" -or
-            $_.PrimarySmtpAddress -like "*$Search*" -or
             $_.Department -like "*$Search*"
         })
     )
 }
 
-# ----------------------------------------------------------------------
-# Output Results
-# ----------------------------------------------------------------------
 if ($processedUsers.Count -eq 0) {
     Write-Host "`n[!] No licensed users found matching the specified criteria." -ForegroundColor Yellow
     exit 0
 }
 
-Write-Host "`n[+] Found $($processedUsers.Count) licensed user(s) matching criteria.`n" -ForegroundColor Green
-
-# Define Tabular Columns (Simple vs Detailed)
-if ($Details) {
-    $tableColumns = @(
-        @{ Label = 'Display Name';        Expression = { $_.DisplayName };          Width = 24 },
-        @{ Label = 'User Principal Name'; Expression = { $_.UserPrincipalName };    Width = 30 },
-        @{ Label = 'Department';          Expression = { $_.Department };           Width = 16 },
-        @{ Label = 'Job Title';           Expression = { $_.Title };                Width = 20 },
-        @{ Label = 'Office / City';       Expression = { if ($_.Office -ne '-' -and $_.City -ne '-') { "$($_.Office) / $($_.City)" } elseif ($_.Office -ne '-') { $_.Office } else { $_.City } }; Width = 18 },
-        @{ Label = 'Country';             Expression = { $_.CountryOrRegion };      Width = 10 },
-        @{ Label = 'Recipient Type';      Expression = { $_.RecipientTypeDetails }; Width = 16 },
-        @{ Label = 'Created Date';        Expression = { $_.WhenCreated };          Width = 17 },
-        @{ Label = 'Archive';             Expression = { $_.ArchiveStatus };        Width = 10 }
-    )
-    if ($NoGrouping) {
-        $tableColumns += @{ Label = 'License Plan'; Expression = { $_.License }; Width = 35 }
-    }
-} else {
-    $tableColumns = @(
-        @{ Label = 'Display Name';        Expression = { $_.DisplayName };          Width = 25 },
-        @{ Label = 'User Principal Name'; Expression = { $_.UserPrincipalName };    Width = 32 },
-        @{ Label = 'Primary SMTP';        Expression = { $_.PrimarySmtpAddress };   Width = 32 },
-        @{ Label = 'Recipient Type';      Expression = { $_.RecipientTypeDetails }; Width = 16 }
-    )
-    if ($NoGrouping) {
-        $tableColumns += @{ Label = 'Assigned License'; Expression = { $_.License }; Width = 35 }
-    }
+# ----------------------------------------------------------------------
+# Assign Sequential Row Numbers (Nr)
+# ----------------------------------------------------------------------
+$userIndex = 1
+foreach ($u in $processedUsers) {
+    $u.Nr = $userIndex
+    $userIndex++
 }
 
-# Render Tabular Display
-$groups = $processedUsers | Group-Object -Property License | Sort-Object Count -Descending
+Write-Host "`n[+] Found $($processedUsers.Count) licensed user(s) matching criteria.`n" -ForegroundColor Green
+
+# ----------------------------------------------------------------------
+# Define Tabular Columns (Simple vs Detailed)
+# Single email column, row number (Nr) at start, assigned licenses in all views
+# ----------------------------------------------------------------------
+if ($Details) {
+    $tableColumns = @(
+        @{ Label = 'Nr';                Expression = { $_.Nr };                   Width = 4 },
+        @{ Label = 'Imię i nazwisko';   Expression = { $_.DisplayName };          Width = 22 },
+        @{ Label = 'Email';             Expression = { $_.Email };                Width = 28 },
+        @{ Label = 'Przypisane licencje'; Expression = { $_.License };            Width = 30 },
+        @{ Label = 'Dział';             Expression = { $_.Department };           Width = 14 },
+        @{ Label = 'Stanowisko';        Expression = { $_.Title };                Width = 18 },
+        @{ Label = 'Biuro / Miasto';    Expression = { if ($_.Office -ne '-' -and $_.City -ne '-') { "$($_.Office) / $($_.City)" } elseif ($_.Office -ne '-') { $_.Office } else { $_.City } }; Width = 16 },
+        @{ Label = 'Kraj';              Expression = { $_.CountryOrRegion };      Width = 6 },
+        @{ Label = 'Typ konta';         Expression = { $_.RecipientTypeDetails }; Width = 14 },
+        @{ Label = 'Utworzono';         Expression = { $_.WhenCreated };          Width = 16 },
+        @{ Label = 'Archiwum';          Expression = { $_.ArchiveStatus };        Width = 9 }
+    )
+} else {
+    $tableColumns = @(
+        @{ Label = 'Nr';                Expression = { $_.Nr };                   Width = 4 },
+        @{ Label = 'Imię i nazwisko';   Expression = { $_.DisplayName };          Width = 25 },
+        @{ Label = 'Email';             Expression = { $_.Email };                Width = 32 },
+        @{ Label = 'Przypisane licencje'; Expression = { $_.License };            Width = 35 },
+        @{ Label = 'Typ konta';         Expression = { $_.RecipientTypeDetails }; Width = 16 }
+    )
+}
+
+# ----------------------------------------------------------------------
+# Render Tabular Display (Grouped vs Flat)
+# ----------------------------------------------------------------------
+$groups = $processedUsers | Group-Object -Property PrimaryLicense | Sort-Object Count -Descending
 
 if ($NoGrouping) {
     Write-Host "================================================================================" -ForegroundColor Cyan
-    Write-Host "  ALL LICENSED USERS (Flat View - $($processedUsers.Count) users)" -ForegroundColor White
+    Write-Host "  LISTA LICENCJONOWANYCH UŻYTKOWNIKÓW (WIDOK PŁASKI - $($processedUsers.Count) użytkowników)" -ForegroundColor White
     Write-Host "================================================================================" -ForegroundColor Cyan
     $processedUsers | Format-Table -Property $tableColumns -AutoSize | Out-String | Write-Host
 } else {
     foreach ($grp in $groups) {
         Write-Host "================================================================================" -ForegroundColor Cyan
-        Write-Host "  LICENSE PLAN: $($grp.Name) ($($grp.Count) users)" -ForegroundColor White
+        Write-Host "  GRUPA LICENCJI: $($grp.Name) ($($grp.Count) użytkowników)" -ForegroundColor White
         Write-Host "================================================================================" -ForegroundColor Cyan
         
         $grp.Group | Format-Table -Property $tableColumns -AutoSize | Out-String | Write-Host
@@ -703,16 +773,54 @@ if ($NoGrouping) {
 }
 
 # ----------------------------------------------------------------------
-# Executive Summary Breakdown
+# Executive Summary Breakdown: Total Users, Free Licenses, Used by Type
 # ----------------------------------------------------------------------
 Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host "EXECUTIVE LICENSING SUMMARY:" -ForegroundColor White
-Write-Host ("  Total Licensed Users Found : {0}" -f $processedUsers.Count) -ForegroundColor Green
-Write-Host ("  Total License Plan Groups  : {0}" -f $groups.Count) -ForegroundColor Green
-Write-Host "  Breakdown by License Group :" -ForegroundColor White
-foreach ($grp in $groups) {
-    Write-Host ("    - {0,-55} : {1,4} user(s)" -f $grp.Name, $grp.Count) -ForegroundColor Yellow
+Write-Host "PODSUMOWANIE LICENCJI I UŻYTKOWNIKÓW (EXECUTIVE SUMMARY)" -ForegroundColor White
+Write-Host "================================================================================" -ForegroundColor Cyan
+Write-Host ("  Łączna liczba licencjonowanych użytkowników : {0}" -f $processedUsers.Count) -ForegroundColor Green
+Write-Host ("  Liczba typów licencji / planów w zestawieniu: {0}" -f $groups.Count) -ForegroundColor Green
+Write-Host ""
+
+if ($tenantSkuInventory.Count -gt 0) {
+    Write-Host "  ZESTAWIENIE LICENCJI TENANTA (SUBKRYPCJE M365):" -ForegroundColor White
+    
+    $inventoryColumns = @(
+        @{ Label = 'Typ licencji / SKU';     Expression = { $_.'License Plan / SKU' };   Width = 35 },
+        @{ Label = 'Wykorzystane (Used)';    Expression = { $_.'Used (Wykorzystane)' };  Width = 20; Alignment = 'Right' },
+        @{ Label = 'Wolne (Free)';           Expression = { $_.'Free (Wolne)' };         Width = 15; Alignment = 'Right' },
+        @{ Label = 'Łącznie (Total)';        Expression = { $_.'Total (Zakupione)' };    Width = 16; Alignment = 'Right' }
+    )
+    $tenantSkuInventory | Format-Table -Property $inventoryColumns -AutoSize | Out-String | Write-Host
+
+    $totalConsumed = ($tenantSkuInventory | Measure-Object -Property 'Used (Wykorzystane)' -Sum).Sum
+    $totalFree     = ($tenantSkuInventory | Measure-Object -Property 'Free (Wolne)' -Sum).Sum
+    $totalPurchased= ($tenantSkuInventory | Measure-Object -Property 'Total (Zakupione)' -Sum).Sum
+
+    Write-Host ("  SUMA POZYCJI SUBSKRYPCJI: Wykorzystane = {0} | Wolne = {1} | Łącznie = {2}" -f $totalConsumed, $totalFree, $totalPurchased) -ForegroundColor Yellow
+} else {
+    Write-Host "  ZESTAWIENIE WYKORZYSTANYCH LICENCJI WG TYPU (EXCHANGE ONLINE):" -ForegroundColor White
+    
+    $localSummary = [System.Collections.Generic.List[PSCustomObject]]::new()
+    foreach ($grp in $groups) {
+        $localSummary.Add([PSCustomObject]@{
+            'Typ licencji / Plan skrzynki' = $grp.Name
+            'Wykorzystane (Used)'         = $grp.Count
+            'Wolne (Free)'                = '(Wymaga Graph)'
+        })
+    }
+    
+    $localColumns = @(
+        @{ Label = 'Typ licencji / Plan skrzynki'; Expression = { $_.'Typ licencji / Plan skrzynki' }; Width = 45 },
+        @{ Label = 'Wykorzystane (Used)';          Expression = { $_.'Wykorzystane (Used)' };          Width = 20; Alignment = 'Right' },
+        @{ Label = 'Wolne (Free)';                 Expression = { $_.'Wolne (Free)' };                 Width = 18; Alignment = 'Right' }
+    )
+    $localSummary | Format-Table -Property $localColumns -AutoSize | Out-String | Write-Host
+
+    Write-Host "  [i] Uwaga: Liczba wolnych licencji w tenancie wymaga połączenia z Microsoft Graph." -ForegroundColor Gray
+    Write-Host "      Uruchom skrypt z modułem Microsoft.Graph.Authentication, aby zobaczyć pule wolnych licencji." -ForegroundColor Gray
 }
+
 Write-Host "================================================================================" -ForegroundColor Cyan
 
 # ----------------------------------------------------------------------
@@ -725,7 +833,7 @@ if (-not [string]::IsNullOrWhiteSpace($ExportCsv)) {
             New-Item -ItemType Directory -Path $exportDir -Force | Out-Null
         }
         $processedUsers | Export-Csv -Path $ExportCsv -NoTypeInformation -Encoding UTF8 -Force
-        Write-Host "`n[+] Successfully exported $($processedUsers.Count) user records to CSV:" -ForegroundColor Green
+        Write-Host "`n[+] Pomyślnie wyeksportowano $($processedUsers.Count) rekordów do pliku CSV:" -ForegroundColor Green
         Write-Host "    $ExportCsv" -ForegroundColor White
     } catch {
         Write-Error "Failed to export data to CSV: $_"
