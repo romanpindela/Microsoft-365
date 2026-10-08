@@ -193,44 +193,6 @@ Output flat records directly into an interactive GUI grid:
 
 ---
 
-## Executive Licensing Summary
-
-Rendered at the end of every user report or as the standalone output of `-LicenseSummary`:
-
-```text
-================================================================================
-EXECUTIVE LICENSING SUMMARY (PODSUMOWANIE LICENCJI)
-================================================================================
-  Total Licensed Users Found : 55
-  Primary Base License Plans : 2
-  Total Subscription Pools   : 8
-
-[1] COMMERCIAL SUBSCRIPTIONS (PLATNE LICENCJE I DODATKI):
-  Nr License / Plan Name                    Used     Free    Total   Util % Status
-  -- -------------------                    ----     ----    -----   ------ ------
-   1 Microsoft 365 Business Standard          53        4       57    93.0% [OK]
-   2 Microsoft 365 Business Premium            1        0        1   100.0% [FULL - 0 FREE]
-   3 Defender for Office 365 (Plan 1)         23        2       25    92.0% [OK]
-  -----------------------------------------------------------------------------
-     COMMERCIAL TOTALS: Used = 77 | Free = 6 | Total = 83 (92.8% Utilized)
-
-[2] COMPLIMENTARY & FREE CLOUD SERVICES (BEZPLATNE USLUGI W CHMURZE):
-  Nr Service / Pool Name                    Used     Free    Total Status
-  -- -------------------                    ----     ----    ----- ------
-   1 Power Automate (Free)                    15    9,985   10,000 [Available]
-   2 Power BI (Free)                           1  999,999 1,000,000 [Available]
-   3 Azure Rights Management (Free)            1   49,999   50,000 [Available]
-
-[3] USER COUNT BY PRIMARY BASE LICENSE (LICZBA UZYTKOWNIKOW WG LICENCJI BAZOWEJ):
-  Nr Primary Base License Plan        User Count   Share %
-  -- -------------------------        ----------   -------
-   1 Microsoft 365 Business Standard          53     96.4%
-   2 Microsoft 365 Business Premium            1      1.8%
-   3 EntraUser (No Mailbox)                    1      1.8%
-  --------------------------------------------------------
-     TOTAL LICENSED USERS:                    55    100.0%
-================================================================================
-```
 
 ---
 
