@@ -26,8 +26,8 @@ A robust, enterprise-grade PowerShell tool designed for Microsoft 365 administra
 
 ## ⚠️ Important: Quarantine vs. Junk Email
 This script clearly distinguishes between two types of blocked emails:
-1. **Quarantined (`TAK`):** Blocked centrally by Microsoft Defender/EOP. The script will display a `QuarantineId` and generate a ready-to-use command to release it.
-2. **FilteredAsSpam (`NIE`):** Delivered to the user's mailbox but moved by local rules to the **Junk Email (Wiadomości-śmieci)** folder. These *cannot* be released via PowerShell cmdlet; the user must mark them as "Not Junk" directly in Outlook/OWA.
+1. **Quarantined (`YES`):** Blocked centrally by Microsoft Defender/EOP. The script will display a `QuarantineId` and generate a ready-to-use command to release it.
+2. **FilteredAsSpam (`NO`):** Delivered to the user's mailbox but moved by local rules to the **Junk Email** folder. These *cannot* be released via PowerShell cmdlet; the user must mark them as "Not Junk" directly in Outlook/OWA.
 
 ---
 

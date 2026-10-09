@@ -1027,7 +1027,7 @@ if (-not $LicenseSummary) {
 # Executive Licensing Summary: Commercial vs Free Quotas & User Breakdown
 # ----------------------------------------------------------------------
 Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host "EXECUTIVE LICENSING SUMMARY (PODSUMOWANIE LICENCJI)" -ForegroundColor White
+Write-Host "EXECUTIVE LICENSING SUMMARY" -ForegroundColor White
 Write-Host "================================================================================" -ForegroundColor Cyan
 Write-Host ("  Total Licensed Users Found : {0}" -f $processedUsers.Count) -ForegroundColor Green
 Write-Host ("  Primary Base License Plans : {0}" -f $groups.Count) -ForegroundColor Green

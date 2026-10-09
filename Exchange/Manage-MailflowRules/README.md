@@ -1,6 +1,6 @@
 # Manage-MailflowRules
 
-A professional, enterprise-grade PowerShell automation script for Microsoft 365 Exchange Online administrators to inspect, manage, and configure Mail Flow (Transport) rules. It enables administrators to **audit and list rules** in structured tables, **toggle rule states** (Enable or Disable), create **automated BCC (UDW) redirection/monitoring rules**, and run in an **interactive console wizard** or unattended script.
+A professional, enterprise-grade PowerShell automation script for Microsoft 365 Exchange Online administrators to inspect, manage, and configure Mail Flow (Transport) rules. It enables administrators to **audit and list rules** in structured tables, **toggle rule states** (Enable or Disable), create **automated BCC redirection/monitoring rules**, and run in an **interactive console wizard** or unattended script.
 
 ---
 
@@ -9,7 +9,7 @@ A professional, enterprise-grade PowerShell automation script for Microsoft 365 
 - **List & Audit Mail Flow Rules**: Displays all tenant transport rules in a clean formatted table including Priority, Name, State (`Enabled` / `Disabled`), Enforcement Mode (`Enforce`, `Audit`, `AuditAndNotify`), and Comments.
 - **Detailed Rule Inspection**: Deep-dive audit option (`-Detailed`) exposes rule conditions (`SentTo`, `From`), actions (`BlindCopyTo`), and auto-generated Exchange engine descriptions.
 - **Rule State Management**: Safely **enables** or **disables** designated rules with interactive confirmation (`Y/N`) or non-interactive silent execution via `-Force`.
-- **Automated BCC (UDW) Redirection**: Creates transport rules that automatically copy messages to designated BCC recipients (Ukryte Do Wiadomości / Blind Carbon Copy) for audit, legal hold, or management oversight. Supports both **Incoming** (`-SentTo`) and **Outgoing** (`-From`) message streams.
+- **Automated BCC Redirection**: Creates transport rules that automatically copy messages to designated BCC recipients (Blind Carbon Copy) for audit, legal hold, or management oversight. Supports both **Incoming** (`-SentTo`) and **Outgoing** (`-From`) message streams.
 - **Pre-Execution Input Defense**: Validates email syntax, detects illegal characters, guards against duplicate rule names, and verifies source mailbox existence *before* initiating cloud transactions.
 - **Interactive Console Wizard**: Optional `-Interactive` (alias `-Menu`) switch provides a guided, menu-driven interface in the PowerShell console.
 - **Modern Authentication Flow**: Automatically detects existing active Exchange Online sessions; prompts for modern interactive administrator sign-in if no active session exists. Supports `-AdminUserPrincipalName` to pre-populate administrative credentials.
