@@ -197,11 +197,14 @@ EXECUTIVE MAILBOX & STORAGE SUMMARY
 
 ## Screenshots & Examples
 
-### Standard Run & Built-in Help
+### 1. Standard Run & Built-in Help
 ![Standard Run](assets/Standard_run.jpg)
 
-### Analyzing Inboxes & Storage Telemetry
+### 2. Analyzing Inboxes & Storage Telemetry
 ![Analyzing Inboxes](assets/Analyzing_inboxes.jpg)
+
+### 3. Mailbox Storage & Executive Summary Report
+![Report View](assets/Raport_view.jpg)
 
 ---
 
