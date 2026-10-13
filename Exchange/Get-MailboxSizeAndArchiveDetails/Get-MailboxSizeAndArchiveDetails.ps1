@@ -724,16 +724,12 @@ Write-Progress -Activity "Collecting Mailbox & Archive Statistics" -Completed
 # ----------------------------------------------------------------------
 if ($ArchiveOnly.IsPresent) {
     Write-Host "[*] Filtering for mailboxes with Archive Status = Active..." -ForegroundColor Cyan
-    $processedList = [System.Collections.Generic.List[PSCustomObject]]::new(
-        @($processedList | Where-Object { $_.ArchiveEnabled })
-    )
+    $processedList = @($processedList | Where-Object { $_.ArchiveEnabled })
 }
 
 if ($AutoExpandingOnly.IsPresent) {
     Write-Host "[*] Filtering for mailboxes with Auto-Expanding Archive Enabled..." -ForegroundColor Cyan
-    $processedList = [System.Collections.Generic.List[PSCustomObject]]::new(
-        @($processedList | Where-Object { $_.AutoExpandingArchiveEnabled })
-    )
+    $processedList = @($processedList | Where-Object { $_.AutoExpandingArchiveEnabled })
 }
 
 if ($processedList.Count -eq 0) {
@@ -759,13 +755,9 @@ $shouldDescend = if ($SortBy -eq 'DisplayName') {
 }
 
 if ($shouldDescend) {
-    $processedList = [System.Collections.Generic.List[PSCustomObject]]::new(
-        @($processedList | Sort-Object -Property $sortProperty -Descending)
-    )
+    $processedList = @($processedList | Sort-Object -Property $sortProperty -Descending)
 } else {
-    $processedList = [System.Collections.Generic.List[PSCustomObject]]::new(
-        @($processedList | Sort-Object -Property $sortProperty)
-    )
+    $processedList = @($processedList | Sort-Object -Property $sortProperty)
 }
 
 # ----------------------------------------------------------------------
