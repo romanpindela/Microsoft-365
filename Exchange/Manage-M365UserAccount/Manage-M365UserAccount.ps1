@@ -1,18 +1,19 @@
 <#
 .SYNOPSIS
-    Manages Microsoft 365 (Exchange/Entra ID) user accounts: password reset, sign-in blocking/unblocking, session revocation, and comprehensive account auditing.
+    Manages Microsoft 365 (Exchange/Entra ID) user accounts: password reset, sign-in blocking/unblocking, session revocation, email alias management, and comprehensive account auditing.
 
 .DESCRIPTION
-    This script connects to Microsoft Graph / M365 (prompting for administrator authentication if needed),
+    This script connects to Microsoft Graph / M365 (and Exchange Online when managing aliases),
     validates target user identity, audits detailed account status, and performs administrative actions:
     - Detailed view (-View) of password change date, email aliases, friendly license plan names,
       recent client applications used (Outlook Desktop, Web, Mobile), and sign-in activity
+    - Managing email aliases: adding (-AddEmailAlias) and removing (-RemoveEmailAlias) secondary email addresses
     - Secure password reset via SecureString or cryptographically secure auto-generation (enforcing change at next sign-in)
     - Blocking user sign-in (AccountEnabled = $false) with automatic session revocation (instant logout from Outlook, Teams, OWA)
     - Unblocking user sign-in (AccountEnabled = $true)
     - Standalone session revocation (-RevokeSessions)
     Includes input validation, confirmation prompts, SecureString handling, tenant-license fault tolerance,
-    and an automated execution switch (-Force).
+    Exchange mailbox verification, and an automated execution switch (-Force).
 
 .PARAMETER UserIdentity
     The identity (UPN or primary SMTP email) of the target Microsoft 365 user.
@@ -36,6 +37,14 @@
 
 .PARAMETER RevokeSessions
     Switch parameter. Revokes all active refresh tokens/sessions without modifying account sign-in status.
+
+.PARAMETER AddEmailAlias
+    One or more email alias addresses to add to the target user's Exchange mailbox.
+    Accepts string array or comma-separated list. Aliases: -AddEmailAliases, -AddAlias, -AddAliases.
+
+.PARAMETER RemoveEmailAlias
+    One or more email alias addresses to remove from the target user's Exchange mailbox.
+    Accepts string array or comma-separated list. Aliases: -RemoveEmailAliases, -RemoveAlias, -RemoveAliases.
 
 .PARAMETER Force
     Switch parameter. Bypasses interactive confirmation prompts (Y/N) for unattended automation.
@@ -66,11 +75,23 @@
     .\Manage-M365UserAccount.ps1 -UserIdentity "john.doe@domain.com" -ResetPassword
     Prompts interactively to auto-generate a random password or input a masked secure password.
 
+.EXAMPLE
+    .\Manage-M365UserAccount.ps1 -UserIdentity "john.doe@domain.com" -AddEmailAlias "jdoe.alias@domain.com"
+    Adds an email alias to john.doe@domain.com in Exchange Online.
+
+.EXAMPLE
+    .\Manage-M365UserAccount.ps1 -UserIdentity "john.doe@domain.com" -RemoveEmailAlias "old.alias@domain.com" -Force
+    Removes the specified email alias silently without confirmation prompt.
+
+.EXAMPLE
+    .\Manage-M365UserAccount.ps1 -UserIdentity "john.doe@domain.com" -AddEmailAlias "new1@domain.com","new2@domain.com" -RemoveEmailAlias "old@domain.com"
+    Adds multiple aliases and removes an obsolete alias in a single operation.
+
 .NOTES
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: https://github.com/romanpindela
-    Version: 1.4.3
+    Version: 1.5.0
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'ManageAccount')]
@@ -99,6 +120,14 @@ param(
     [switch]$RevokeSessions,
 
     [Parameter(ParameterSetName = 'ManageAccount')]
+    [Alias('AddEmailAliases', 'AddAlias', 'AddAliases')]
+    [string[]]$AddEmailAlias,
+
+    [Parameter(ParameterSetName = 'ManageAccount')]
+    [Alias('RemoveEmailAliases', 'RemoveAlias', 'RemoveAliases')]
+    [string[]]$RemoveEmailAlias,
+
+    [Parameter(ParameterSetName = 'ManageAccount')]
     [switch]$Force,
 
     [Parameter(ParameterSetName = 'Help')]
@@ -113,7 +142,7 @@ function Show-ScriptHelp {
     $helpLines = @(
         "================================================================================",
         "SCRIPT: Manage-M365UserAccount.ps1",
-        "VERSION: 1.4.3",
+        "VERSION: 1.5.0",
         "AUTHOR: Roman Pindela",
         "CONTACT: roman.pindela@gmail.com | https://github.com/romanpindela",
         "================================================================================",
@@ -122,10 +151,12 @@ function Show-ScriptHelp {
         "    Manages and audits Microsoft 365 / Entra ID / Exchange user accounts.",
         "    Supports viewing account details (aliases, friendly licenses, client apps used,",
         "    last password change, sign-in activity), resetting passwords securely,",
-        "    toggling sign-in enablement, and revoking active user sessions.",
+        "    toggling sign-in enablement, revoking active user sessions, and managing email aliases",
+        "    (adding new secondary aliases and removing specified existing aliases).",
         "",
         "AUTHENTICATION & PREREQUISITES:",
         "    Requires 'Microsoft.Graph.Users' and 'Microsoft.Graph.Authentication'.",
+        "    Managing email aliases also requires 'ExchangeOnlineManagement'.",
         "    Required Microsoft Graph scopes: 'User.ReadWrite.All', 'User-PasswordProfile.ReadWrite.All', 'AuditLog.Read.All', 'Organization.Read.All'.",
         "",
         "USAGE EXAMPLES:",
@@ -144,16 +175,30 @@ function Show-ScriptHelp {
         "    # Reset password with interactive prompt (auto-generate vs secure masked input):",
         "    .\Manage-M365UserAccount.ps1 -UserIdentity `"user@domain.com`" -ResetPassword",
         "",
+        "    # Add an email alias to a user account:",
+        "    .\Manage-M365UserAccount.ps1 -UserIdentity `"user@domain.com`" -AddEmailAlias `"alias@domain.com`"",
+        "",
+        "    # Add multiple email aliases:",
+        "    .\Manage-M365UserAccount.ps1 -UserIdentity `"user@domain.com`" -AddEmailAlias `"alias1@domain.com`",`"alias2@domain.com`"",
+        "",
+        "    # Remove an email alias from a user account (with -Force for silent execution):",
+        "    .\Manage-M365UserAccount.ps1 -UserIdentity `"user@domain.com`" -RemoveEmailAlias `"oldalias@domain.com`" -Force",
+        "",
+        "    # Add and remove aliases simultaneously in a single command:",
+        "    .\Manage-M365UserAccount.ps1 -UserIdentity `"user@domain.com`" -AddEmailAlias `"new@domain.com`" -RemoveEmailAlias `"old@domain.com`"",
+        "",
         "PARAMETERS:",
-        "    -UserIdentity     The email address/UPN of the target user.",
-        "    -View, -v         Switch to display detailed audit info (aliases, licenses, clients, etc.).",
-        "    -ResetPassword    Switch to trigger a password reset (forces change at next login).",
-        "    -NewPassword      Optional SecureString password object.",
-        "    -BlockSignIn      Switch to block user sign-in and automatically revoke active sessions.",
-        "    -UnblockSignIn    Switch to unblock user sign-in.",
-        "    -RevokeSessions   Switch to invalidate active sessions without modifying account status.",
-        "    -Force            Switch to bypass confirmation prompts (Y/N).",
-        "    -Help, -h         Display this help documentation.",
+        "    -UserIdentity       The email address/UPN of the target user.",
+        "    -View, -v           Switch to display detailed audit info (aliases, licenses, clients, etc.).",
+        "    -ResetPassword      Switch to trigger a password reset (forces change at next login).",
+        "    -NewPassword        Optional SecureString password object.",
+        "    -BlockSignIn        Switch to block user sign-in and automatically revoke active sessions.",
+        "    -UnblockSignIn      Switch to unblock user sign-in.",
+        "    -RevokeSessions     Switch to invalidate active sessions without modifying account status.",
+        "    -AddEmailAlias      One or more email aliases to add to the target mailbox.",
+        "    -RemoveEmailAlias   One or more email aliases to remove from the target mailbox.",
+        "    -Force              Switch to bypass confirmation prompts (Y/N).",
+        "    -Help, -h           Display this help documentation.",
         "",
         "SECURITY & UNBLOCKING:",
         "    After downloading from GitHub, remember to unblock the script before execution:",
@@ -180,15 +225,68 @@ if ($BlockSignIn -and $UnblockSignIn) {
     exit 1
 }
 
-if (-not $View -and -not $ResetPassword -and -not $BlockSignIn -and -not $UnblockSignIn -and -not $RevokeSessions) {
-    Write-Error "No action specified. Provide an action flag (-View, -ResetPassword, -BlockSignIn, -UnblockSignIn, -RevokeSessions)."
+if (-not $View -and -not $ResetPassword -and -not $BlockSignIn -and -not $UnblockSignIn -and -not $RevokeSessions -and -not $AddEmailAlias -and -not $RemoveEmailAlias) {
+    Write-Error "No action specified. Provide an action flag (-View, -ResetPassword, -BlockSignIn, -UnblockSignIn, -RevokeSessions, -AddEmailAlias, -RemoveEmailAlias)."
     exit 1
+}
+
+# Parse and validate email aliases if specified
+$aliasesToAdd = @()
+if ($AddEmailAlias) {
+    foreach ($entry in $AddEmailAlias) {
+        if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+        foreach ($sub in ($entry -split '[,;]')) {
+            $clean = $sub.Trim()
+            if ([string]::IsNullOrWhiteSpace($clean)) { continue }
+            if ($clean -like "smtp:*") { $clean = $clean.Substring(5) }
+            if ($clean -like "SMTP:*") { $clean = $clean.Substring(5) }
+            if ($clean -notmatch $emailPattern) {
+                Write-Error "Invalid format for alias to add: '$sub'. Provide a valid email address."
+                exit 1
+            }
+            if ($aliasesToAdd -notcontains $clean) {
+                $aliasesToAdd += $clean
+            }
+        }
+    }
+}
+
+$aliasesToRemove = @()
+if ($RemoveEmailAlias) {
+    foreach ($entry in $RemoveEmailAlias) {
+        if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+        foreach ($sub in ($entry -split '[,;]')) {
+            $clean = $sub.Trim()
+            if ([string]::IsNullOrWhiteSpace($clean)) { continue }
+            if ($clean -like "smtp:*") { $clean = $clean.Substring(5) }
+            if ($clean -like "SMTP:*") { $clean = $clean.Substring(5) }
+            if ($clean -notmatch $emailPattern) {
+                Write-Error "Invalid format for alias to remove: '$sub'. Provide a valid email address."
+                exit 1
+            }
+            if ($aliasesToRemove -notcontains $clean) {
+                $aliasesToRemove += $clean
+            }
+        }
+    }
+}
+
+# Check for conflicting parameters (same alias in both Add and Remove)
+if ($aliasesToAdd.Count -gt 0 -and $aliasesToRemove.Count -gt 0) {
+    $overlap = @($aliasesToAdd | Where-Object { $aliasesToRemove -contains $_ })
+    if ($overlap.Count -gt 0) {
+        Write-Error "Conflicting parameters: The following alias(es) cannot be both added and removed: $($overlap -join ', ')."
+        exit 1
+    }
 }
 
 # Module prerequisites check
 $missingModules = @()
 if (-not (Get-Module -Name Microsoft.Graph.Users -ListAvailable)) { $missingModules += "Microsoft.Graph.Users" }
 if (-not (Get-Module -Name Microsoft.Graph.Authentication -ListAvailable)) { $missingModules += "Microsoft.Graph.Authentication" }
+if (($aliasesToAdd.Count -gt 0 -or $aliasesToRemove.Count -gt 0) -and -not (Get-Module -Name ExchangeOnlineManagement -ListAvailable)) {
+    $missingModules += "ExchangeOnlineManagement"
+}
 
 if ($missingModules.Count -gt 0) {
     Write-Host "[!] Missing required module(s): $($missingModules -join ', ')" -ForegroundColor Yellow
@@ -266,6 +364,48 @@ try {
 } catch {
     Write-Error "Unable to locate user '$UserIdentity' in tenant. Details: $_"
     exit 1
+}
+
+# Extract existing aliases and primary email for safety checks
+$existingAliases = @()
+if ($user.ProxyAddresses) {
+    $existingAliases = @(
+        $user.ProxyAddresses | 
+        Where-Object { $_ -clike "smtp:*" } | 
+        ForEach-Object { $_.Substring(5) }
+    )
+}
+
+$primaryEmail = if ($user.Mail) { $user.Mail } else {
+    $primaryProxy = @($user.ProxyAddresses | Where-Object { $_ -clike "SMTP:*" } | ForEach-Object { $_.Substring(5) })
+    if ($primaryProxy.Length -gt 0) { $primaryProxy[0] } else { $user.UserPrincipalName }
+}
+
+# Pre-execution safety validation for alias removal
+if ($aliasesToRemove.Count -gt 0) {
+    foreach ($alias in $aliasesToRemove) {
+        if ($alias -eq $primaryEmail -or $alias -eq $user.UserPrincipalName) {
+            Write-Error "Cannot remove alias '$alias' because it is configured as the user's primary SMTP address / UPN."
+            exit 1
+        }
+    }
+}
+
+# Informational warnings for alias changes
+$alreadyAssigned = @()
+if ($aliasesToAdd.Count -gt 0) {
+    $alreadyAssigned = @($aliasesToAdd | Where-Object { $existingAliases -contains $_ -or $_ -eq $primaryEmail })
+    if ($alreadyAssigned.Count -gt 0) {
+        Write-Host "[!] Notice: The following alias(es) are already configured for this user: $($alreadyAssigned -join ', ')" -ForegroundColor Yellow
+    }
+}
+
+$nonExistent = @()
+if ($aliasesToRemove.Count -gt 0) {
+    $nonExistent = @($aliasesToRemove | Where-Object { $existingAliases -notcontains $_ })
+    if ($nonExistent.Count -gt 0) {
+        Write-Host "[!] Notice: The following alias(es) are not currently assigned to this user: $($nonExistent -join ', ')" -ForegroundColor Yellow
+    }
 }
 
 # Query SignInActivity (requires Entra ID P1/P2 license)
@@ -500,6 +640,16 @@ if ($BlockSignIn) {
 if ($UnblockSignIn) { $plannedActions += "UNBLOCK Sign-In" }
 if ($RevokeSessions -and -not $BlockSignIn) { $plannedActions += "REVOKE Active Sessions" }
 if ($ResetPassword) { $plannedActions += "RESET Password (Forces change at next sign-in)" }
+if ($aliasesToAdd.Count -gt 0) { $plannedActions += "ADD Email Alias(es): $($aliasesToAdd -join ', ')" }
+if ($aliasesToRemove.Count -gt 0) { $plannedActions += "REMOVE Email Alias(es): $($aliasesToRemove -join ', ')" }
+
+if (($aliasesToAdd.Count -gt 0 -or $aliasesToRemove.Count -gt 0) -and ($user.OnPremisesSyncEnabled -eq $true)) {
+    Write-Host "`n[!] ATTENTION / HYBRID AD WARNING:" -ForegroundColor Yellow
+    Write-Host "    User '$($user.UserPrincipalName)' is synchronized from On-Premises Active Directory (OnPremisesSyncEnabled = True)." -ForegroundColor Yellow
+    Write-Host "    Exchange Online will reject direct cloud modifications to email aliases for synchronized accounts." -ForegroundColor Yellow
+    Write-Host "    In hybrid environments, email aliases must be added or removed in your on-premises Active Directory" -ForegroundColor Yellow
+    Write-Host "    (via the 'proxyAddresses' attribute or on-premises Exchange Management Shell) and synced via Entra Connect." -ForegroundColor Yellow
+}
 
 if ($ResetPassword -and ($user.OnPremisesSyncEnabled -eq $true)) {
     Write-Host "`n[!] ATTENTION / HYBRID AD WARNING:" -ForegroundColor Yellow
@@ -567,6 +717,65 @@ try {
         }
     }
 
+    # Manage email aliases via Exchange Online if requested
+    $aliasesChanged = $false
+    if ($aliasesToAdd.Count -gt 0 -or $aliasesToRemove.Count -gt 0) {
+        Write-Host "`n[*] Verifying Exchange Online connection for alias management..." -ForegroundColor Cyan
+        try {
+            Get-OrganizationConfig -ErrorAction Stop | Out-Null
+            Write-Host "[+] Active Exchange Online session detected." -ForegroundColor Green
+        } catch {
+            Write-Host "[*] No active Exchange Online session detected. Connecting to Exchange Online..." -ForegroundColor Cyan
+            try {
+                Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
+                Write-Host "[+] Successfully connected to Exchange Online." -ForegroundColor Green
+            } catch {
+                Write-Error "Failed to connect to Exchange Online: $_"
+                exit 1
+            }
+        }
+
+        Write-Host "[*] Verifying Exchange mailbox for '$($user.UserPrincipalName)'..." -ForegroundColor Cyan
+        try {
+            $mbx = Get-Mailbox -Identity $user.UserPrincipalName -ErrorAction Stop
+            Write-Host "    Found mailbox: $($mbx.DisplayName) ($($mbx.RecipientTypeDetails))" -ForegroundColor Gray
+        } catch {
+            Write-Error "Unable to locate mailbox for '$($user.UserPrincipalName)'. Email aliases require an active Exchange mailbox. Details: $_"
+            exit 1
+        }
+
+        $emailChanges = @{}
+        $finalAdd = @($aliasesToAdd | Where-Object { $alreadyAssigned -notcontains $_ })
+        $finalRemove = @($aliasesToRemove | Where-Object { $nonExistent -notcontains $_ })
+
+        if ($finalAdd.Count -gt 0) {
+            $emailChanges["Add"] = @($finalAdd | ForEach-Object { "smtp:$_" })
+        }
+        if ($finalRemove.Count -gt 0) {
+            $emailChanges["Remove"] = @($finalRemove | ForEach-Object { "smtp:$_" })
+        }
+
+        if ($emailChanges.Count -gt 0) {
+            Write-Host "[*] Applying email alias updates via Set-Mailbox..." -ForegroundColor Cyan
+            Set-Mailbox -Identity $user.UserPrincipalName -EmailAddresses $emailChanges -ErrorAction Stop
+            Write-Host "[SUCCESS] Mailbox email aliases updated successfully!" -ForegroundColor Green
+            if ($finalAdd.Count -gt 0) {
+                Write-Host "    Added alias(es)   : $($finalAdd -join ', ')" -ForegroundColor Green
+            }
+            if ($finalRemove.Count -gt 0) {
+                Write-Host "    Removed alias(es) : $($finalRemove -join ', ')" -ForegroundColor Green
+            }
+            $aliasesChanged = $true
+        } else {
+            Write-Host "[!] No alias changes were required (specified aliases already match current state)." -ForegroundColor Yellow
+        }
+    }
+
+    if ($aliasesChanged) {
+        Write-Host "[*] Waiting for directory replication..." -ForegroundColor Gray
+        Start-Sleep -Seconds 2
+    }
+
     # Fetch updated user status
     $updatedUser = Get-MgUser -UserId $user.Id -Property $baseProperties -ErrorAction Stop
     Show-DetailedUserAudit -TargetUser $updatedUser -SignInActivity $signInActivityData -LicenseNames $friendlyLicenses -ClientApps $detectedClients -AdminRoles $targetUserRoles
@@ -592,6 +801,24 @@ try {
 } catch {
     $errDetail = $_.Exception.Message
     Write-Error "An error occurred while modifying the user account: $_"
+
+    if ($errDetail -match "Set-Mailbox" -or $errDetail -match "EmailAddresses" -or $errDetail -match "proxyAddresses") {
+        Write-Host "`n========================= EMAIL ALIAS TROUBLESHOOTING =========================" -ForegroundColor Red
+        Write-Host "An error occurred while modifying email aliases in Exchange Online." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "COMMON ROOT CAUSES AND HOW TO RESOLVE:" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "1. ALIAS IN USE BY ANOTHER RECIPIENT:" -ForegroundColor Cyan
+        Write-Host "   The email alias may already be assigned to another user, shared mailbox, distribution list, or Microsoft 365 group." -ForegroundColor White
+        Write-Host ""
+        Write-Host "2. TARGET USER IS SYNCHRONIZED FROM ON-PREMISES ACTIVE DIRECTORY (HYBRID):" -ForegroundColor Cyan
+        Write-Host "   In hybrid environments, Exchange Online rejects direct cloud edits to email addresses." -ForegroundColor White
+        Write-Host "   Manage the 'proxyAddresses' attribute on your on-premises Domain Controller instead." -ForegroundColor White
+        Write-Host ""
+        Write-Host "3. INSUFFICIENT PERMISSIONS:" -ForegroundColor Cyan
+        Write-Host "   Ensure your administrator account has the Exchange Administrator role assigned in Microsoft 365." -ForegroundColor White
+        Write-Host "==============================================================================`n" -ForegroundColor Red
+    }
 
     if ($errDetail -match "Authorization_RequestDenied" -or $errDetail -match "Insufficient privileges" -or "$_" -match "403") {
         Write-Host "`n========================= 403 FORBIDDEN / PRIVILEGE DIAGNOSIS =========================" -ForegroundColor Red
