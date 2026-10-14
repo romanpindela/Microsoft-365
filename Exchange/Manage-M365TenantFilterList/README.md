@@ -79,13 +79,17 @@ Running the script without parameters (or using `-Help` / `-h`) displays compreh
 ---
 
 ### 2. List Whitelist (Allowed Domains & Senders)
-Displays all allowed sender domains and email addresses in a prioritized summary table:
+Displays all allowed sender domains and email addresses in a prioritized summary table (supports both `-List Whitelist` and `-List -Whitelist`):
 
 ```powershell
 # Formatted summary table
+.\Manage-M365TenantFilterList.ps1 -List Whitelist
+# or
 .\Manage-M365TenantFilterList.ps1 -List -Whitelist
 
 # In-depth card view (showing GUIDs, modification dates, and notes)
+.\Manage-M365TenantFilterList.ps1 -List Whitelist -Detailed
+# or
 .\Manage-M365TenantFilterList.ps1 -List -Whitelist -Detailed
 ```
 
@@ -96,9 +100,13 @@ Displays all blocked sender domains and email addresses configured in the tenant
 
 ```powershell
 # Formatted summary table
+.\Manage-M365TenantFilterList.ps1 -List Blacklist
+# or
 .\Manage-M365TenantFilterList.ps1 -List -Blacklist
 
 # In-depth inspection
+.\Manage-M365TenantFilterList.ps1 -List Blacklist -Detailed
+# or
 .\Manage-M365TenantFilterList.ps1 -List -Blacklist -Detailed
 ```
 
@@ -218,9 +226,10 @@ Launches a menu-driven console wizard allowing administrators to list, search, a
 | Parameter | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
 | `-List` / `-l` | `Switch` | No | Lists entries from the Tenant Allow/Block List. |
-| `-Add` / `-a` | `Switch` | No | Adds specified domains or email addresses to the chosen list. |
+| `-Scope` / `-Type` | `String` | No | Target filter list: `All` (default), `Whitelist`, `Blacklist`, `Allow`, `Block`. Supports positional usage (e.g. `-List Whitelist`). |
+| `-Add` / `-a` | `Switch` | No | Adds specified domains or email addresses to the chosen list (e.g. `-Add Whitelist domain.com`). |
 | `-Remove` / `-r` | `Switch` | No | Removes specified domains or email addresses from the chosen list. |
-| `-Search` / `-s` | `String` | No | Searches for domains, email addresses, or keywords in notes. |
+| `-Search` / `-s` | `String` | No | Searches for domains, email addresses, or keywords in notes (e.g. `-Search "partner.com" Whitelist`). |
 | `-Whitelist` / `-w` | `Switch` | No | Targets or filters the operation to the Allow List (trusted senders). |
 | `-Blacklist` / `-b` | `Switch` | No | Targets or filters the operation to the Block List (blocked senders). |
 | `-Entries` / `-Domain` | `String[]` | Conditional | One or more domains or email addresses to add, remove, or query. |
@@ -259,12 +268,16 @@ Launches a menu-driven console wizard allowing administrators to list, search, a
 - **Author**: Roman Pindela
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
-- **Version**: 1.0.0
+- **Version**: 1.0.1
 
 ---
 
 ## Version History
 
+- **v1.0.1** (2026-10-14):
+  - Added positional scope argument support for `-List` (e.g. `-List Whitelist -Detailed` and `-List Blacklist`).
+  - Added positional list argument resolution for `-Add` and `-Remove` (e.g. `-Add Whitelist "partner.com"`).
+  - Added positional search scope support for `-Search` (e.g. `-Search "partner.com" Whitelist`).
 - **v1.0.0** (2026-10-14):
   - Initial production release.
   - Support for Exchange Online Tenant Allow/Block List (TABL) for Sender domains and email addresses.

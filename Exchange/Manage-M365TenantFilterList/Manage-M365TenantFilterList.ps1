@@ -114,11 +114,15 @@
     Displays comprehensive help documentation and parameter reference.
 
 .EXAMPLE
+    .\Manage-M365TenantFilterList.ps1 -List Whitelist -Detailed
+    Lists all allowed sender domains and email addresses with comprehensive detailed cards.
+
+.EXAMPLE
     .\Manage-M365TenantFilterList.ps1 -List -Whitelist
     Lists all allowed sender domains and email addresses in a formatted table with detailed status and expiration info.
 
 .EXAMPLE
-    .\Manage-M365TenantFilterList.ps1 -List -Blacklist -Detailed
+    .\Manage-M365TenantFilterList.ps1 -List Blacklist -Detailed
     Lists all blocked domains and email addresses with comprehensive detailed cards (including notes and modifier UPN).
 
 .EXAMPLE
@@ -157,7 +161,7 @@
     Author:  Roman Pindela
     Email:   roman.pindela@gmail.com
     GitHub:  https://github.com/romanpindela
-    Version: 1.0.0
+    Version: 1.0.1
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Default')]
@@ -175,15 +179,25 @@ param(
     [Alias('RemoveEntry', 'r')]
     [switch]$Remove,
 
-    [Parameter(ParameterSetName = 'Search')]
+    [Parameter(ParameterSetName = 'Search', Position = 0)]
     [Alias('Find', 's', 'Query')]
     [string]$Search,
+
+    [Parameter(ParameterSetName = 'Search', Position = 1)]
+    [ValidateSet('All', 'Whitelist', 'Blacklist', 'Allow', 'Block')]
+    [string]$SearchScope = 'All',
 
     [Parameter(ParameterSetName = 'Interactive')]
     [Alias('Menu', 'i')]
     [switch]$Interactive,
 
-    # List Scope (Whitelist vs Blacklist)
+    # List Scope (Positional argument or switches)
+    [Parameter(ParameterSetName = 'List', Position = 0)]
+    [Parameter(ParameterSetName = 'Default', Position = 0)]
+    [ValidateSet('All', 'Whitelist', 'Blacklist', 'Allow', 'Block')]
+    [Alias('Type', 'Target')]
+    [string]$Scope,
+
     [Parameter(ParameterSetName = 'Default')]
     [Parameter(ParameterSetName = 'List')]
     [Parameter(ParameterSetName = 'Add')]
@@ -201,9 +215,8 @@ param(
     [switch]$Blacklist,
 
     # Target Entries (Domains / Email addresses)
-    [Parameter(ParameterSetName = 'Default', Position = 0)]
-    [Parameter(ParameterSetName = 'Add', Mandatory = $false, Position = 0)]
-    [Parameter(ParameterSetName = 'Remove', Mandatory = $false, Position = 0)]
+    [Parameter(ParameterSetName = 'Add', Mandatory = $false, Position = 0, ValueFromRemainingArguments = $true)]
+    [Parameter(ParameterSetName = 'Remove', Mandatory = $false, Position = 0, ValueFromRemainingArguments = $true)]
     [Alias('Entry', 'Domain', 'Domains', 'Address', 'Addresses', 'Identity')]
     [string[]]$Entries,
 
@@ -264,7 +277,7 @@ $ErrorActionPreference = 'Stop'
 # Metadata declaration
 $ScriptMetadata = @{
     Title   = "Manage-M365TenantFilterList.ps1"
-    Version = "1.0.0"
+    Version = "1.0.1"
     Author  = "Roman Pindela"
     Email   = "roman.pindela@gmail.com"
     GitHub  = "https://github.com/romanpindela"
@@ -299,10 +312,12 @@ function Show-ScriptHelp {
         "       .\Manage-M365TenantFilterList.ps1 -h",
         "",
         "    2. List Whitelist (Allowed Domains and Email Addresses):",
+        "       .\Manage-M365TenantFilterList.ps1 -List Whitelist -Detailed",
         "       .\Manage-M365TenantFilterList.ps1 -List -Whitelist",
         "       .\Manage-M365TenantFilterList.ps1 -List -Whitelist -Detailed",
         "",
         "    3. List Blacklist (Blocked Domains and Email Addresses):",
+        "       .\Manage-M365TenantFilterList.ps1 -List Blacklist -Detailed",
         "       .\Manage-M365TenantFilterList.ps1 -List -Blacklist",
         "       .\Manage-M365TenantFilterList.ps1 -List -Blacklist -Detailed",
         "",
@@ -310,6 +325,7 @@ function Show-ScriptHelp {
         "       .\Manage-M365TenantFilterList.ps1 -List",
         "",
         "    5. Search for a Domain or Email Address in Whitelist:",
+        "       .\Manage-M365TenantFilterList.ps1 -Search `"partner.com`" Whitelist",
         "       .\Manage-M365TenantFilterList.ps1 -Search `"partner.com`" -Whitelist",
         "",
         "    6. Search for a Domain or Email Address in Blacklist:",
@@ -319,10 +335,12 @@ function Show-ScriptHelp {
         "       .\Manage-M365TenantFilterList.ps1 -Search `"example.com`"",
         "",
         "    8. Add Domain(s) to Whitelist (Interactive Confirmation):",
+        "       .\Manage-M365TenantFilterList.ps1 -Add Whitelist `"partner.com`"",
         "       .\Manage-M365TenantFilterList.ps1 -Add -Whitelist -Entries `"partner.com`" -Notes `"Trusted supplier`"",
         "       .\Manage-M365TenantFilterList.ps1 -Add -Whitelist -Entries `"domain1.com`", `"domain2.com`"",
         "",
         "    9. Add Domain(s) or Email(s) to Blacklist (Silent Execution via -Force):",
+        "       .\Manage-M365TenantFilterList.ps1 -Add Blacklist `"spam.com`" -Force",
         "       .\Manage-M365TenantFilterList.ps1 -Add -Blacklist -Entries `"spam.com`", `"bot@phish.org`" -Force",
         "",
         "   10. Remove Entry from Whitelist or Blacklist:",
@@ -337,8 +355,8 @@ function Show-ScriptHelp {
         "       .\Manage-M365TenantFilterList.ps1 -Interactive",
         "",
         "PARAMETERS:",
-        "    -List, -l                  Lists entries from Whitelist, Blacklist, or both.",
-        "    -Add, -a                   Adds specified entries to the chosen list.",
+        "    -List, -l                  Lists entries from Whitelist, Blacklist, or both (e.g. -List Whitelist).",
+        "    -Add, -a                   Adds specified entries to the chosen list (e.g. -Add Whitelist domain.com).",
         "    -Remove, -r                Removes specified entries from the chosen list.",
         "    -Search, -s                Finds entries matching a domain, email, or notes pattern.",
         "    -Whitelist, -Allow, -w     Specifies the Allow List (trusted domains and senders).",
@@ -365,7 +383,7 @@ function Show-ScriptHelp {
 }
 
 # Auto-show help when executed without parameters, or with -Help / -h
-$hasExplicitAction = $List -or $Add -or $Remove -or (-not [string]::IsNullOrWhiteSpace($Search)) -or $Interactive -or ($Entries -and $Entries.Count -gt 0)
+$hasExplicitAction = $List -or $Add -or $Remove -or (-not [string]::IsNullOrWhiteSpace($Search)) -or $Interactive -or ($Entries -and $Entries.Count -gt 0) -or (-not [string]::IsNullOrWhiteSpace($Scope)) -or $Whitelist -or $Blacklist
 if ($Help -or ($PSCmdlet.ParameterSetName -eq 'Help') -or (-not $hasExplicitAction)) {
     Show-ScriptHelp
     exit 0
@@ -418,6 +436,17 @@ function Test-ValidDomainOrEmail {
 Assert-SafeInputString -InputText $Search -ParamName "Search"
 Assert-SafeInputString -InputText $Notes -ParamName "Notes" -MaxLength 500
 
+# Handle positional scope argument when passed with -Add or -Remove (e.g. -Add Whitelist domain.com)
+if (($Add -or $Remove) -and (-not $Whitelist) -and (-not $Blacklist) -and $Entries -and $Entries.Count -ge 1) {
+    if ($Entries[0] -match '^(whitelist|allow)$') {
+        $Whitelist = [switch]::new($true)
+        $Entries = if ($Entries.Count -gt 1) { $Entries[1..($Entries.Count - 1)] } else { @() }
+    } elseif ($Entries[0] -match '^(blacklist|block)$') {
+        $Blacklist = [switch]::new($true)
+        $Entries = if ($Entries.Count -gt 1) { $Entries[1..($Entries.Count - 1)] } else { @() }
+    }
+}
+
 # Validate scope consistency
 if ($Whitelist -and $Blacklist) {
     if ($Add -or $Remove) {
@@ -428,7 +457,7 @@ if ($Whitelist -and $Blacklist) {
 
 if ($Add -or $Remove) {
     if (-not $Whitelist -and -not $Blacklist) {
-        Write-Error "Missing target list: You must specify either -Whitelist or -Blacklist when performing -Add or -Remove operations."
+        Write-Error "Missing target list: You must specify either -Whitelist or -Blacklist (e.g. -Add Whitelist domain.com or -Add -Whitelist domain.com)."
         exit 1
     }
     if (-not $Entries -or $Entries.Count -eq 0) {
@@ -1076,7 +1105,9 @@ if ($Interactive) {
 Connect-ExchangeEnvironment -AdminUPN $AdminUserPrincipalName
 
 # Determine active scope
-$scopeAction = if ($Whitelist) { 'Allow' } elseif ($Blacklist) { 'Block' } else { 'All' }
+$scopeAction = if ($Whitelist -or ($Scope -in @('Whitelist', 'Allow')) -or ($SearchScope -in @('Whitelist', 'Allow'))) { 'Allow' }
+               elseif ($Blacklist -or ($Scope -in @('Blacklist', 'Block')) -or ($SearchScope -in @('Blacklist', 'Block'))) { 'Block' }
+               else { 'All' }
 
 # Route to specified action
 if ($Add) {
@@ -1109,7 +1140,7 @@ if (-not [string]::IsNullOrWhiteSpace($Search)) {
     exit 0
 }
 
-if ($List -or ($PSCmdlet.ParameterSetName -eq 'List') -or ($PSBoundParameters.ContainsKey('Whitelist') -or $PSBoundParameters.ContainsKey('Blacklist'))) {
+if ($List -or ($PSCmdlet.ParameterSetName -eq 'List') -or ($PSBoundParameters.ContainsKey('Whitelist') -or $PSBoundParameters.ContainsKey('Blacklist') -or (-not [string]::IsNullOrWhiteSpace($Scope)))) {
     $items = Get-TenantFilterData -TargetAction $scopeAction
     $listTitle = if ($scopeAction -eq 'Allow') { "Tenant Whitelist (Allow List)" }
                  elseif ($scopeAction -eq 'Block') { "Tenant Blacklist (Block List)" }
