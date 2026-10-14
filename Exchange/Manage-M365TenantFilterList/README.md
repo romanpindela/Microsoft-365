@@ -261,14 +261,11 @@ Launches a menu-driven console wizard allowing administrators to list, inspect, 
 ### 1. Standard Execution (Help & Usage)
 ![Standard Run](assets/Standard_run.jpg)
 
-### 2. Whitelist Summary Table
+### 2. Whitelist Summary Table (Allowed Senders and Domains)
 ![Listing Whitelist](assets/Whitelist_domains.jpg)
 
-### 3. Adding Entries to Whitelist & Conflict Detection
-![Adding Whitelist](assets/Adding_entries.jpg)
-
-### 4. Blacklist Inspection & Search
-![Blacklist Search](assets/Blacklist_search.jpg)
+### 3. Searching Across Senders and Domains
+![Searching for Senders and Domains](assets/Searching_for_domains.jpg)
 
 ---
 
