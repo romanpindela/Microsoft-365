@@ -1,41 +1,51 @@
 # Manage-M365TenantFilterList
 
-A professional, enterprise-grade PowerShell automation script for Microsoft 365 and Exchange Online administrators to audit, search, add, and remove sender domains and email addresses in the **Tenant Allow/Block List (TABL)**. It enables administrators to manage organizational **Whitelists (Allow Lists)** and **Blacklists (Block Lists)** with automated conflict detection, syntax validation, flexible expiration policies, CSV reporting, and an interactive console wizard.
+A professional, enterprise-grade PowerShell automation script for Microsoft 365 and Exchange Online administrators to audit, search, add, and remove sender domains and email addresses across:
+1. **Anti-Spam Inbound Policies** (`HostedContentFilterPolicy`) - specifically managing the **"Allowed and blocked senders and domains"** lists:
+   - **Allowed senders** (`AllowedSenders` - trusted individual email addresses)
+   - **Allowed domains** (`AllowedSenderDomains` - trusted domain names)
+   - **Blocked senders** (`BlockedSenders` - blocked individual email addresses)
+   - **Blocked domains** (`BlockedSenderDomains` - blocked domain names)
+2. **Tenant Allow/Block List (TABL)** (`TenantAllowBlockListItems`) for organization-wide security overrides.
 
 ---
 
 ## Features
 
-- **Tenant Whitelist Management (Allow List)**:
-  - Add trusted business partner domains (e.g., `partner.com`, `*.vendor.com`) or individual sender email addresses (e.g., `alerts@partner.com`).
-  - List all currently allowed domains and addresses with in-depth operational metadata (status, remaining days, expiration date, modifying admin, and notes).
-  - Search specifically within allowed senders to verify whether a partner or vendor domain is permitted.
-- **Tenant Blacklist Management (Block List)**:
-  - Add malicious, spam, or phishing domains and email addresses tenant-wide to block incoming threats before reaching user mailboxes.
-  - List all currently blocked domains and senders with administrative justification and timestamps.
-  - Search specifically within blocked senders for threat investigation and security incident response.
-- **Detailed Inspection & Forensic Audit**:
-  - Summarizes filter lists with key operational metrics (total entries, domain count, address count, active vs. expired).
-  - Detailed card view (`-Detailed`) displays full entry properties including System Identity GUIDs, UTC timestamps, and modifying administrator UPNs.
+- **Allowed and Blocked Senders and Domains (Anti-Spam Inbound Policies)**:
+  - **Allowed Senders**: Audits and manages individual external email addresses allowed to bypass content filtering.
+  - **Allowed Domains**: Audits and manages external domains (e.g., 200+ partner and supplier domains) allowed to bypass content filtering.
+  - **Blocked Senders**: Audits and manages specific external email addresses blocked from sending mail into the tenant.
+  - **Blocked Domains**: Audits and manages domains blocked from sending mail into the tenant.
+- **Tenant Allow/Block List (TABL) Integration**:
+  - Automatically queries and displays entries from the Microsoft Defender Tenant Allow/Block List alongside policy-level rules.
+  - Optional `-SyncToTABL` switch to synchronize allow/block actions across both Anti-Spam policies and TABL simultaneously.
+- **Exact Microsoft Defender Portal Alignment**:
+  - Displays summary statistics matching the security portal view:
+    ```text
+    Allowed senders : 8 senders
+    Allowed domains : 208 domains
+    Blocked senders : - (0 senders)
+    Blocked domains : 1 domains
+    ```
+- **Category & Type Filtering**:
+  - Filter listings by category (`-Category AllowedDomains`, `-Category AllowedSenders`, `-Category BlockedDomains`, `-Category BlockedSenders`).
+  - Or filter by type (`-Type Domain` vs `-Type Email`).
+- **Detailed Forensic Card View**:
+  - Detailed inspection view (`-Detailed`) groups entries by category with item numbers, sources, and active statuses.
 - **Fast Wildcard Search Engine**:
-  - Substring and wildcard search (`-Search`) querying entry values, administrator notes, and author identities across Whitelist, Blacklist, or both simultaneously.
+  - Searches across all 200+ domains, senders, notes, and policies with `-Search "keyword"`.
 - **Pre-Flight Validation & Conflict Protection**:
-  - Validates RFC-compliant email and domain syntax *before* connecting to cloud infrastructure.
-  - Detects conflicting entries (e.g., alerts if attempting to whitelist a domain that is currently on the blacklist).
-  - Automatically handles duplicate entries and trims whitespace.
-- **Flexible Expiration Handling**:
-  - Supports permanent rules (`-NoExpiration`), relative durations (`-ExpirationDays`), or explicit UTC deadlines (`-ExpirationDate`).
-  - Respects Microsoft 365 default security guidelines (defaulting Allow entries to 30 days unless specified otherwise).
+  - Validates RFC-compliant domain and email syntax before initiating cloud transactions.
+  - Detects if an entry already exists in the opposing list (e.g., warns if attempting to allow an already blocked domain).
 - **Interactive Console Menu Wizard**:
-  - Guided console menu (`-Interactive` / `-Menu`) providing a menu-driven management experience for administrators.
+  - Full-featured console menu (`-Interactive` / `-Menu`) with 10 guided options for quick day-to-day administration.
 - **Bilingual Confirmation & Automation Ready**:
-  - Interactive confirmation prompts supporting both English (`Y`/`N`) and Polish (`T`/`N`) administrator inputs.
-  - Silent, unattended automation support via `-Force`.
-  - Pipeline output (`-PassThru`) and UTF-8 CSV report export (`-ExportCsv`).
+  - Supports English (`Y`/`N`) and Polish (`T`/`N`) administrator inputs.
+  - Silent unattended automation via `-Force`.
+  - UTF-8 CSV report export via `-ExportCsv`.
 - **Modern Authentication Flow**:
-  - Automatically detects active Exchange Online PowerShell sessions.
-  - Initiates interactive modern administrator login (MFA/MSAL) if no active session exists.
-  - Supports `-AdminUserPrincipalName` to pre-populate administrative credentials.
+  - Auto-detects active Exchange Online sessions; prompts for interactive modern administrator login if needed.
 
 ---
 
@@ -51,13 +61,12 @@ A professional, enterprise-grade PowerShell automation script for Microsoft 365 
   - **Security Administrator**
   - **Exchange Administrator**
   - **Global Administrator**
-  - Or the custom **Tenant AllowBlockList Manager** role.
 
 ---
 
 ## Security & Unblocking
 
-When downloading PowerShell scripts from GitHub or external sources, Windows marks them with an execution restriction flag (Zone.Identifier). Unblock the script before running:
+When downloading PowerShell scripts from GitHub or external sources, Windows marks them with an execution restriction flag (Zone.Identifier). Unblock the script before executing:
 
 ```powershell
 Unblock-File -Path .\Manage-M365TenantFilterList.ps1
@@ -68,7 +77,7 @@ Unblock-File -Path .\Manage-M365TenantFilterList.ps1
 ## Usage Examples
 
 ### 1. Display Built-In Help & Info (Default Execution)
-Running the script without parameters (or using `-Help` / `-h`) displays comprehensive syntax help, parameter descriptions, usage examples, and author information:
+Running without parameters (or with `-Help` / `-h`) displays detailed help, syntax, author, and usage examples:
 
 ```powershell
 .\Manage-M365TenantFilterList.ps1
@@ -78,8 +87,8 @@ Running the script without parameters (or using `-Help` / `-h`) displays compreh
 
 ---
 
-### 2. List Whitelist (Allowed Domains & Senders)
-Displays all allowed sender domains and email addresses in a prioritized summary table (supports both `-List Whitelist` and `-List -Whitelist`):
+### 2. List Allowed Senders and Allowed Domains (Whitelist)
+Displays summary counts and all allowed senders and domains (e.g. 208 domains, 8 senders):
 
 ```powershell
 # Formatted summary table
@@ -87,16 +96,27 @@ Displays all allowed sender domains and email addresses in a prioritized summary
 # or
 .\Manage-M365TenantFilterList.ps1 -List -Whitelist
 
-# In-depth card view (showing GUIDs, modification dates, and notes)
+# In-depth categorized view (grouped into Allowed senders and Allowed domains)
 .\Manage-M365TenantFilterList.ps1 -List Whitelist -Detailed
-# or
-.\Manage-M365TenantFilterList.ps1 -List -Whitelist -Detailed
 ```
 
 ---
 
-### 3. List Blacklist (Blocked Domains & Senders)
-Displays all blocked sender domains and email addresses configured in the tenant:
+### 3. Filter Whitelist by Specific Category or Type
+Display only allowed domains or only allowed senders:
+
+```powershell
+# List only Allowed Domains (e.g. 208 domains)
+.\Manage-M365TenantFilterList.ps1 -List Whitelist -Category AllowedDomains
+
+# List only Allowed Senders (e.g. 8 senders)
+.\Manage-M365TenantFilterList.ps1 -List Whitelist -Category AllowedSenders
+```
+
+---
+
+### 4. List Blocked Senders and Blocked Domains (Blacklist)
+Displays all blocked senders and domains configured in the tenant:
 
 ```powershell
 # Formatted summary table
@@ -104,114 +124,101 @@ Displays all blocked sender domains and email addresses configured in the tenant
 # or
 .\Manage-M365TenantFilterList.ps1 -List -Blacklist
 
-# In-depth inspection
+# Detailed card view
 .\Manage-M365TenantFilterList.ps1 -List Blacklist -Detailed
-# or
-.\Manage-M365TenantFilterList.ps1 -List -Blacklist -Detailed
 ```
 
 ---
 
-### 4. Full Tenant Filter Overview (All Records)
-Lists all tenant allow and block items with summary counts (Whitelist, Blacklist, Active, Expired):
+### 5. Full Tenant Overview (All Senders & Domains)
+Displays the complete breakdown of Allowed senders, Allowed domains, Blocked senders, and Blocked domains:
 
 ```powershell
+.\Manage-M365TenantFilterList.ps1 -List All
+# or
 .\Manage-M365TenantFilterList.ps1 -List
 ```
 
 ---
 
-### 5. Search for a Domain or Email Address in Whitelist
-Checks whether a specific domain, address, or keyword exists in the Whitelist:
+### 6. Search for a Domain or Email Address
+Searches across all lists, senders, domains, and policy names:
 
 ```powershell
-.\Manage-M365TenantFilterList.ps1 -Search "partner.com" -Whitelist
+# Search everywhere
+.\Manage-M365TenantFilterList.ps1 -Search "partner.com"
+
+# Search specifically within Whitelist
+.\Manage-M365TenantFilterList.ps1 -Search "partner.com" Whitelist
+
+# Search specifically within Blacklist
+.\Manage-M365TenantFilterList.ps1 -Search "malicious" Blacklist
 ```
 
 ---
 
-### 6. Search for a Domain or Email Address in Blacklist
-Searches for suspicious or blocked domains in the Blacklist:
+### 7. Add Domain or Email Address to Whitelist
+Adds a domain to `AllowedSenderDomains` or an email address to `AllowedSenders` in the Anti-Spam policy:
 
 ```powershell
-.\Manage-M365TenantFilterList.ps1 -Search "phishing-bank.com" -Blacklist
-```
+# Add trusted domain to Allowed Domains
+.\Manage-M365TenantFilterList.ps1 -Add Whitelist "trustedpartner.com"
 
----
+# Add sender email to Allowed Senders with note
+.\Manage-M365TenantFilterList.ps1 -Add Whitelist "alerts@supplier.com" -Notes "Supplier notifications"
 
-### 7. Global Search (Across Whitelist and Blacklist)
-Finds all occurrences of a string across both lists, including administrative notes:
-
-```powershell
-.\Manage-M365TenantFilterList.ps1 -Search "contoso.com"
-```
-
----
-
-### 8. Add Domains to Whitelist
-Adds one or more trusted domains to the tenant Whitelist with an administrative comment and confirmation:
-
-```powershell
-# Add single domain with note
-.\Manage-M365TenantFilterList.ps1 -Add -Whitelist `
-    -Entries "trustedpartner.com" `
-    -Notes "Approved B2B vendor - Ticket #1234"
-
-# Add multiple domains with 60-day expiration
+# Add multiple domains with explicit parameters
 .\Manage-M365TenantFilterList.ps1 -Add -Whitelist `
     -Entries "supplier1.com", "supplier2.com" `
-    -ExpirationDays 60 `
-    -Notes "Temporary project suppliers"
+    -Notes "B2B integration project"
 ```
 
 ---
 
-### 9. Add Malicious Domains / Senders to Blacklist
-Adds threat domains and email addresses to the tenant Blacklist:
+### 8. Add Domain or Email Address to Blacklist
+Adds a domain to `BlockedSenderDomains` or an email address to `BlockedSenders`:
 
 ```powershell
-# Interactive confirmation
-.\Manage-M365TenantFilterList.ps1 -Add -Blacklist `
-    -Entries "malicious-spammer.com", "phisher@badactor.org" `
-    -Notes "Blocked due to credential phishing campaign"
+# Add blocked domain silently (-Force)
+.\Manage-M365TenantFilterList.ps1 -Add Blacklist "spammer.com" -Force
 
-# Silent execution (ideal for SOC automation and incident response)
-.\Manage-M365TenantFilterList.ps1 -Add -Blacklist `
-    -Entries "evil-domain.com" `
-    -Notes "SOC Incident #9921" `
-    -Force
+# Add blocked sender address
+.\Manage-M365TenantFilterList.ps1 -Add Blacklist "badactor@evil.org" -Force
 ```
 
 ---
 
-### 10. Remove Entries from Whitelist or Blacklist
-Removes obsolete entries from the designated list:
+### 9. Remove Entry from Whitelist or Blacklist
+Removes obsolete entries from the appropriate list in the Anti-Spam policy:
 
 ```powershell
-# Remove from Whitelist
-.\Manage-M365TenantFilterList.ps1 -Remove -Whitelist -Entries "oldpartner.com"
+# Remove domain from Allowed Domains
+.\Manage-M365TenantFilterList.ps1 -Remove Whitelist "oldpartner.com"
 
-# Remove from Blacklist silently
-.\Manage-M365TenantFilterList.ps1 -Remove -Blacklist -Entries "remediated-sender.com" -Force
+# Remove sender email from Allowed Senders
+.\Manage-M365TenantFilterList.ps1 -Remove Whitelist "inactive@supplier.com"
+
+# Remove blocked domain from Blacklist silently
+.\Manage-M365TenantFilterList.ps1 -Remove Blacklist "unblocked-vendor.com" -Force
 ```
 
 ---
 
-### 11. Export Tenant Filter List to CSV Report
-Audits all or scoped entries and exports clean UTF-8 CSV reports for compliance or backup:
+### 10. Export Filter Entries to CSV Report
+Exports the entire configuration or scoped lists to a UTF-8 CSV report:
 
 ```powershell
-# Export Whitelist only
-.\Manage-M365TenantFilterList.ps1 -List -Whitelist -ExportCsv "C:\Reports\M365_Whitelist.csv"
+# Export Whitelist (Allowed senders and domains)
+.\Manage-M365TenantFilterList.ps1 -List Whitelist -ExportCsv "C:\Reports\M365_AllowedSendersAndDomains.csv"
 
-# Export entire Tenant Allow/Block List
-.\Manage-M365TenantFilterList.ps1 -List -ExportCsv "C:\Reports\M365_TenantFilterList.csv"
+# Export complete tenant filter configuration
+.\Manage-M365TenantFilterList.ps1 -List All -ExportCsv "C:\Reports\M365_AllFilterLists.csv"
 ```
 
 ---
 
-### 12. Interactive Console Menu Mode
-Launches a menu-driven console wizard allowing administrators to list, search, add, remove, and export filter lists interactively:
+### 11. Interactive Console Menu Mode
+Launches a menu-driven console wizard allowing administrators to list, inspect, search, add, and remove entries interactively:
 
 ```powershell
 .\Manage-M365TenantFilterList.ps1 -Interactive
@@ -225,19 +232,21 @@ Launches a menu-driven console wizard allowing administrators to list, search, a
 
 | Parameter | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `-List` / `-l` | `Switch` | No | Lists entries from the Tenant Allow/Block List. |
-| `-Scope` / `-Type` | `String` | No | Target filter list: `All` (default), `Whitelist`, `Blacklist`, `Allow`, `Block`. Supports positional usage (e.g. `-List Whitelist`). |
-| `-Add` / `-a` | `Switch` | No | Adds specified domains or email addresses to the chosen list (e.g. `-Add Whitelist domain.com`). |
-| `-Remove` / `-r` | `Switch` | No | Removes specified domains or email addresses from the chosen list. |
-| `-Search` / `-s` | `String` | No | Searches for domains, email addresses, or keywords in notes (e.g. `-Search "partner.com" Whitelist`). |
-| `-Whitelist` / `-w` | `Switch` | No | Targets or filters the operation to the Allow List (trusted senders). |
-| `-Blacklist` / `-b` | `Switch` | No | Targets or filters the operation to the Block List (blocked senders). |
-| `-Entries` / `-Domain` | `String[]` | Conditional | One or more domains or email addresses to add, remove, or query. |
+| `-List` / `-l` | `Switch` | No | Lists entries from the specified scope. |
+| `-Scope` | `String` | No | List scope: `All` (default), `Whitelist`, `Blacklist`, `Allow`, `Block`. Supports positional usage (e.g. `-List Whitelist`). |
+| `-Category` / `-Cat` / `-Type` | `String` | No | Category filter: `All` (default), `AllowedSenders`, `AllowedDomains`, `BlockedSenders`, `BlockedDomains`, `Domain`, `Email`. |
+| `-PolicyName` / `-Policy` | `String` | No | Name of the Anti-Spam inbound policy (default: `'Default'`). |
+| `-Source` / `-Backend` | `String` | No | Target repository: `All` (default), `AntiSpam`, `TABL`. |
+| `-Add` / `-a` | `Switch` | No | Adds specified domains or email addresses (e.g. `-Add Whitelist domain.com`). |
+| `-Remove` / `-r` | `Switch` | No | Removes specified domains or email addresses. |
+| `-Search` / `-s` | `String` | No | Searches across all senders, domains, and policies. |
+| `-SearchScope` | `String` | No | Scope for search: `All` (default), `Whitelist`, `Blacklist`, `Allow`, `Block`. |
+| `-Whitelist` / `-w` | `Switch` | No | Targets or filters to Allowed senders and Allowed domains. |
+| `-Blacklist` / `-b` | `Switch` | No | Targets or filters to Blocked senders and Blocked domains. |
+| `-Entries` / `-Domain` | `String[]` | Conditional | One or more domains or email addresses to add or remove. |
 | `-Notes` / `-Comment` | `String` | No | Administrative comment or justification (max 500 characters). |
-| `-NoExpiration` | `Switch` | No | Configures added entries never to expire automatically. |
-| `-ExpirationDays` | `Int32` | No | Sets expiration to the specified number of days (1-730). |
-| `-ExpirationDate` | `DateTime` | No | Sets an explicit UTC expiration date and time. |
-| `-Detailed` / `-d` | `Switch` | No | Displays in-depth configuration cards with full technical details. |
+| `-SyncToTABL` | `Switch` | No | Also synchronizes additions/removals with the Tenant Allow/Block List (TABL). |
+| `-Detailed` / `-d` | `Switch` | No | Displays in-depth categorized cards with item numbers. |
 | `-ExportCsv` / `-Export` | `String` | No | Exports retrieved records to a UTF-8 CSV report file. |
 | `-PassThru` | `Switch` | No | Emits custom PowerShell objects to the pipeline. |
 | `-Interactive` / `-Menu` | `Switch` | No | Launches the interactive console menu wizard. |
@@ -268,23 +277,25 @@ Launches a menu-driven console wizard allowing administrators to list, search, a
 - **Author**: Roman Pindela
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
-- **Version**: 1.0.1
+- **Version**: 1.1.0
 
 ---
 
 ## Version History
 
+- **v1.1.0** (2026-10-14):
+  - Added native integration for Anti-Spam Inbound Policies (`HostedContentFilterPolicy`):
+    * **Allowed senders** (`AllowedSenders`)
+    * **Allowed domains** (`AllowedSenderDomains`)
+    * **Blocked senders** (`BlockedSenders`)
+    * **Blocked domains** (`BlockedSenderDomains`)
+  - Integrated summary counts matching Microsoft Defender portal view (e.g. 208 domains, 8 senders).
+  - Added `-Category` and `-Type` filters (`AllowedDomains`, `AllowedSenders`, `BlockedDomains`, `BlockedSenders`).
+  - Added `-PolicyName` parameter (default: `Default`) and `-Source` selection (`AntiSpam`, `TABL`, `All`).
+  - Updated Add/Remove operations to manage policy-level `AllowedSenders`, `AllowedSenderDomains`, `BlockedSenders`, and `BlockedSenderDomains` with optional `-SyncToTABL`.
 - **v1.0.1** (2026-10-14):
   - Added positional scope argument support for `-List` (e.g. `-List Whitelist -Detailed` and `-List Blacklist`).
   - Added positional list argument resolution for `-Add` and `-Remove` (e.g. `-Add Whitelist "partner.com"`).
   - Added positional search scope support for `-Search` (e.g. `-Search "partner.com" Whitelist`).
 - **v1.0.0** (2026-10-14):
-  - Initial production release.
-  - Support for Exchange Online Tenant Allow/Block List (TABL) for Sender domains and email addresses.
-  - Whitelist (Allow) and Blacklist (Block) addition, listing, searching, and removal.
-  - Comprehensive status calculation (Active/Expired, RemainingDays, UTC dates).
-  - Pre-flight RFC domain/email validation and conflict detection.
-  - Bilingual interactive confirmation prompts (`Y/N` and `T/N`).
-  - Interactive console menu mode (`-Interactive`).
-  - UTF-8 CSV export (`-ExportCsv`) and pipeline support (`-PassThru`).
-  - Automatic module detection, installation, and modern administrator session handling.
+  - Initial release with Tenant Allow/Block List (TABL) support.

@@ -1,91 +1,119 @@
 <#
 .SYNOPSIS
-    Manages Microsoft 365 Tenant Allow/Block Lists (whitelist and blacklist for sender domains and email addresses) in Exchange Online Protection.
+    Manages Microsoft 365 Allowed and Blocked senders and domains in Exchange Online (Anti-Spam inbound policies and Tenant Allow/Block Lists).
 
 .DESCRIPTION
     Comprehensive, enterprise-grade PowerShell automation script designed for Microsoft 365 and Exchange Online
-    administrators to audit, search, add, and remove sender domains and email addresses from the Tenant Allow/Block List (TABL).
+    administrators to audit, search, add, and remove sender domains and email addresses across:
+    1. Anti-Spam Inbound Policies (HostedContentFilterPolicy) - "Allowed and blocked senders and domains":
+       - Allowed senders (AllowedSenders - individual email addresses)
+       - Allowed domains (AllowedSenderDomains - trusted domain names)
+       - Blocked senders (BlockedSenders - blocked email addresses)
+       - Blocked domains (BlockedSenderDomains - blocked domain names)
+    2. Tenant Allow/Block List (TABL - TenantAllowBlockListItems) for sender domains and email addresses.
 
     Key capabilities include:
     1. Automatic Exchange Online administrator session detection and modern interactive login.
     2. Whitelist (Allow List) Management:
-       - Add trusted sender domains (e.g. partner.com) or specific email addresses (e.g. alert@partner.com).
-       - List all currently allowed domains and addresses with comprehensive details (expiration, status, author, notes).
-       - Search for specific domains or addresses within the allow list.
+       - Displays summary and complete listing of Allowed senders and Allowed domains (e.g. 208 domains, 8 senders).
+       - Add trusted domains or specific email addresses to Anti-Spam policies and/or TABL.
+       - Search specifically within allowed senders and domains.
     3. Blacklist (Block List) Management:
-       - Add malicious, spam, or phishing domains and email addresses to the tenant-wide block list.
-       - List all currently blocked domains and addresses with full administrative details.
-       - Search for specific domains or addresses within the block list.
-    4. Advanced Auditing & Inspection:
-       - Displays entry value, list action (Allow/Block), entry type (Domain vs Email Address), expiration date,
-         remaining days active, status (Active/Expired), last modified date, administrator identity, and notes.
-       - Detailed card view (-Detailed) for in-depth forensics.
+       - Displays summary and complete listing of Blocked senders and Blocked domains.
+       - Add malicious, spam, or phishing domains and email addresses tenant-wide.
+       - Search specifically within blocked senders and domains.
+    4. Advanced Auditing & Forensics:
+       - Matches the exact Microsoft Defender layout:
+         Allowed senders, Allowed domains, Blocked senders, Blocked domains.
+       - Detailed card view (-Detailed) organized by category.
     5. Search Engine:
-       - Wildcard and substring search (-Search) across domains, email addresses, administrative notes, and author identities.
+       - Fast wildcard search (-Search) across all allowed and blocked domains, email addresses, and notes.
     6. Safety & Conflict Protection:
-       - Pre-flight format validation (RFC-compliant domain and email syntax validation).
-       - Input sanitization guarding against malicious control characters and shell injections.
-       - Duplicate and conflict detection: warns if an entry already exists in the opposing list (e.g., trying to allow an already blocked domain).
-       - Bilingual interactive confirmation prompts (English Y/N, Polish T/N) with non-interactive override (-Force).
+       - Pre-flight RFC format validation for domain names and email addresses.
+       - Conflict detection: warns if an entry already exists in the opposing list.
+       - Bilingual interactive confirmation prompts (English Y/N, Polish T/N) with silent bypass (-Force).
     7. Export & Automation:
-       - Export audit records to UTF-8 CSV reports (-ExportCsv).
-       - Pipeline support (-PassThru) for downstream PowerShell automation.
-       - Interactive console menu wizard (-Interactive / -Menu) for menu-driven administration.
+       - Export full records to UTF-8 CSV reports (-ExportCsv).
+       - Pipeline support (-PassThru) for PowerShell automation.
+       - Interactive console menu wizard (-Interactive / -Menu).
 
 .PARAMETER List
-    Switch parameter. Lists entries from the Tenant Allow/Block List based on scope (-Whitelist, -Blacklist, or All).
+    Switch parameter. Lists entries based on scope (-Whitelist, -Blacklist, or All).
     Aliases: -ListEntries, -l, -Show.
 
-.PARAMETER Add
-    Switch parameter. Adds one or more sender domains or email addresses to the designated list (-Whitelist or -Blacklist).
-    Aliases: -AddEntry, -a.
-
-.PARAMETER Remove
-    Switch parameter. Removes one or more entries from the designated list (-Whitelist or -Blacklist).
-    Aliases: -RemoveEntry, -r.
-
-.PARAMETER Search
-    String parameter. Queries the Tenant Allow/Block List for domains, email addresses, or notes matching a pattern.
-    Aliases: -Find, -s, -Query.
+.PARAMETER Scope
+    Positional string argument specifying the list scope: 'All' (default), 'Whitelist', 'Blacklist', 'Allow', 'Block'.
+    Enables commands like: -List Whitelist, -List Blacklist.
+    Aliases: -Target, -FilterScope.
 
 .PARAMETER Whitelist
-    Switch parameter. Targets or filters operations to the Allow List (trusted domains and senders).
+    Switch parameter. Targets or filters operations to the Allow List (Allowed senders and Allowed domains).
     Aliases: -Allow, -AllowList, -w.
 
 .PARAMETER Blacklist
-    Switch parameter. Targets or filters operations to the Block List (malicious or unwanted domains and senders).
+    Switch parameter. Targets or filters operations to the Block List (Blocked senders and Blocked domains).
     Aliases: -Block, -BlockList, -b.
 
+.PARAMETER Category
+    Optional category filter: 'All' (default), 'AllowedSenders', 'AllowedDomains', 'BlockedSenders', 'BlockedDomains', 'Domain', 'Email'.
+    Aliases: -Cat, -Type.
+
+.PARAMETER PolicyName
+    Specifies the Anti-Spam inbound policy to manage. Default is 'Default'.
+    Aliases: -Policy.
+
+.PARAMETER Source
+    Specifies the backend repository to query or modify: 'All' (default), 'AntiSpam', 'TABL'.
+    Aliases: -Backend.
+
+.PARAMETER Add
+    Switch parameter. Adds one or more sender domains or email addresses.
+    Aliases: -AddEntry, -a.
+
+.PARAMETER Remove
+    Switch parameter. Removes one or more entries.
+    Aliases: -RemoveEntry, -r.
+
+.PARAMETER Search
+    String parameter. Queries for domains, email addresses, or keywords.
+    Aliases: -Find, -s, -Query.
+
+.PARAMETER SearchScope
+    Positional parameter for Search: 'All' (default), 'Whitelist', 'Blacklist', 'Allow', 'Block'.
+
 .PARAMETER Entries
-    One or more domains (e.g., "partner.com") or email addresses (e.g., "user@badactor.org") to add, remove, or inspect.
+    One or more domains (e.g., "partner.com") or email addresses (e.g., "user@badactor.org") to manage.
     Aliases: -Entry, -Domain, -Domains, -Address, -Addresses, -Identity.
 
 .PARAMETER Notes
-    Optional administrative justification or comment associated with added entries (e.g., "Ticket #9842 - Approved Vendor").
+    Optional administrative justification or comment associated with added entries.
     Aliases: -Comment, -Description.
 
+.PARAMETER SyncToTABL
+    Switch parameter. When adding or removing entries on the Anti-Spam policy, also synchronizes them to TABL.
+
 .PARAMETER NoExpiration
-    Switch parameter. Specifies that the added entries should never expire (subject to tenant policy and list type).
+    Switch parameter. Configures entries added to TABL never to expire automatically.
     Aliases: -NeverExpire.
 
 .PARAMETER ExpirationDays
-    Integer parameter (1-730). Sets entry expiration to the specified number of days from today.
+    Integer parameter (1-730). Sets entry expiration days from today for TABL items.
     Aliases: -Days.
 
 .PARAMETER ExpirationDate
-    DateTime parameter. Sets an explicit UTC expiration date and time for added entries.
+    DateTime parameter. Sets an explicit UTC expiration date for TABL items.
     Aliases: -ExpireAt.
 
 .PARAMETER Detailed
-    Switch parameter. Displays in-depth configuration cards including GUIDs, timestamps, and full notes.
+    Switch parameter. Displays in-depth cards and categorized sections.
     Aliases: -d, -Details.
 
 .PARAMETER ExportCsv
-    Optional file path to export retrieved allow/block records into a UTF-8 CSV file.
+    Optional file path to export retrieved records into a UTF-8 CSV report file.
     Aliases: -CsvPath, -Csv, -Export.
 
 .PARAMETER PassThru
-    Switch parameter. Outputs custom PowerShell objects to the pipeline for downstream processing.
+    Switch parameter. Outputs custom PowerShell objects to the pipeline.
 
 .PARAMETER Interactive
     Switch parameter. Launches an interactive menu-driven wizard in the console.
@@ -110,58 +138,58 @@
     Running without parameters displays the built-in help banner, usage examples, author info, and version.
 
 .EXAMPLE
-    .\Manage-M365TenantFilterList.ps1 -Help
-    Displays comprehensive help documentation and parameter reference.
-
-.EXAMPLE
     .\Manage-M365TenantFilterList.ps1 -List Whitelist -Detailed
-    Lists all allowed sender domains and email addresses with comprehensive detailed cards.
+    Lists all Allowed senders and Allowed domains in the tenant Anti-Spam policy with categorized breakdowns.
 
 .EXAMPLE
     .\Manage-M365TenantFilterList.ps1 -List -Whitelist
-    Lists all allowed sender domains and email addresses in a formatted table with detailed status and expiration info.
+    Displays all Allowed senders and Allowed domains in a formatted summary table.
 
 .EXAMPLE
     .\Manage-M365TenantFilterList.ps1 -List Blacklist -Detailed
-    Lists all blocked domains and email addresses with comprehensive detailed cards (including notes and modifier UPN).
+    Lists all Blocked senders and Blocked domains configured in the tenant.
 
 .EXAMPLE
-    .\Manage-M365TenantFilterList.ps1 -List
-    Lists both Whitelist and Blacklist entries across the tenant with summary metrics.
+    .\Manage-M365TenantFilterList.ps1 -List All
+    Displays the complete overview of Allowed and blocked senders and domains (senders, domains, counts).
 
 .EXAMPLE
-    .\Manage-M365TenantFilterList.ps1 -Search "partner.com" -Whitelist
-    Searches for "partner.com" specifically within the Whitelist.
+    .\Manage-M365TenantFilterList.ps1 -Search "partner.com"
+    Searches for "partner.com" across Allowed domains, Allowed senders, Blocked domains, and TABL.
 
 .EXAMPLE
-    .\Manage-M365TenantFilterList.ps1 -Search "spammer"
-    Searches for "spammer" across both Whitelist and Blacklist entries.
+    .\Manage-M365TenantFilterList.ps1 -Search "partner.com" Whitelist
+    Searches for "partner.com" specifically within Allowed senders and Allowed domains.
 
 .EXAMPLE
-    .\Manage-M365TenantFilterList.ps1 -Add -Whitelist -Entries "trustedpartner.com", "billing@vendor.com" -Notes "Approved external supplier"
-    Adds trustedpartner.com and billing@vendor.com to the tenant Whitelist with interactive confirmation.
+    .\Manage-M365TenantFilterList.ps1 -Add Whitelist "partner.com" -Notes "Approved B2B vendor"
+    Adds partner.com to Allowed domains in the Default Anti-Spam policy.
 
 .EXAMPLE
-    .\Manage-M365TenantFilterList.ps1 -Add -Blacklist -Entries "phishing-bank.com", "badactor@evil.org" -Notes "Malicious phishing campaign" -Force
-    Adds malicious domain and sender address to the tenant Blacklist silently without confirmation prompts.
+    .\Manage-M365TenantFilterList.ps1 -Add Whitelist "alerts@supplier.com"
+    Adds alerts@supplier.com to Allowed senders in the Default Anti-Spam policy.
 
 .EXAMPLE
-    .\Manage-M365TenantFilterList.ps1 -Remove -Blacklist -Entries "phishing-bank.com"
-    Removes phishing-bank.com from the Blacklist after interactive confirmation.
+    .\Manage-M365TenantFilterList.ps1 -Add Blacklist "spammer.com" -Force
+    Adds spammer.com to Blocked domains silently without confirmation prompts.
 
 .EXAMPLE
-    .\Manage-M365TenantFilterList.ps1 -List -Whitelist -ExportCsv "C:\Reports\M365_Whitelist.csv"
-    Audits the tenant Whitelist and exports all records to a CSV report.
+    .\Manage-M365TenantFilterList.ps1 -Remove Whitelist "oldpartner.com"
+    Removes oldpartner.com from Allowed domains in the Anti-Spam policy.
+
+.EXAMPLE
+    .\Manage-M365TenantFilterList.ps1 -List Whitelist -ExportCsv "C:\Reports\M365_AllowedSendersAndDomains.csv"
+    Audits Allowed senders and Allowed domains and exports records to a UTF-8 CSV report.
 
 .EXAMPLE
     .\Manage-M365TenantFilterList.ps1 -Interactive
-    Launches an interactive, menu-driven console wizard for managing tenant filter lists.
+    Launches an interactive, menu-driven console wizard.
 
 .NOTES
     Author:  Roman Pindela
     Email:   roman.pindela@gmail.com
     GitHub:  https://github.com/romanpindela
-    Version: 1.0.1
+    Version: 1.1.0
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Default')]
@@ -195,7 +223,7 @@ param(
     [Parameter(ParameterSetName = 'List', Position = 0)]
     [Parameter(ParameterSetName = 'Default', Position = 0)]
     [ValidateSet('All', 'Whitelist', 'Blacklist', 'Allow', 'Block')]
-    [Alias('Type', 'Target')]
+    [Alias('Target', 'FilterScope')]
     [string]$Scope,
 
     [Parameter(ParameterSetName = 'Default')]
@@ -214,6 +242,21 @@ param(
     [Alias('Block', 'BlockList', 'b')]
     [switch]$Blacklist,
 
+    # Policy and Source selection
+    [Parameter()]
+    [Alias('Policy')]
+    [string]$PolicyName = 'Default',
+
+    [Parameter()]
+    [ValidateSet('All', 'AntiSpam', 'TABL')]
+    [Alias('Backend')]
+    [string]$Source = 'All',
+
+    [Parameter()]
+    [ValidateSet('All', 'AllowedSenders', 'AllowedDomains', 'BlockedSenders', 'BlockedDomains', 'Domain', 'Email', 'Senders', 'Domains')]
+    [Alias('Cat', 'Type')]
+    [string]$Category = 'All',
+
     # Target Entries (Domains / Email addresses)
     [Parameter(ParameterSetName = 'Add', Mandatory = $false, Position = 0, ValueFromRemainingArguments = $true)]
     [Parameter(ParameterSetName = 'Remove', Mandatory = $false, Position = 0, ValueFromRemainingArguments = $true)]
@@ -224,6 +267,9 @@ param(
     [Parameter(ParameterSetName = 'Add')]
     [Alias('Comment', 'Description')]
     [string]$Notes,
+
+    [Parameter(ParameterSetName = 'Add')]
+    [switch]$SyncToTABL,
 
     [Parameter(ParameterSetName = 'Add')]
     [Alias('NeverExpire')]
@@ -277,7 +323,7 @@ $ErrorActionPreference = 'Stop'
 # Metadata declaration
 $ScriptMetadata = @{
     Title   = "Manage-M365TenantFilterList.ps1"
-    Version = "1.0.1"
+    Version = "1.1.0"
     Author  = "Roman Pindela"
     Email   = "roman.pindela@gmail.com"
     GitHub  = "https://github.com/romanpindela"
@@ -295,7 +341,12 @@ function Show-ScriptHelp {
         "DESCRIPTION:",
         "    Comprehensive PowerShell automation script for Microsoft 365 Exchange Online",
         "    administrators to audit, search, add, and remove sender domains and email",
-        "    addresses in the Tenant Allow/Block List (Whitelist and Blacklist).",
+        "    addresses across Anti-Spam Inbound Policies and Tenant Allow/Block Lists:",
+        "      - Allowed senders (AllowedSenders)",
+        "      - Allowed domains (AllowedSenderDomains)",
+        "      - Blocked senders (BlockedSenders)",
+        "      - Blocked domains (BlockedSenderDomains)",
+        "      - Tenant Allow/Block List (TABL)",
         "",
         "AUTHENTICATION & PREREQUISITES:",
         "    - Requires PowerShell 5.1 or PowerShell 7+.",
@@ -311,62 +362,61 @@ function Show-ScriptHelp {
         "       .\Manage-M365TenantFilterList.ps1",
         "       .\Manage-M365TenantFilterList.ps1 -h",
         "",
-        "    2. List Whitelist (Allowed Domains and Email Addresses):",
+        "    2. List Whitelist (Allowed senders and Allowed domains):",
         "       .\Manage-M365TenantFilterList.ps1 -List Whitelist -Detailed",
         "       .\Manage-M365TenantFilterList.ps1 -List -Whitelist",
-        "       .\Manage-M365TenantFilterList.ps1 -List -Whitelist -Detailed",
+        "       .\Manage-M365TenantFilterList.ps1 -List Whitelist -Category AllowedDomains",
         "",
-        "    3. List Blacklist (Blocked Domains and Email Addresses):",
+        "    3. List Blacklist (Blocked senders and Blocked domains):",
         "       .\Manage-M365TenantFilterList.ps1 -List Blacklist -Detailed",
         "       .\Manage-M365TenantFilterList.ps1 -List -Blacklist",
-        "       .\Manage-M365TenantFilterList.ps1 -List -Blacklist -Detailed",
         "",
-        "    4. List Both Whitelist and Blacklist with Summary:",
+        "    4. List Full Tenant Overview (All senders, domains, and counts):",
+        "       .\Manage-M365TenantFilterList.ps1 -List All",
         "       .\Manage-M365TenantFilterList.ps1 -List",
         "",
-        "    5. Search for a Domain or Email Address in Whitelist:",
+        "    5. Search for a Domain or Email Address:",
+        "       .\Manage-M365TenantFilterList.ps1 -Search `"partner.com`"",
         "       .\Manage-M365TenantFilterList.ps1 -Search `"partner.com`" Whitelist",
-        "       .\Manage-M365TenantFilterList.ps1 -Search `"partner.com`" -Whitelist",
         "",
-        "    6. Search for a Domain or Email Address in Blacklist:",
-        "       .\Manage-M365TenantFilterList.ps1 -Search `"malicious`" -Blacklist",
-        "",
-        "    7. Search Across Both Lists (Global Search):",
-        "       .\Manage-M365TenantFilterList.ps1 -Search `"example.com`"",
-        "",
-        "    8. Add Domain(s) to Whitelist (Interactive Confirmation):",
+        "    6. Add Domain to Allowed Domains (Anti-Spam Inbound Policy):",
         "       .\Manage-M365TenantFilterList.ps1 -Add Whitelist `"partner.com`"",
-        "       .\Manage-M365TenantFilterList.ps1 -Add -Whitelist -Entries `"partner.com`" -Notes `"Trusted supplier`"",
-        "       .\Manage-M365TenantFilterList.ps1 -Add -Whitelist -Entries `"domain1.com`", `"domain2.com`"",
+        "       .\Manage-M365TenantFilterList.ps1 -Add -Whitelist -Entries `"partner.com`" -Notes `"Approved vendor`"",
         "",
-        "    9. Add Domain(s) or Email(s) to Blacklist (Silent Execution via -Force):",
+        "    7. Add Email Address to Allowed Senders:",
+        "       .\Manage-M365TenantFilterList.ps1 -Add Whitelist `"alerts@partner.com`"",
+        "",
+        "    8. Add Domain or Email to Blocked List:",
         "       .\Manage-M365TenantFilterList.ps1 -Add Blacklist `"spam.com`" -Force",
-        "       .\Manage-M365TenantFilterList.ps1 -Add -Blacklist -Entries `"spam.com`", `"bot@phish.org`" -Force",
+        "       .\Manage-M365TenantFilterList.ps1 -Add Blacklist `"phisher@evil.org`"",
         "",
-        "   10. Remove Entry from Whitelist or Blacklist:",
-        "       .\Manage-M365TenantFilterList.ps1 -Remove -Whitelist -Entries `"oldpartner.com`"",
-        "       .\Manage-M365TenantFilterList.ps1 -Remove -Blacklist -Entries `"spam.com`" -Force",
+        "    9. Remove Entry from Whitelist or Blacklist:",
+        "       .\Manage-M365TenantFilterList.ps1 -Remove Whitelist `"oldpartner.com`"",
+        "       .\Manage-M365TenantFilterList.ps1 -Remove Blacklist `"spam.com`" -Force",
         "",
-        "   11. Export Tenant Filter List to UTF-8 CSV Report:",
-        "       .\Manage-M365TenantFilterList.ps1 -List -Whitelist -ExportCsv `"C:\Reports\Whitelist.csv`"",
-        "       .\Manage-M365TenantFilterList.ps1 -List -ExportCsv `"C:\Reports\AllFilters.csv`"",
+        "   10. Export Tenant Filter List to UTF-8 CSV Report:",
+        "       .\Manage-M365TenantFilterList.ps1 -List Whitelist -ExportCsv `"C:\Reports\AllowedSendersAndDomains.csv`"",
+        "       .\Manage-M365TenantFilterList.ps1 -List -ExportCsv `"C:\Reports\AllTenantFilters.csv`"",
         "",
-        "   12. Interactive Console Menu Wizard:",
+        "   11. Interactive Console Menu Wizard:",
         "       .\Manage-M365TenantFilterList.ps1 -Interactive",
         "",
         "PARAMETERS:",
         "    -List, -l                  Lists entries from Whitelist, Blacklist, or both (e.g. -List Whitelist).",
-        "    -Add, -a                   Adds specified entries to the chosen list (e.g. -Add Whitelist domain.com).",
+        "    -Scope                     Scope: 'All' (default), 'Whitelist', 'Blacklist', 'Allow', 'Block'.",
+        "    -Category, -Cat, -Type     Category filter: 'All', 'AllowedSenders', 'AllowedDomains',",
+        "                               'BlockedSenders', 'BlockedDomains', 'Domain', 'Email'.",
+        "    -PolicyName, -Policy       Target Anti-Spam policy name (default: 'Default').",
+        "    -Source, -Backend          Data source: 'All' (default), 'AntiSpam', 'TABL'.",
+        "    -Add, -a                   Adds specified entries (e.g. -Add Whitelist domain.com).",
         "    -Remove, -r                Removes specified entries from the chosen list.",
         "    -Search, -s                Finds entries matching a domain, email, or notes pattern.",
-        "    -Whitelist, -Allow, -w     Specifies the Allow List (trusted domains and senders).",
-        "    -Blacklist, -Block, -b     Specifies the Block List (blocked domains and senders).",
+        "    -Whitelist, -Allow, -w     Specifies the Allow List (Allowed senders and Allowed domains).",
+        "    -Blacklist, -Block, -b     Specifies the Block List (Blocked senders and Blocked domains).",
         "    -Entries, -Domain, -Entry  One or more domains or email addresses to manage.",
         "    -Notes, -Comment           Administrative justification / comment.",
-        "    -NoExpiration              Configures entry never to expire automatically.",
-        "    -ExpirationDays            Number of days until expiration (1-730).",
-        "    -ExpirationDate            Explicit expiration date and time (UTC).",
-        "    -Detailed, -d              Displays comprehensive cards for listed records.",
+        "    -SyncToTABL                Also synchronizes additions/removals with TABL.",
+        "    -Detailed, -d              Displays comprehensive cards and categorized sections.",
         "    -ExportCsv, -Export        Exports results to the specified CSV file path.",
         "    -PassThru                  Outputs PowerShell custom objects to pipeline.",
         "    -Interactive, -Menu, -i    Launches guided console menu wizard.",
@@ -401,7 +451,6 @@ function Assert-SafeInputString {
         Write-Error "Parameter -$ParamName exceeds maximum allowed length of $MaxLength characters."
         exit 1
     }
-    # Defense against control characters and command injection
     if ($InputText -match '[`$<>|;&\0]') {
         Write-Error "Parameter -$ParamName contains invalid or potentially dangerous characters."
         exit 1
@@ -534,87 +583,244 @@ function Connect-ExchangeEnvironment {
     }
 }
 
-# Data Retrieval Helper
+# Comprehensive Data Retrieval Helper (Anti-Spam Policy + TABL)
 function Get-TenantFilterData {
     param(
         [ValidateSet('All', 'Allow', 'Block')]
-        [string]$TargetAction = 'All'
+        [string]$TargetAction = 'All',
+        [string]$TargetPolicy = 'Default',
+        [ValidateSet('All', 'AntiSpam', 'TABL')]
+        [string]$TargetSource = 'All'
     )
 
-    Write-Host "[*] Querying Microsoft 365 Tenant Allow/Block List (Sender scope)..." -ForegroundColor Cyan
-    $rawItems = @()
-
-    try {
-        if ($TargetAction -eq 'Allow') {
-            $rawItems = Get-TenantAllowBlockListItems -ListType Sender -Allow -ErrorAction Stop
-        } elseif ($TargetAction -eq 'Block') {
-            $rawItems = Get-TenantAllowBlockListItems -ListType Sender -Block -ErrorAction Stop
-        } else {
-            $rawItems = Get-TenantAllowBlockListItems -ListType Sender -ErrorAction Stop
-        }
-    } catch {
-        Write-Error "Failed to query Tenant Allow/Block List from Exchange Online: $_"
-        exit 1
-    }
-
     $processed = @()
-    $nowUtc = (Get-Date).ToUniversalTime()
 
-    foreach ($item in $rawItems) {
-        $val = [string]$item.Value
-        $entryType = if ($val -match '@') { 'EmailAddress' } else { 'Domain' }
-        $action = [string]$item.Action
-        if ([string]::IsNullOrWhiteSpace($action)) {
-            $action = if ($item.Block) { 'Block' } else { 'Allow' }
-        }
+    # 1. Query Anti-Spam Inbound Policies (HostedContentFilterPolicy)
+    if ($TargetSource -in @('All', 'AntiSpam')) {
+        Write-Host "[*] Querying Microsoft 365 Anti-Spam inbound policies (Allowed and blocked senders and domains)..." -ForegroundColor Cyan
+        try {
+            $policies = @()
+            if (-not [string]::IsNullOrWhiteSpace($TargetPolicy) -and $TargetPolicy -ne 'All') {
+                $p = Get-HostedContentFilterPolicy -Identity $TargetPolicy -ErrorAction SilentlyContinue
+                if ($p) { $policies = @($p) }
+            }
+            if ($policies.Count -eq 0) {
+                $policies = Get-HostedContentFilterPolicy -ErrorAction Stop
+            }
 
-        # Calculate expiration metrics
-        $expDate = $null
-        $remainingDays = "Never"
-        $status = "Active"
+            foreach ($pol in $policies) {
+                $polName = [string]$pol.Name
 
-        if ($item.ExpirationDate) {
-            try {
-                $expDate = [datetime]$item.ExpirationDate
-                if ($expDate.Year -lt 9999) {
-                    $diff = $expDate - $nowUtc
-                    if ($diff.TotalSeconds -lt 0) {
-                        $status = "Expired"
-                        $remainingDays = "Expired"
-                    } else {
-                        $remainingDays = [math]::Round($diff.TotalDays, 1)
+                # Allowed senders (email addresses)
+                if ($TargetAction -ne 'Block' -and $pol.AllowedSenders) {
+                    foreach ($s in $pol.AllowedSenders) {
+                        if (-not [string]::IsNullOrWhiteSpace($s)) {
+                            $cleanS = $s.ToString().Trim().ToLowerInvariant()
+                            $processed += [PSCustomObject]@{
+                                Identity         = "$polName\AllowedSenders\$cleanS"
+                                Value            = $cleanS
+                                Action           = 'Allow'
+                                Category         = 'Allowed senders'
+                                ListType         = 'Sender'
+                                EntryType        = 'EmailAddress'
+                                Source           = "Anti-Spam Policy ($polName)"
+                                PolicyName       = $polName
+                                Status           = 'Active'
+                                ExpirationDate   = 'Never'
+                                RemainingDays    = 'Never'
+                                LastModifiedDate = 'N/A'
+                                LastModifiedBy   = 'Policy'
+                                Notes            = "Anti-spam inbound policy: $polName"
+                            }
+                        }
                     }
                 }
-            } catch {
-                # Fallback on raw string
+
+                # Allowed domains
+                if ($TargetAction -ne 'Block' -and $pol.AllowedSenderDomains) {
+                    foreach ($d in $pol.AllowedSenderDomains) {
+                        if (-not [string]::IsNullOrWhiteSpace($d)) {
+                            $cleanD = $d.ToString().Trim().ToLowerInvariant()
+                            $processed += [PSCustomObject]@{
+                                Identity         = "$polName\AllowedSenderDomains\$cleanD"
+                                Value            = $cleanD
+                                Action           = 'Allow'
+                                Category         = 'Allowed domains'
+                                ListType         = 'Sender'
+                                EntryType        = 'Domain'
+                                Source           = "Anti-Spam Policy ($polName)"
+                                PolicyName       = $polName
+                                Status           = 'Active'
+                                ExpirationDate   = 'Never'
+                                RemainingDays    = 'Never'
+                                LastModifiedDate = 'N/A'
+                                LastModifiedBy   = 'Policy'
+                                Notes            = "Anti-spam inbound policy: $polName"
+                            }
+                        }
+                    }
+                }
+
+                # Blocked senders (email addresses)
+                if ($TargetAction -ne 'Allow' -and $pol.BlockedSenders) {
+                    foreach ($s in $pol.BlockedSenders) {
+                        if (-not [string]::IsNullOrWhiteSpace($s)) {
+                            $cleanS = $s.ToString().Trim().ToLowerInvariant()
+                            $processed += [PSCustomObject]@{
+                                Identity         = "$polName\BlockedSenders\$cleanS"
+                                Value            = $cleanS
+                                Action           = 'Block'
+                                Category         = 'Blocked senders'
+                                ListType         = 'Sender'
+                                EntryType        = 'EmailAddress'
+                                Source           = "Anti-Spam Policy ($polName)"
+                                PolicyName       = $polName
+                                Status           = 'Active'
+                                ExpirationDate   = 'Never'
+                                RemainingDays    = 'Never'
+                                LastModifiedDate = 'N/A'
+                                LastModifiedBy   = 'Policy'
+                                Notes            = "Anti-spam inbound policy: $polName"
+                            }
+                        }
+                    }
+                }
+
+                # Blocked domains
+                if ($TargetAction -ne 'Allow' -and $pol.BlockedSenderDomains) {
+                    foreach ($d in $pol.BlockedSenderDomains) {
+                        if (-not [string]::IsNullOrWhiteSpace($d)) {
+                            $cleanD = $d.ToString().Trim().ToLowerInvariant()
+                            $processed += [PSCustomObject]@{
+                                Identity         = "$polName\BlockedSenderDomains\$cleanD"
+                                Value            = $cleanD
+                                Action           = 'Block'
+                                Category         = 'Blocked domains'
+                                ListType         = 'Sender'
+                                EntryType        = 'Domain'
+                                Source           = "Anti-Spam Policy ($polName)"
+                                PolicyName       = $polName
+                                Status           = 'Active'
+                                ExpirationDate   = 'Never'
+                                RemainingDays    = 'Never'
+                                LastModifiedDate = 'N/A'
+                                LastModifiedBy   = 'Policy'
+                                Notes            = "Anti-spam inbound policy: $polName"
+                            }
+                        }
+                    }
+                }
             }
+        } catch {
+            Write-Warning "Could not query Anti-Spam inbound policies: $_"
         }
+    }
 
-        $obj = [PSCustomObject]@{
-            Identity         = [string]$item.Identity
-            Value            = $val
-            Action           = $action
-            ListType         = 'Sender'
-            EntryType        = $entryType
-            Status           = $status
-            ExpirationDate   = if ($expDate -and $expDate.Year -lt 9999) { $expDate.ToString("yyyy-MM-dd HH:mm UTC") } else { "Never" }
-            RemainingDays    = $remainingDays
-            LastModifiedDate = if ($item.LastModifiedDate) { ([datetime]$item.LastModifiedDate).ToString("yyyy-MM-dd HH:mm UTC") } else { "N/A" }
-            LastModifiedBy   = [string]$item.LastModifiedBy
-            Notes            = [string]$item.Notes
+    # 2. Query Tenant Allow/Block List (TABL)
+    if ($TargetSource -in @('All', 'TABL')) {
+        Write-Host "[*] Querying Microsoft 365 Tenant Allow/Block List (TABL - Senders)..." -ForegroundColor Cyan
+        try {
+            $rawItems = @()
+            if ($TargetAction -eq 'Allow') {
+                $rawItems = Get-TenantAllowBlockListItems -ListType Sender -Allow -ErrorAction SilentlyContinue
+            } elseif ($TargetAction -eq 'Block') {
+                $rawItems = Get-TenantAllowBlockListItems -ListType Sender -Block -ErrorAction SilentlyContinue
+            } else {
+                $rawItems = Get-TenantAllowBlockListItems -ListType Sender -ErrorAction SilentlyContinue
+            }
+
+            $nowUtc = (Get-Date).ToUniversalTime()
+
+            foreach ($item in $rawItems) {
+                $val = [string]$item.Value
+                $entryType = if ($val -match '@') { 'EmailAddress' } else { 'Domain' }
+                $action = [string]$item.Action
+                if ([string]::IsNullOrWhiteSpace($action)) {
+                    $action = if ($item.Block) { 'Block' } else { 'Allow' }
+                }
+
+                $cat = if ($action -eq 'Allow') {
+                    if ($entryType -eq 'EmailAddress') { 'TABL Allowed sender' } else { 'TABL Allowed domain' }
+                } else {
+                    if ($entryType -eq 'EmailAddress') { 'TABL Blocked sender' } else { 'TABL Blocked domain' }
+                }
+
+                $expDate = $null
+                $remainingDays = "Never"
+                $status = "Active"
+
+                if ($item.ExpirationDate) {
+                    try {
+                        $expDate = [datetime]$item.ExpirationDate
+                        if ($expDate.Year -lt 9999) {
+                            $diff = $expDate - $nowUtc
+                            if ($diff.TotalSeconds -lt 0) {
+                                $status = "Expired"
+                                $remainingDays = "Expired"
+                            } else {
+                                $remainingDays = [math]::Round($diff.TotalDays, 1)
+                            }
+                        }
+                    } catch {
+                        # Fallback
+                    }
+                }
+
+                $processed += [PSCustomObject]@{
+                    Identity         = [string]$item.Identity
+                    Value            = $val.Trim().ToLowerInvariant()
+                    Action           = $action
+                    Category         = $cat
+                    ListType         = 'Sender'
+                    EntryType        = $entryType
+                    Source           = 'Tenant Allow/Block List (TABL)'
+                    PolicyName       = 'TABL'
+                    Status           = $status
+                    ExpirationDate   = if ($expDate -and $expDate.Year -lt 9999) { $expDate.ToString("yyyy-MM-dd HH:mm UTC") } else { "Never" }
+                    RemainingDays    = $remainingDays
+                    LastModifiedDate = if ($item.LastModifiedDate) { ([datetime]$item.LastModifiedDate).ToString("yyyy-MM-dd HH:mm UTC") } else { "N/A" }
+                    LastModifiedBy   = [string]$item.LastModifiedBy
+                    Notes            = [string]$item.Notes
+                }
+            }
+        } catch {
+            Write-Warning "Could not query Tenant Allow/Block List: $_"
         }
-
-        $processed += $obj
     }
 
     return $processed
+}
+
+# Apply Category Filtering
+function Filter-ByCategory {
+    param(
+        [array]$Items,
+        [string]$CategoryFilter
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CategoryFilter) -or $CategoryFilter -eq 'All') {
+        return $Items
+    }
+
+    switch ($CategoryFilter.ToLowerInvariant()) {
+        'allowedsenders' { return ($Items | Where-Object { $_.Category -eq 'Allowed senders' }) }
+        'alloweddomains' { return ($Items | Where-Object { $_.Category -eq 'Allowed domains' }) }
+        'blockedsenders' { return ($Items | Where-Object { $_.Category -eq 'Blocked senders' }) }
+        'blockeddomains' { return ($Items | Where-Object { $_.Category -eq 'Blocked domains' }) }
+        'domain'         { return ($Items | Where-Object { $_.EntryType -eq 'Domain' }) }
+        'domains'        { return ($Items | Where-Object { $_.EntryType -eq 'Domain' }) }
+        'email'          { return ($Items | Where-Object { $_.EntryType -eq 'EmailAddress' }) }
+        'senders'        { return ($Items | Where-Object { $_.EntryType -eq 'EmailAddress' }) }
+        default          { return $Items }
+    }
 }
 
 # Display Tables and Cards
 function Show-TenantFilterSummaryTable {
     param(
         [array]$Items,
-        [string]$Title = "Tenant Filter List"
+        [string]$Title = "Allowed and blocked senders and domains",
+        [string]$Policy = "Default"
     )
 
     if (-not $Items -or $Items.Count -eq 0) {
@@ -622,28 +828,33 @@ function Show-TenantFilterSummaryTable {
         return
     }
 
+    $allowedSenders = ($Items | Where-Object { $_.Category -eq 'Allowed senders' })
+    $allowedDomains = ($Items | Where-Object { $_.Category -eq 'Allowed domains' })
+    $blockedSenders = ($Items | Where-Object { $_.Category -eq 'Blocked senders' })
+    $blockedDomains = ($Items | Where-Object { $_.Category -eq 'Blocked domains' })
+    $tablAllow = ($Items | Where-Object { $_.Source -like '*TABL*' -and $_.Action -eq 'Allow' })
+    $tablBlock = ($Items | Where-Object { $_.Source -like '*TABL*' -and $_.Action -eq 'Block' })
+
     Write-Host "`n================================================================================" -ForegroundColor White
-    Write-Host "  $Title (Total: $($Items.Count))" -ForegroundColor Cyan
+    Write-Host "  Allowed and blocked senders and domains (Policy: $Policy)" -ForegroundColor Cyan
     Write-Host "================================================================================" -ForegroundColor White
-
-    # Group metrics
-    $allowCount = ($Items | Where-Object { $_.Action -eq 'Allow' }).Count
-    $blockCount = ($Items | Where-Object { $_.Action -eq 'Block' }).Count
-    $domainCount = ($Items | Where-Object { $_.EntryType -eq 'Domain' }).Count
-    $emailCount = ($Items | Where-Object { $_.EntryType -eq 'EmailAddress' }).Count
-    $activeCount = ($Items | Where-Object { $_.Status -eq 'Active' }).Count
-    $expiredCount = ($Items | Where-Object { $_.Status -eq 'Expired' }).Count
-
-    Write-Host "Summary: Whitelist (Allow): $allowCount | Blacklist (Block): $blockCount | Domains: $domainCount | Emails: $emailCount | Active: $activeCount | Expired: $expiredCount" -ForegroundColor Gray
+    Write-Host "  Allowed senders : $(if ($allowedSenders.Count -gt 0) { "$($allowedSenders.Count) senders" } else { "-" })" -ForegroundColor Green
+    Write-Host "  Allowed domains : $(if ($allowedDomains.Count -gt 0) { "$($allowedDomains.Count) domains" } else { "-" })" -ForegroundColor Green
+    Write-Host "  Blocked senders : $(if ($blockedSenders.Count -gt 0) { "$($blockedSenders.Count) senders" } else { "-" })" -ForegroundColor Red
+    Write-Host "  Blocked domains : $(if ($blockedDomains.Count -gt 0) { "$($blockedDomains.Count) domains" } else { "-" })" -ForegroundColor Red
+    if ($tablAllow.Count -gt 0 -or $tablBlock.Count -gt 0) {
+        Write-Host "  Tenant Allow/Block List (TABL) : $($tablAllow.Count) allowed | $($tablBlock.Count) blocked" -ForegroundColor Yellow
+    }
     Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "Total entries displayed: $($Items.Count)`n" -ForegroundColor Gray
 
     $tableData = $Items | Select-Object `
         @{Name='Action'; Expression={ $_.Action.ToUpper() }},
-        @{Name='Type'; Expression={ $_.EntryType }},
-        @{Name='Entry Value'; Expression={ $_.Value }},
+        @{Name='Category'; Expression={ $_.Category }},
+        @{Name='Value (Domain/Email)'; Expression={ $_.Value }},
+        @{Name='Source'; Expression={ $_.Source }},
         @{Name='Status'; Expression={ $_.Status }},
         @{Name='Expires (UTC)'; Expression={ $_.ExpirationDate }},
-        @{Name='Days Left'; Expression={ $_.RemainingDays }},
         @{Name='Notes'; Expression={ if ($_.Notes.Length -gt 30) { $_.Notes.Substring(0, 27) + "..." } else { $_.Notes } }}
 
     $tableData | Format-Table -AutoSize | Out-String | Write-Host -ForegroundColor White
@@ -658,23 +869,23 @@ function Show-TenantFilterDetailedCards {
     }
 
     Write-Host "`n================================================================================" -ForegroundColor White
-    Write-Host "  Detailed Inspection Report (Total Entries: $($Items.Count))" -ForegroundColor Cyan
+    Write-Host "  Allowed and Blocked Senders and Domains - Detailed Report ($($Items.Count) entries)" -ForegroundColor Cyan
     Write-Host "================================================================================" -ForegroundColor White
 
-    foreach ($item in $Items) {
-        $actionColor = if ($item.Action -eq 'Allow') { 'Green' } else { 'Red' }
+    $grouped = $Items | Group-Object -Property Category
+
+    foreach ($grp in $grouped) {
+        $categoryColor = if ($grp.Name -match 'Allow') { 'Green' } else { 'Red' }
+        Write-Host "`n>>> $($grp.Name) ($($grp.Count) entries):" -ForegroundColor $categoryColor
         Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
-        Write-Host " Entry: " -NoNewline -ForegroundColor White
-        Write-Host "$($item.Value)" -ForegroundColor Cyan
-        Write-Host "  List / Action     : " -NoNewline -ForegroundColor Gray
-        Write-Host "$($item.Action)" -ForegroundColor $actionColor
-        Write-Host "  Entry Type        : $($item.EntryType)" -ForegroundColor Gray
-        Write-Host "  Status            : $($item.Status)" -ForegroundColor (if ($item.Status -eq 'Active') { 'Green' } else { 'Yellow' })
-        Write-Host "  Expiration Date   : $($item.ExpirationDate) ($($item.RemainingDays) days remaining)" -ForegroundColor Gray
-        Write-Host "  Last Modified Date: $($item.LastModifiedDate)" -ForegroundColor Gray
-        Write-Host "  Last Modified By  : $($item.LastModifiedBy)" -ForegroundColor Gray
-        Write-Host "  Notes             : $(if ($item.Notes) { $item.Notes } else { 'None' })" -ForegroundColor Yellow
-        Write-Host "  System ID         : $($item.Identity)" -ForegroundColor DarkGray
+
+        $counter = 1
+        foreach ($item in $grp.Group) {
+            Write-Host ("{0,4}. " -f $counter) -NoNewline -ForegroundColor Gray
+            Write-Host "$($item.Value)" -NoNewline -ForegroundColor White
+            Write-Host "  [Source: $($item.Source) | Status: $($item.Status)]" -ForegroundColor Gray
+            $counter++
+        }
     }
     Write-Host "--------------------------------------------------------------------------------`n" -ForegroundColor DarkGray
 }
@@ -684,30 +895,33 @@ function Invoke-SearchOperation {
     param(
         [string]$Query,
         [string]$TargetAction,
+        [string]$TargetPolicy,
+        [string]$TargetSource,
+        [string]$CategoryFilter,
         [switch]$ShowDetails,
         [string]$CsvPath,
         [switch]$PipelineOut
     )
 
-    $items = Get-TenantFilterData -TargetAction $TargetAction
-    $cleanQuery = $Query.Trim()
+    $items = Get-TenantFilterData -TargetAction $TargetAction -TargetPolicy $TargetPolicy -TargetSource $TargetSource
+    $items = Filter-ByCategory -Items $items -CategoryFilter $CategoryFilter
 
-    Write-Host "[*] Searching for '$cleanQuery' across entries and notes..." -ForegroundColor Cyan
+    $cleanQuery = $Query.Trim()
+    Write-Host "[*] Searching for '$cleanQuery' across senders, domains, and policies..." -ForegroundColor Cyan
 
     $matches = $items | Where-Object {
         $_.Value -like "*$cleanQuery*" -or
+        $_.Category -like "*$cleanQuery*" -or
         $_.Notes -like "*$cleanQuery*" -or
-        $_.LastModifiedBy -like "*$cleanQuery*"
+        $_.Source -like "*$cleanQuery*"
     }
 
-    $title = if ($TargetAction -eq 'Allow') { "Whitelist Search Results for '$cleanQuery'" }
-             elseif ($TargetAction -eq 'Block') { "Blacklist Search Results for '$cleanQuery'" }
-             else { "Tenant Filter Search Results for '$cleanQuery'" }
+    $title = "Search Results for '$cleanQuery'"
 
     if ($ShowDetails) {
         Show-TenantFilterDetailedCards -Items $matches
     } else {
-        Show-TenantFilterSummaryTable -Items $matches -Title $title
+        Show-TenantFilterSummaryTable -Items $matches -Title $title -Policy $TargetPolicy
     }
 
     if (-not [string]::IsNullOrWhiteSpace($CsvPath) -and $matches.Count -gt 0) {
@@ -725,14 +939,16 @@ function Invoke-AddOperation {
         [string[]]$RawEntries,
         [ValidateSet('Allow', 'Block')]
         [string]$TargetAction,
+        [string]$TargetPolicy,
         [string]$AdminNotes,
+        [switch]$SyncTABL,
         [switch]$NeverExpire,
         [int]$DaysToExpire,
         [datetime]$ExplicitExpireDate,
         [switch]$BypassPrompt
     )
 
-    $targetListName = if ($TargetAction -eq 'Allow') { "Whitelist (Allow List)" } else { "Blacklist (Block List)" }
+    $targetListName = if ($TargetAction -eq 'Allow') { "Allowed senders/domains (Whitelist)" } else { "Blocked senders/domains (Blacklist)" }
     Write-Host "`n[*] Preparing to add entries to $targetListName..." -ForegroundColor Cyan
 
     # 1. Validate formats
@@ -742,14 +958,14 @@ function Invoke-AddOperation {
     foreach ($e in $RawEntries) {
         $valResult = Test-ValidDomainOrEmail -Entry $e
         if ($valResult.IsValid) {
-            $validatedEntries += $valResult.CleanValue
+            $validatedEntries += $valResult
         } else {
             $invalidEntries += $valResult
         }
     }
 
     if ($invalidEntries.Count -gt 0) {
-        Write-Host "`n[!] The following entries failed domain/email syntax validation and will be skipped:" -ForegroundColor Red
+        Write-Host "`n[!] Invalid domain or email address format detected:" -ForegroundColor Red
         foreach ($inv in $invalidEntries) {
             Write-Host "    - $($inv.CleanValue) : $($inv.Reason)" -ForegroundColor Yellow
         }
@@ -760,35 +976,35 @@ function Invoke-AddOperation {
         exit 1
     }
 
-    # Remove duplicates from provided array
-    $uniqueEntries = $validatedEntries | Select-Object -Unique
-
-    # 2. Pre-flight check against existing entries in Exchange Online
-    $existing = Get-TenantFilterData -TargetAction 'All'
+    # 2. Check duplicates and conflicts
+    $existing = Get-TenantFilterData -TargetAction 'All' -TargetPolicy $TargetPolicy
     $alreadyInTarget = @()
     $conflictOpposite = @()
     $finalToAdd = @()
 
-    foreach ($entry in $uniqueEntries) {
-        $match = $existing | Where-Object { $_.Value -eq $entry }
+    foreach ($entryObj in $validatedEntries) {
+        $cleanVal = $entryObj.CleanValue
+        $match = $existing | Where-Object { $_.Value -eq $cleanVal }
+
         if ($match) {
             if ($match.Action -eq $TargetAction) {
-                $alreadyInTarget += $entry
+                $alreadyInTarget += $cleanVal
             } else {
                 $conflictOpposite += [PSCustomObject]@{
-                    Entry          = $entry
+                    Entry          = $cleanVal
                     CurrentAction  = $match.Action
                     ProposedAction = $TargetAction
+                    CurrentCat     = $match.Category
                 }
             }
         } else {
-            $finalToAdd += $entry
+            $finalToAdd += $entryObj
         }
     }
 
     if ($alreadyInTarget.Count -gt 0) {
-        Write-Host "`n[i] The following entries already exist in the target $targetListName (skipping):" -ForegroundColor Yellow
-        foreach ($item in $alreadyInTarget) {
+        Write-Host "`n[i] The following entries already exist in the target list (skipping):" -ForegroundColor Yellow
+        foreach ($item in ($alreadyInTarget | Select-Object -Unique)) {
             Write-Host "    - $item" -ForegroundColor Gray
         }
     }
@@ -796,9 +1012,8 @@ function Invoke-AddOperation {
     if ($conflictOpposite.Count -gt 0) {
         Write-Host "`n[!] CONFLICT DETECTED: The following entries currently exist in the OPPOSITE list!" -ForegroundColor Red
         foreach ($c in $conflictOpposite) {
-            Write-Host "    - $($c.Entry) (Currently: $($c.CurrentAction), Proposed: $($c.ProposedAction))" -ForegroundColor Yellow
+            Write-Host "    - $($c.Entry) (Currently: $($c.CurrentCat) [$($c.CurrentAction)], Proposed: $($c.ProposedAction))" -ForegroundColor Yellow
         }
-        Write-Host "[!] In Microsoft 365, you should remove the item from the conflicting list before adding to the opposing list." -ForegroundColor Yellow
     }
 
     if ($finalToAdd.Count -eq 0) {
@@ -806,45 +1021,22 @@ function Invoke-AddOperation {
         return
     }
 
-    # 3. Determine expiration settings
-    $effectiveExpParam = @{}
-    if ($NeverExpire) {
-        $effectiveExpParam['NoExpiration'] = $true
-        Write-Host "    Expiration Policy : No Expiration (Never Expire)" -ForegroundColor Gray
-    } elseif ($ExplicitExpireDate -and $ExplicitExpireDate.Year -gt 1) {
-        $effectiveExpParam['ExpirationDate'] = $ExplicitExpireDate.ToUniversalTime()
-        Write-Host "    Expiration Policy : Explicit Date ($($ExplicitExpireDate.ToString('yyyy-MM-dd HH:mm UTC')))" -ForegroundColor Gray
-    } elseif ($DaysToExpire -gt 0) {
-        $effectiveExpParam['ExpirationDate'] = (Get-Date).AddDays($DaysToExpire).ToUniversalTime()
-        Write-Host "    Expiration Policy : $DaysToExpire days from today" -ForegroundColor Gray
-    } else {
-        # Default policy
-        if ($TargetAction -eq 'Allow') {
-            # In Microsoft 365, Allow entries by default have a 30-day maximum lifetime unless submissions are verified
-            $effectiveExpParam['ExpirationDate'] = (Get-Date).AddDays(30).ToUniversalTime()
-            Write-Host "    Expiration Policy : Default 30-day lifetime (Microsoft 365 recommended for Allow entries)" -ForegroundColor Gray
-        } else {
-            # Block list items can safely have no expiration
-            $effectiveExpParam['NoExpiration'] = $true
-            Write-Host "    Expiration Policy : Default No Expiration (Permanent Block)" -ForegroundColor Gray
-        }
-    }
-
-    # 4. Confirmation Prompt
+    # 3. Confirmation Prompt
     Write-Host "`nPlanned Action Summary:" -ForegroundColor White
-    Write-Host "  Operation   : ADD" -ForegroundColor White
-    Write-Host "  Target List : $targetListName" -ForegroundColor (if ($TargetAction -eq 'Allow') { 'Green' } else { 'Red' })
-    Write-Host "  Notes       : $(if ($AdminNotes) { $AdminNotes } else { 'None' })" -ForegroundColor White
+    Write-Host "  Operation     : ADD" -ForegroundColor White
+    Write-Host "  Target Policy : $TargetPolicy (Anti-Spam Inbound Policy)" -ForegroundColor White
+    Write-Host "  Target Action : $TargetAction" -ForegroundColor (if ($TargetAction -eq 'Allow') { 'Green' } else { 'Red' })
     Write-Host "  Entries ($($finalToAdd.Count)): " -ForegroundColor White
     foreach ($entry in $finalToAdd) {
-        Write-Host "    + $entry" -ForegroundColor Cyan
+        $typeLabel = if ($entry.EntryType -eq 'EmailAddress') { 'Sender Email' } else { 'Domain' }
+        Write-Host "    + $($entry.CleanValue) ($typeLabel)" -ForegroundColor Cyan
     }
 
     if (-not $BypassPrompt) {
         $promptQuestion = if ($TargetAction -eq 'Allow') {
-            "Are you sure you want to ADD these entries to the Whitelist? / Czy na pewno chcesz dodać te wpisy do białej listy? (Y/N/T/N)"
+            "Are you sure you want to ADD these entries to the Allowed list? / Czy na pewno dodać do dozwolonych? (Y/N/T/N)"
         } else {
-            "Are you sure you want to ADD these entries to the Blacklist? / Czy na pewno chcesz dodać te wpisy do czarnej listy? (Y/N/T/N)"
+            "Are you sure you want to ADD these entries to the Blocked list? / Czy na pewno dodać do zablokowanych? (Y/N/T/N)"
         }
 
         $confirmation = Read-Host $promptQuestion
@@ -856,51 +1048,69 @@ function Invoke-AddOperation {
         Write-Host "[*] -Force switch detected. Proceeding without interactive confirmation." -ForegroundColor Cyan
     }
 
-    # 5. Execute New-TenantAllowBlockListItems
-    Write-Host "[*] Committing entries to Microsoft 365 Tenant Allow/Block List..." -ForegroundColor Cyan
+    # 4. Commit to Anti-Spam Policy (HostedContentFilterPolicy)
+    Write-Host "[*] Updating Anti-Spam Policy '$TargetPolicy'..." -ForegroundColor Cyan
 
-    $cmdArgs = @{
-        ListType    = 'Sender'
-        Entries     = $finalToAdd
-        ErrorAction = 'Stop'
-    }
+    foreach ($entry in $finalToAdd) {
+        $val = $entry.CleanValue
+        $isEmail = ($entry.EntryType -eq 'EmailAddress')
 
-    if ($TargetAction -eq 'Allow') {
-        $cmdArgs['Allow'] = $true
-    } else {
-        $cmdArgs['Block'] = $true
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($AdminNotes)) {
-        $cmdArgs['Notes'] = $AdminNotes
-    }
-
-    if ($effectiveExpParam.ContainsKey('NoExpiration')) {
-        $cmdArgs['NoExpiration'] = $true
-    } elseif ($effectiveExpParam.ContainsKey('ExpirationDate')) {
-        $cmdArgs['ExpirationDate'] = $effectiveExpParam['ExpirationDate']
-    }
-
-    try {
-        New-TenantAllowBlockListItems @cmdArgs | Out-Null
-        Write-Host "[+] Successfully added $($finalToAdd.Count) entries to $targetListName!" -ForegroundColor Green
-    } catch {
-        # Check if error is related to NoExpiration constraint for Allow entries
-        if ($_.ToString() -match "NoExpiration" -and $TargetAction -eq 'Allow') {
-            Write-Host "[!] Microsoft 365 policy requires an explicit expiration date for Allow entries (up to 30 or 90 days)." -ForegroundColor Yellow
-            Write-Host "[*] Retrying with a 30-day expiration date..." -ForegroundColor Cyan
-            $cmdArgs.Remove('NoExpiration')
-            $cmdArgs['ExpirationDate'] = (Get-Date).AddDays(30).ToUniversalTime()
-            try {
-                New-TenantAllowBlockListItems @cmdArgs | Out-Null
-                Write-Host "[+] Successfully added $($finalToAdd.Count) entries with 30-day expiration!" -ForegroundColor Green
-            } catch {
-                Write-Error "Failed to add entries to $($targetListName). Details: $_"
-                exit 1
+        try {
+            if ($TargetAction -eq 'Allow') {
+                if ($isEmail) {
+                    Write-Host "    + Adding email to AllowedSenders: $val" -ForegroundColor Green
+                    Set-HostedContentFilterPolicy -Identity $TargetPolicy -AllowedSenders @{Add = $val} -ErrorAction Stop
+                } else {
+                    Write-Host "    + Adding domain to AllowedSenderDomains: $val" -ForegroundColor Green
+                    Set-HostedContentFilterPolicy -Identity $TargetPolicy -AllowedSenderDomains @{Add = $val} -ErrorAction Stop
+                }
+            } else {
+                if ($isEmail) {
+                    Write-Host "    + Adding email to BlockedSenders: $val" -ForegroundColor Red
+                    Set-HostedContentFilterPolicy -Identity $TargetPolicy -BlockedSenders @{Add = $val} -ErrorAction Stop
+                } else {
+                    Write-Host "    + Adding domain to BlockedSenderDomains: $val" -ForegroundColor Red
+                    Set-HostedContentFilterPolicy -Identity $TargetPolicy -BlockedSenderDomains @{Add = $val} -ErrorAction Stop
+                }
             }
+        } catch {
+            Write-Warning "Could not update Anti-Spam policy for '$val': $_"
+        }
+    }
+
+    Write-Host "[+] Successfully updated Anti-Spam policy '$TargetPolicy'!" -ForegroundColor Green
+
+    # 5. Optional Sync to TABL
+    if ($SyncTABL) {
+        Write-Host "[*] Synchronizing entries to Tenant Allow/Block List (TABL)..." -ForegroundColor Cyan
+        $tablEntries = $finalToAdd | ForEach-Object { $_.CleanValue }
+        $cmdArgs = @{
+            ListType    = 'Sender'
+            Entries     = $tablEntries
+            ErrorAction = 'SilentlyContinue'
+        }
+        if ($TargetAction -eq 'Allow') { $cmdArgs['Allow'] = $true } else { $cmdArgs['Block'] = $true }
+        if (-not [string]::IsNullOrWhiteSpace($AdminNotes)) { $cmdArgs['Notes'] = $AdminNotes }
+
+        if ($NeverExpire) {
+            $cmdArgs['NoExpiration'] = $true
+        } elseif ($ExplicitExpireDate -and $ExplicitExpireDate.Year -gt 1) {
+            $cmdArgs['ExpirationDate'] = $ExplicitExpireDate.ToUniversalTime()
+        } elseif ($DaysToExpire -gt 0) {
+            $cmdArgs['ExpirationDate'] = (Get-Date).AddDays($DaysToExpire).ToUniversalTime()
         } else {
-            Write-Error "Failed to add entries to $($targetListName). Details: $_"
-            exit 1
+            if ($TargetAction -eq 'Allow') {
+                $cmdArgs['ExpirationDate'] = (Get-Date).AddDays(30).ToUniversalTime()
+            } else {
+                $cmdArgs['NoExpiration'] = $true
+            }
+        }
+
+        try {
+            New-TenantAllowBlockListItems @cmdArgs | Out-Null
+            Write-Host "[+] Synchronized $($tablEntries.Count) entries to TABL!" -ForegroundColor Green
+        } catch {
+            Write-Warning "TABL synchronization notice: $_"
         }
     }
 }
@@ -911,14 +1121,15 @@ function Invoke-RemoveOperation {
         [string[]]$RawEntries,
         [ValidateSet('Allow', 'Block')]
         [string]$TargetAction,
+        [string]$TargetPolicy,
         [switch]$BypassPrompt
     )
 
-    $targetListName = if ($TargetAction -eq 'Allow') { "Whitelist (Allow List)" } else { "Blacklist (Block List)" }
+    $targetListName = if ($TargetAction -eq 'Allow') { "Allowed list (Whitelist)" } else { "Blocked list (Blacklist)" }
     Write-Host "`n[*] Preparing to remove entries from $targetListName..." -ForegroundColor Cyan
 
     $normalized = $RawEntries | ForEach-Object { $_.Trim().ToLowerInvariant() } | Select-Object -Unique
-    $existing = Get-TenantFilterData -TargetAction $TargetAction
+    $existing = Get-TenantFilterData -TargetAction $TargetAction -TargetPolicy $TargetPolicy
 
     $foundToRemove = @()
     $notFound = @()
@@ -949,11 +1160,11 @@ function Invoke-RemoveOperation {
     Write-Host "  Target List : $targetListName" -ForegroundColor White
     Write-Host "  Entries to Remove ($($foundToRemove.Count)): " -ForegroundColor White
     foreach ($item in $foundToRemove) {
-        Write-Host "    - $($item.Value) (ID: $($item.Identity))" -ForegroundColor Red
+        Write-Host "    - $($item.Value) [Category: $($item.Category) | Source: $($item.Source)]" -ForegroundColor Red
     }
 
     if (-not $BypassPrompt) {
-        $promptQuestion = "Are you sure you want to REMOVE these entries from the $targetListName? / Czy na pewno usunąć te wpisy? (Y/N/T/N)"
+        $promptQuestion = "Are you sure you want to REMOVE these entries? / Czy na pewno usunąć te wpisy? (Y/N/T/N)"
         $confirmation = Read-Host $promptQuestion
         if ($confirmation -notmatch "^(Y|y|T|t|Yes|Tak)$") {
             Write-Host "[!] Removal cancelled by user." -ForegroundColor Yellow
@@ -963,24 +1174,44 @@ function Invoke-RemoveOperation {
         Write-Host "[*] -Force switch detected. Proceeding without interactive confirmation." -ForegroundColor Cyan
     }
 
-    Write-Host "[*] Removing entries from Microsoft 365 Tenant Allow/Block List..." -ForegroundColor Cyan
-    $removeEntriesList = $foundToRemove | ForEach-Object { $_.Value }
+    # Execute removal from Anti-Spam Policy
+    foreach ($item in $foundToRemove) {
+        $val = $item.Value
+        $isEmail = ($item.EntryType -eq 'EmailAddress')
 
-    try {
-        Remove-TenantAllowBlockListItems -ListType Sender -Entries $removeEntriesList -ErrorAction Stop
-        Write-Host "[+] Successfully removed $($foundToRemove.Count) entries from $targetListName!" -ForegroundColor Green
-    } catch {
-        # Fallback to removal by Ids if removal by Entries encountered issues
-        Write-Host "[!] Note: Direct entry removal returned a notice, attempting fallback by entry IDs..." -ForegroundColor Yellow
-        try {
-            $ids = $foundToRemove | ForEach-Object { $_.Identity }
-            Remove-TenantAllowBlockListItems -ListType Sender -Ids $ids -ErrorAction Stop
-            Write-Host "[+] Successfully removed entries by ID!" -ForegroundColor Green
-        } catch {
-            Write-Error "Failed to remove entries from $($targetListName). Details: $_"
-            exit 1
+        if ($item.Source -like '*Anti-Spam*') {
+            try {
+                if ($item.Action -eq 'Allow') {
+                    if ($isEmail) {
+                        Write-Host "    - Removing email from AllowedSenders: $val" -ForegroundColor Yellow
+                        Set-HostedContentFilterPolicy -Identity $TargetPolicy -AllowedSenders @{Remove = $val} -ErrorAction Stop
+                    } else {
+                        Write-Host "    - Removing domain from AllowedSenderDomains: $val" -ForegroundColor Yellow
+                        Set-HostedContentFilterPolicy -Identity $TargetPolicy -AllowedSenderDomains @{Remove = $val} -ErrorAction Stop
+                    }
+                } else {
+                    if ($isEmail) {
+                        Write-Host "    - Removing email from BlockedSenders: $val" -ForegroundColor Yellow
+                        Set-HostedContentFilterPolicy -Identity $TargetPolicy -BlockedSenders @{Remove = $val} -ErrorAction Stop
+                    } else {
+                        Write-Host "    - Removing domain from BlockedSenderDomains: $val" -ForegroundColor Yellow
+                        Set-HostedContentFilterPolicy -Identity $TargetPolicy -BlockedSenderDomains @{Remove = $val} -ErrorAction Stop
+                    }
+                }
+            } catch {
+                Write-Warning "Could not remove '$val' from Anti-Spam policy: $_"
+            }
+        } elseif ($item.Source -like '*TABL*') {
+            try {
+                Remove-TenantAllowBlockListItems -ListType Sender -Entries $val -ErrorAction SilentlyContinue
+                Write-Host "    - Removed '$val' from TABL." -ForegroundColor Yellow
+            } catch {
+                # Fallback
+            }
         }
     }
+
+    Write-Host "[+] Removal operation completed." -ForegroundColor Green
 }
 
 # CSV Export Helper
@@ -1006,81 +1237,96 @@ function Export-TenantFilterReport {
 
 # Interactive Console Menu
 function Invoke-InteractiveMenu {
-    param([string]$AdminUPN)
+    param(
+        [string]$AdminUPN,
+        [string]$TargetPolicy
+    )
 
     Connect-ExchangeEnvironment -AdminUPN $AdminUPN
 
     $exitMenu = $false
     while (-not $exitMenu) {
         Write-Host "`n================================================================================" -ForegroundColor Cyan
-        Write-Host "   Microsoft 365 Tenant Filter List Manager - Console Menu" -ForegroundColor White
-        Write-Host "   Version: $($ScriptMetadata.Version) | Author: $($ScriptMetadata.Author)" -ForegroundColor Gray
+        Write-Host "   Microsoft 365 Allowed and Blocked Senders and Domains Manager" -ForegroundColor White
+        Write-Host "   Version: $($ScriptMetadata.Version) | Policy: $TargetPolicy | Author: $($ScriptMetadata.Author)" -ForegroundColor Gray
         Write-Host "================================================================================" -ForegroundColor Cyan
-        Write-Host "  1. List Whitelist (Allowed Domains and Email Addresses)" -ForegroundColor Green
-        Write-Host "  2. List Blacklist (Blocked Domains and Email Addresses)" -ForegroundColor Red
-        Write-Host "  3. List Both Whitelist and Blacklist (Full Tenant Overview)" -ForegroundColor Yellow
-        Write-Host "  4. Search in Filter Lists (Domains, Emails, Notes)" -ForegroundColor Cyan
-        Write-Host "  5. Add Domain(s) or Email(s) to Whitelist" -ForegroundColor Green
-        Write-Host "  6. Add Domain(s) or Email(s) to Blacklist" -ForegroundColor Red
-        Write-Host "  7. Remove Entry from Whitelist or Blacklist" -ForegroundColor Magenta
-        Write-Host "  8. Export Tenant Filter List to CSV Report" -ForegroundColor White
+        Write-Host "  1. Overview: Allowed and blocked senders and domains (Summary Counts)" -ForegroundColor Yellow
+        Write-Host "  2. List Whitelist (Allowed senders & Allowed domains)" -ForegroundColor Green
+        Write-Host "  3. List Blacklist (Blocked senders & Blocked domains)" -ForegroundColor Red
+        Write-Host "  4. List Allowed Domains only (e.g. 208 domains)" -ForegroundColor Green
+        Write-Host "  5. List Allowed Senders only (e.g. 8 senders)" -ForegroundColor Green
+        Write-Host "  6. Search across all lists (Domains, Emails, Notes)" -ForegroundColor Cyan
+        Write-Host "  7. Add Domain(s) or Email(s) to Whitelist" -ForegroundColor Green
+        Write-Host "  8. Add Domain(s) or Email(s) to Blacklist" -ForegroundColor Red
+        Write-Host "  9. Remove Entry from Whitelist or Blacklist" -ForegroundColor Magenta
+        Write-Host " 10. Export All Filter Entries to CSV Report" -ForegroundColor White
         Write-Host "  0. Exit" -ForegroundColor DarkGray
         Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
 
-        $choice = Read-Host "Select an option [0-8]"
+        $choice = Read-Host "Select an option [0-10]"
 
         switch ($choice.Trim()) {
             '1' {
-                $items = Get-TenantFilterData -TargetAction 'Allow'
-                Show-TenantFilterSummaryTable -Items $items -Title "Tenant Whitelist (Allow List)"
+                $items = Get-TenantFilterData -TargetAction 'All' -TargetPolicy $TargetPolicy
+                Show-TenantFilterSummaryTable -Items $items -Title "Allowed and blocked senders and domains" -Policy $TargetPolicy
             }
             '2' {
-                $items = Get-TenantFilterData -TargetAction 'Block'
-                Show-TenantFilterSummaryTable -Items $items -Title "Tenant Blacklist (Block List)"
+                $items = Get-TenantFilterData -TargetAction 'Allow' -TargetPolicy $TargetPolicy
+                Show-TenantFilterDetailedCards -Items $items
             }
             '3' {
-                $items = Get-TenantFilterData -TargetAction 'All'
-                Show-TenantFilterSummaryTable -Items $items -Title "Tenant Filter List (All Records)"
+                $items = Get-TenantFilterData -TargetAction 'Block' -TargetPolicy $TargetPolicy
+                Show-TenantFilterDetailedCards -Items $items
             }
             '4' {
-                $searchQuery = Read-Host "Enter domain, email address, or note to search"
-                if (-not [string]::IsNullOrWhiteSpace($searchQuery)) {
-                    Invoke-SearchOperation -Query $searchQuery -TargetAction 'All'
-                }
+                $items = Get-TenantFilterData -TargetAction 'Allow' -TargetPolicy $TargetPolicy
+                $doms = Filter-ByCategory -Items $items -CategoryFilter 'AllowedDomains'
+                Show-TenantFilterSummaryTable -Items $doms -Title "Allowed domains" -Policy $TargetPolicy
             }
             '5' {
+                $items = Get-TenantFilterData -TargetAction 'Allow' -TargetPolicy $TargetPolicy
+                $sends = Filter-ByCategory -Items $items -CategoryFilter 'AllowedSenders'
+                Show-TenantFilterSummaryTable -Items $sends -Title "Allowed senders" -Policy $TargetPolicy
+            }
+            '6' {
+                $searchQuery = Read-Host "Enter domain or email address to search"
+                if (-not [string]::IsNullOrWhiteSpace($searchQuery)) {
+                    Invoke-SearchOperation -Query $searchQuery -TargetAction 'All' -TargetPolicy $TargetPolicy -TargetSource 'All' -CategoryFilter 'All'
+                }
+            }
+            '7' {
                 $rawInput = Read-Host "Enter domains or email addresses separated by commas (e.g. partner.com, user@partner.com)"
                 if (-not [string]::IsNullOrWhiteSpace($rawInput)) {
                     $entryList = $rawInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
                     $noteInput = Read-Host "Enter administrative note / comment (optional)"
-                    Invoke-AddOperation -RawEntries $entryList -TargetAction 'Allow' -AdminNotes $noteInput
+                    Invoke-AddOperation -RawEntries $entryList -TargetAction 'Allow' -TargetPolicy $TargetPolicy -AdminNotes $noteInput
                 }
             }
-            '6' {
+            '8' {
                 $rawInput = Read-Host "Enter domains or email addresses separated by commas (e.g. badspammer.com, evil@hack.org)"
                 if (-not [string]::IsNullOrWhiteSpace($rawInput)) {
                     $entryList = $rawInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
                     $noteInput = Read-Host "Enter administrative note / reason for block (optional)"
-                    Invoke-AddOperation -RawEntries $entryList -TargetAction 'Block' -AdminNotes $noteInput
+                    Invoke-AddOperation -RawEntries $entryList -TargetAction 'Block' -TargetPolicy $TargetPolicy -AdminNotes $noteInput
                 }
             }
-            '7' {
+            '9' {
                 $subChoice = Read-Host "Remove from (1) Whitelist or (2) Blacklist? [1/2]"
                 $targetAction = if ($subChoice.Trim() -eq '1') { 'Allow' } elseif ($subChoice.Trim() -eq '2') { 'Block' } else { $null }
                 if ($targetAction) {
                     $rawInput = Read-Host "Enter domain or email address to remove"
                     if (-not [string]::IsNullOrWhiteSpace($rawInput)) {
                         $entryList = $rawInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-                        Invoke-RemoveOperation -RawEntries $entryList -TargetAction $targetAction
+                        Invoke-RemoveOperation -RawEntries $entryList -TargetAction $targetAction -TargetPolicy $TargetPolicy
                     }
                 } else {
                     Write-Host "[!] Invalid selection." -ForegroundColor Yellow
                 }
             }
-            '8' {
+            '10' {
                 $csvPath = Read-Host "Enter destination CSV path (e.g. C:\Reports\TenantFilterList.csv)"
                 if (-not [string]::IsNullOrWhiteSpace($csvPath)) {
-                    $items = Get-TenantFilterData -TargetAction 'All'
+                    $items = Get-TenantFilterData -TargetAction 'All' -TargetPolicy $TargetPolicy
                     Export-TenantFilterReport -Items $items -Path $csvPath
                 }
             }
@@ -1089,7 +1335,7 @@ function Invoke-InteractiveMenu {
                 $exitMenu = $true
             }
             default {
-                Write-Host "[!] Invalid selection. Please enter a number between 0 and 8." -ForegroundColor Yellow
+                Write-Host "[!] Invalid selection. Please enter a number between 0 and 10." -ForegroundColor Yellow
             }
         }
     }
@@ -1097,7 +1343,7 @@ function Invoke-InteractiveMenu {
 
 # Main Execution Controller
 if ($Interactive) {
-    Invoke-InteractiveMenu -AdminUPN $AdminUserPrincipalName
+    Invoke-InteractiveMenu -AdminUPN $AdminUserPrincipalName -TargetPolicy $PolicyName
     exit 0
 }
 
@@ -1114,7 +1360,9 @@ if ($Add) {
     Invoke-AddOperation `
         -RawEntries $Entries `
         -TargetAction $scopeAction `
+        -TargetPolicy $PolicyName `
         -AdminNotes $Notes `
+        -SyncTABL:$SyncToTABL `
         -NeverExpire:$NoExpiration `
         -DaysToExpire $ExpirationDays `
         -ExplicitExpireDate $ExpirationDate `
@@ -1126,6 +1374,7 @@ if ($Remove) {
     Invoke-RemoveOperation `
         -RawEntries $Entries `
         -TargetAction $scopeAction `
+        -TargetPolicy $PolicyName `
         -BypassPrompt:$Force
     exit 0
 }
@@ -1134,6 +1383,9 @@ if (-not [string]::IsNullOrWhiteSpace($Search)) {
     Invoke-SearchOperation `
         -Query $Search `
         -TargetAction $scopeAction `
+        -TargetPolicy $PolicyName `
+        -TargetSource $Source `
+        -CategoryFilter $Category `
         -ShowDetails:$Detailed `
         -CsvPath $ExportCsv `
         -PipelineOut:$PassThru
@@ -1141,15 +1393,17 @@ if (-not [string]::IsNullOrWhiteSpace($Search)) {
 }
 
 if ($List -or ($PSCmdlet.ParameterSetName -eq 'List') -or ($PSBoundParameters.ContainsKey('Whitelist') -or $PSBoundParameters.ContainsKey('Blacklist') -or (-not [string]::IsNullOrWhiteSpace($Scope)))) {
-    $items = Get-TenantFilterData -TargetAction $scopeAction
-    $listTitle = if ($scopeAction -eq 'Allow') { "Tenant Whitelist (Allow List)" }
-                 elseif ($scopeAction -eq 'Block') { "Tenant Blacklist (Block List)" }
-                 else { "Tenant Allow/Block List (All Records)" }
+    $items = Get-TenantFilterData -TargetAction $scopeAction -TargetPolicy $PolicyName -TargetSource $Source
+    $items = Filter-ByCategory -Items $items -CategoryFilter $Category
+
+    $listTitle = if ($scopeAction -eq 'Allow') { "Allowed senders and domains (Whitelist)" }
+                 elseif ($scopeAction -eq 'Block') { "Blocked senders and domains (Blacklist)" }
+                 else { "Allowed and blocked senders and domains" }
 
     if ($Detailed) {
         Show-TenantFilterDetailedCards -Items $items
     } else {
-        Show-TenantFilterSummaryTable -Items $items -Title $listTitle
+        Show-TenantFilterSummaryTable -Items $items -Title $listTitle -Policy $PolicyName
     }
 
     if (-not [string]::IsNullOrWhiteSpace($ExportCsv) -and $items.Count -gt 0) {
