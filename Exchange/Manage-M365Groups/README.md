@@ -209,12 +209,24 @@ Exports the inventory of discovered groups into a UTF-8 CSV report:
 
 ## Screenshots & Output Examples
 
-*(Place illustrative execution screenshots inside the `assets/` subdirectory)*
+### 1. Standard Run & Built-In Help (`-h`)
+Execution without parameters or with `-h` displays syntax, author info, and practical examples:
 
-- `Standard_run.jpg` - Output of script execution displaying help or group summaries.
-- `Group_details.jpg` - In-depth group inspection showing Teams connectivity and membership.
-- `Adding_member.jpg` - Adding a user as member/owner to a Microsoft 365 group.
-- `Removing_member.jpg` - Removing a user from a group with confirmation.
+![Standard Run](assets/Standard_run.jpg)
+
+---
+
+### 2. Listing Groups Across Tenant (`-ListGroups`)
+Summary table displaying tenant groups, group classifications, Microsoft Teams connectivity status, and primary emails:
+
+![Listing Groups](assets/Listing_groups.jpg)
+
+---
+
+### 3. Detailed Group Inspection (`-GroupIdentity`)
+In-depth view of a specific group displaying configuration, Teams integration, connected SharePoint URL, owners/managers, and complete membership list:
+
+![Group Details](assets/Group_details.jpg)
 
 ---
 
