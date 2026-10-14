@@ -262,7 +262,7 @@ Launches a menu-driven console wizard allowing administrators to list, inspect, 
 ![Standard Run](assets/Standard_run.jpg)
 
 ### 2. Whitelist Summary Table
-![Listing Whitelist](assets/Listing_whitelist.jpg)
+![Listing Whitelist](assets/Whitelist_domains.jpg)
 
 ### 3. Adding Entries to Whitelist & Conflict Detection
 ![Adding Whitelist](assets/Adding_entries.jpg)
@@ -277,12 +277,15 @@ Launches a menu-driven console wizard allowing administrators to list, inspect, 
 - **Author**: Roman Pindela
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
-- **Version**: 1.1.0
+- **Version**: 1.1.1
 
 ---
 
 ## Version History
 
+- **v1.1.1** (2026-10-14):
+  - Fixed `PropertyNotFoundException` on `.Count` under PowerShell `Set-StrictMode -Version Latest`.
+  - Wrapped filtered query collections, summary counters, and search results in `@()` array subexpressions to guarantee robust `.Count` evaluation on empty or single-item results.
 - **v1.1.0** (2026-10-14):
   - Added native integration for Anti-Spam Inbound Policies (`HostedContentFilterPolicy`):
     * **Allowed senders** (`AllowedSenders`)

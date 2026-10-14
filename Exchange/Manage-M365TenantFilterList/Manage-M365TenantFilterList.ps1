@@ -189,7 +189,7 @@
     Author:  Roman Pindela
     Email:   roman.pindela@gmail.com
     GitHub:  https://github.com/romanpindela
-    Version: 1.1.0
+    Version: 1.1.1
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Default')]
@@ -323,7 +323,7 @@ $ErrorActionPreference = 'Stop'
 # Metadata declaration
 $ScriptMetadata = @{
     Title   = "Manage-M365TenantFilterList.ps1"
-    Version = "1.1.0"
+    Version = "1.1.1"
     Author  = "Roman Pindela"
     Email   = "roman.pindela@gmail.com"
     GitHub  = "https://github.com/romanpindela"
@@ -605,7 +605,7 @@ function Get-TenantFilterData {
                 if ($p) { $policies = @($p) }
             }
             if ($policies.Count -eq 0) {
-                $policies = Get-HostedContentFilterPolicy -ErrorAction Stop
+                $policies = @(Get-HostedContentFilterPolicy -ErrorAction Stop)
             }
 
             foreach ($pol in $policies) {
@@ -722,11 +722,11 @@ function Get-TenantFilterData {
         try {
             $rawItems = @()
             if ($TargetAction -eq 'Allow') {
-                $rawItems = Get-TenantAllowBlockListItems -ListType Sender -Allow -ErrorAction SilentlyContinue
+                $rawItems = @(Get-TenantAllowBlockListItems -ListType Sender -Allow -ErrorAction SilentlyContinue)
             } elseif ($TargetAction -eq 'Block') {
-                $rawItems = Get-TenantAllowBlockListItems -ListType Sender -Block -ErrorAction SilentlyContinue
+                $rawItems = @(Get-TenantAllowBlockListItems -ListType Sender -Block -ErrorAction SilentlyContinue)
             } else {
-                $rawItems = Get-TenantAllowBlockListItems -ListType Sender -ErrorAction SilentlyContinue
+                $rawItems = @(Get-TenantAllowBlockListItems -ListType Sender -ErrorAction SilentlyContinue)
             }
 
             $nowUtc = (Get-Date).ToUniversalTime()
@@ -798,20 +798,24 @@ function Filter-ByCategory {
         [string]$CategoryFilter
     )
 
+    if (-not $Items -or $Items.Count -eq 0) {
+        return @()
+    }
+
     if ([string]::IsNullOrWhiteSpace($CategoryFilter) -or $CategoryFilter -eq 'All') {
-        return $Items
+        return @($Items)
     }
 
     switch ($CategoryFilter.ToLowerInvariant()) {
-        'allowedsenders' { return ($Items | Where-Object { $_.Category -eq 'Allowed senders' }) }
-        'alloweddomains' { return ($Items | Where-Object { $_.Category -eq 'Allowed domains' }) }
-        'blockedsenders' { return ($Items | Where-Object { $_.Category -eq 'Blocked senders' }) }
-        'blockeddomains' { return ($Items | Where-Object { $_.Category -eq 'Blocked domains' }) }
-        'domain'         { return ($Items | Where-Object { $_.EntryType -eq 'Domain' }) }
-        'domains'        { return ($Items | Where-Object { $_.EntryType -eq 'Domain' }) }
-        'email'          { return ($Items | Where-Object { $_.EntryType -eq 'EmailAddress' }) }
-        'senders'        { return ($Items | Where-Object { $_.EntryType -eq 'EmailAddress' }) }
-        default          { return $Items }
+        'allowedsenders' { return @($Items | Where-Object { $_.Category -eq 'Allowed senders' }) }
+        'alloweddomains' { return @($Items | Where-Object { $_.Category -eq 'Allowed domains' }) }
+        'blockedsenders' { return @($Items | Where-Object { $_.Category -eq 'Blocked senders' }) }
+        'blockeddomains' { return @($Items | Where-Object { $_.Category -eq 'Blocked domains' }) }
+        'domain'         { return @($Items | Where-Object { $_.EntryType -eq 'Domain' }) }
+        'domains'        { return @($Items | Where-Object { $_.EntryType -eq 'Domain' }) }
+        'email'          { return @($Items | Where-Object { $_.EntryType -eq 'EmailAddress' }) }
+        'senders'        { return @($Items | Where-Object { $_.EntryType -eq 'EmailAddress' }) }
+        default          { return @($Items) }
     }
 }
 
@@ -823,17 +827,18 @@ function Show-TenantFilterSummaryTable {
         [string]$Policy = "Default"
     )
 
-    if (-not $Items -or $Items.Count -eq 0) {
+    $Items = @($Items)
+    if ($Items.Count -eq 0) {
         Write-Host "`n[i] No entries found for $Title." -ForegroundColor Yellow
         return
     }
 
-    $allowedSenders = ($Items | Where-Object { $_.Category -eq 'Allowed senders' })
-    $allowedDomains = ($Items | Where-Object { $_.Category -eq 'Allowed domains' })
-    $blockedSenders = ($Items | Where-Object { $_.Category -eq 'Blocked senders' })
-    $blockedDomains = ($Items | Where-Object { $_.Category -eq 'Blocked domains' })
-    $tablAllow = ($Items | Where-Object { $_.Source -like '*TABL*' -and $_.Action -eq 'Allow' })
-    $tablBlock = ($Items | Where-Object { $_.Source -like '*TABL*' -and $_.Action -eq 'Block' })
+    $allowedSenders = @($Items | Where-Object { $_.Category -eq 'Allowed senders' })
+    $allowedDomains = @($Items | Where-Object { $_.Category -eq 'Allowed domains' })
+    $blockedSenders = @($Items | Where-Object { $_.Category -eq 'Blocked senders' })
+    $blockedDomains = @($Items | Where-Object { $_.Category -eq 'Blocked domains' })
+    $tablAllow      = @($Items | Where-Object { $_.Source -like '*TABL*' -and $_.Action -eq 'Allow' })
+    $tablBlock      = @($Items | Where-Object { $_.Source -like '*TABL*' -and $_.Action -eq 'Block' })
 
     Write-Host "`n================================================================================" -ForegroundColor White
     Write-Host "  Allowed and blocked senders and domains (Policy: $Policy)" -ForegroundColor Cyan
@@ -863,7 +868,8 @@ function Show-TenantFilterSummaryTable {
 function Show-TenantFilterDetailedCards {
     param([array]$Items)
 
-    if (-not $Items -or $Items.Count -eq 0) {
+    $Items = @($Items)
+    if ($Items.Count -eq 0) {
         Write-Host "`n[i] No entries to display in detailed view." -ForegroundColor Yellow
         return
     }
@@ -872,7 +878,7 @@ function Show-TenantFilterDetailedCards {
     Write-Host "  Allowed and Blocked Senders and Domains - Detailed Report ($($Items.Count) entries)" -ForegroundColor Cyan
     Write-Host "================================================================================" -ForegroundColor White
 
-    $grouped = $Items | Group-Object -Property Category
+    $grouped = @($Items | Group-Object -Property Category)
 
     foreach ($grp in $grouped) {
         $categoryColor = if ($grp.Name -match 'Allow') { 'Green' } else { 'Red' }
@@ -903,18 +909,18 @@ function Invoke-SearchOperation {
         [switch]$PipelineOut
     )
 
-    $items = Get-TenantFilterData -TargetAction $TargetAction -TargetPolicy $TargetPolicy -TargetSource $TargetSource
-    $items = Filter-ByCategory -Items $items -CategoryFilter $CategoryFilter
+    $items = @(Get-TenantFilterData -TargetAction $TargetAction -TargetPolicy $TargetPolicy -TargetSource $TargetSource)
+    $items = @(Filter-ByCategory -Items $items -CategoryFilter $CategoryFilter)
 
     $cleanQuery = $Query.Trim()
     Write-Host "[*] Searching for '$cleanQuery' across senders, domains, and policies..." -ForegroundColor Cyan
 
-    $matches = $items | Where-Object {
+    $matches = @($items | Where-Object {
         $_.Value -like "*$cleanQuery*" -or
         $_.Category -like "*$cleanQuery*" -or
         $_.Notes -like "*$cleanQuery*" -or
         $_.Source -like "*$cleanQuery*"
-    }
+    })
 
     $title = "Search Results for '$cleanQuery'"
 
@@ -977,24 +983,25 @@ function Invoke-AddOperation {
     }
 
     # 2. Check duplicates and conflicts
-    $existing = Get-TenantFilterData -TargetAction 'All' -TargetPolicy $TargetPolicy
+    $existing = @(Get-TenantFilterData -TargetAction 'All' -TargetPolicy $TargetPolicy)
     $alreadyInTarget = @()
     $conflictOpposite = @()
     $finalToAdd = @()
 
     foreach ($entryObj in $validatedEntries) {
         $cleanVal = $entryObj.CleanValue
-        $match = $existing | Where-Object { $_.Value -eq $cleanVal }
+        $match = @($existing | Where-Object { $_.Value -eq $cleanVal })
 
-        if ($match) {
-            if ($match.Action -eq $TargetAction) {
+        if ($match.Count -gt 0) {
+            $firstMatch = $match[0]
+            if ($firstMatch.Action -eq $TargetAction) {
                 $alreadyInTarget += $cleanVal
             } else {
                 $conflictOpposite += [PSCustomObject]@{
                     Entry          = $cleanVal
-                    CurrentAction  = $match.Action
+                    CurrentAction  = $firstMatch.Action
                     ProposedAction = $TargetAction
-                    CurrentCat     = $match.Category
+                    CurrentCat     = $firstMatch.Category
                 }
             }
         } else {
@@ -1083,7 +1090,7 @@ function Invoke-AddOperation {
     # 5. Optional Sync to TABL
     if ($SyncTABL) {
         Write-Host "[*] Synchronizing entries to Tenant Allow/Block List (TABL)..." -ForegroundColor Cyan
-        $tablEntries = $finalToAdd | ForEach-Object { $_.CleanValue }
+        $tablEntries = @($finalToAdd | ForEach-Object { $_.CleanValue })
         $cmdArgs = @{
             ListType    = 'Sender'
             Entries     = $tablEntries
@@ -1128,15 +1135,15 @@ function Invoke-RemoveOperation {
     $targetListName = if ($TargetAction -eq 'Allow') { "Allowed list (Whitelist)" } else { "Blocked list (Blacklist)" }
     Write-Host "`n[*] Preparing to remove entries from $targetListName..." -ForegroundColor Cyan
 
-    $normalized = $RawEntries | ForEach-Object { $_.Trim().ToLowerInvariant() } | Select-Object -Unique
-    $existing = Get-TenantFilterData -TargetAction $TargetAction -TargetPolicy $TargetPolicy
+    $normalized = @($RawEntries | ForEach-Object { $_.Trim().ToLowerInvariant() } | Select-Object -Unique)
+    $existing = @(Get-TenantFilterData -TargetAction $TargetAction -TargetPolicy $TargetPolicy)
 
     $foundToRemove = @()
     $notFound = @()
 
     foreach ($entry in $normalized) {
-        $match = $existing | Where-Object { $_.Value -eq $entry }
-        if ($match) {
+        $match = @($existing | Where-Object { $_.Value -eq $entry })
+        if ($match.Count -gt 0) {
             $foundToRemove += $match
         } else {
             $notFound += $entry
@@ -1297,7 +1304,7 @@ function Invoke-InteractiveMenu {
             '7' {
                 $rawInput = Read-Host "Enter domains or email addresses separated by commas (e.g. partner.com, user@partner.com)"
                 if (-not [string]::IsNullOrWhiteSpace($rawInput)) {
-                    $entryList = $rawInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+                    $entryList = @($rawInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
                     $noteInput = Read-Host "Enter administrative note / comment (optional)"
                     Invoke-AddOperation -RawEntries $entryList -TargetAction 'Allow' -TargetPolicy $TargetPolicy -AdminNotes $noteInput
                 }
@@ -1305,7 +1312,7 @@ function Invoke-InteractiveMenu {
             '8' {
                 $rawInput = Read-Host "Enter domains or email addresses separated by commas (e.g. badspammer.com, evil@hack.org)"
                 if (-not [string]::IsNullOrWhiteSpace($rawInput)) {
-                    $entryList = $rawInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+                    $entryList = @($rawInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
                     $noteInput = Read-Host "Enter administrative note / reason for block (optional)"
                     Invoke-AddOperation -RawEntries $entryList -TargetAction 'Block' -TargetPolicy $TargetPolicy -AdminNotes $noteInput
                 }
@@ -1316,7 +1323,7 @@ function Invoke-InteractiveMenu {
                 if ($targetAction) {
                     $rawInput = Read-Host "Enter domain or email address to remove"
                     if (-not [string]::IsNullOrWhiteSpace($rawInput)) {
-                        $entryList = $rawInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+                        $entryList = @($rawInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
                         Invoke-RemoveOperation -RawEntries $entryList -TargetAction $targetAction -TargetPolicy $TargetPolicy
                     }
                 } else {
@@ -1393,8 +1400,8 @@ if (-not [string]::IsNullOrWhiteSpace($Search)) {
 }
 
 if ($List -or ($PSCmdlet.ParameterSetName -eq 'List') -or ($PSBoundParameters.ContainsKey('Whitelist') -or $PSBoundParameters.ContainsKey('Blacklist') -or (-not [string]::IsNullOrWhiteSpace($Scope)))) {
-    $items = Get-TenantFilterData -TargetAction $scopeAction -TargetPolicy $PolicyName -TargetSource $Source
-    $items = Filter-ByCategory -Items $items -CategoryFilter $Category
+    $items = @(Get-TenantFilterData -TargetAction $scopeAction -TargetPolicy $PolicyName -TargetSource $Source)
+    $items = @(Filter-ByCategory -Items $items -CategoryFilter $Category)
 
     $listTitle = if ($scopeAction -eq 'Allow') { "Allowed senders and domains (Whitelist)" }
                  elseif ($scopeAction -eq 'Block') { "Blocked senders and domains (Blacklist)" }
