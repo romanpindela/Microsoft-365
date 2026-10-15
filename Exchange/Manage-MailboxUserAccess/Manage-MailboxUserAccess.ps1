@@ -1,11 +1,11 @@
-﻿<#
+<#
 .SYNOPSIS
-    Manages FullAccess permissions (grant or revoke) on a target mailbox with optional AutoMapping and Force controls.
+    Manages FullAccess and SendAs permissions (grant or revoke) on a target mailbox with optional AutoMapping and Force controls.
 
 .DESCRIPTION
     This script connects to Exchange Online (prompting for administrator authentication if needed),
-    validates target mailbox and user identities, displays current permissions, and manages FullAccess access.
-    Supports granting access (with optional AutoMapping suppression), revoking access, running in read-only
+    validates target mailbox and user identities, displays current permissions, and manages FullAccess and SendAs access.
+    Supports granting access (with optional SendAs permission and AutoMapping suppression), revoking access, running in read-only
     audit mode, and bypassing confirmation prompts via -Force.
 
 .PARAMETER MailboxIdentity
@@ -15,8 +15,13 @@
     The identity (UPN or primary email) of the user receiving or losing FullAccess permissions.
     Required unless -ShowPermissionsOnly is used.
 
+.PARAMETER SendAs
+    Switch parameter (alias: -GrantSendAs). When granting access, assigns 'SendAs' recipient permission
+    in addition to FullAccess, allowing the user to send or forward emails directly from the mailbox.
+    When revoking access (-RemoveAccess), also revokes the 'SendAs' permission.
+
 .PARAMETER RemoveAccess
-    Switch parameter. If specified, revokes FullAccess permissions from the specified user.
+    Switch parameter. If specified, revokes FullAccess (and SendAs if specified) permissions from the specified user.
 
 .PARAMETER DisableAutoMapping
     Switch parameter. When granting access, disables AutoMapping (-AutoMapping $false) to prevent
@@ -39,12 +44,20 @@
     Grants FullAccess to shared@domain.com for user@domain.com with AutoMapping disabled.
 
 .EXAMPLE
+    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity "shared@domain.com" -UserIdentity "user@domain.com" -SendAs
+    Grants FullAccess and SendAs to shared@domain.com for user@domain.com.
+
+.EXAMPLE
+    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity "shared@domain.com" -UserIdentity "user@domain.com" -DisableAutoMapping -SendAs
+    Grants FullAccess and SendAs to shared@domain.com for user@domain.com with AutoMapping disabled.
+
+.EXAMPLE
     .\Manage-MailboxUserAccess.ps1 -MailboxIdentity "shared@domain.com" -UserIdentity "user@domain.com" -RemoveAccess
     Revokes FullAccess from user@domain.com.
 
 .EXAMPLE
-    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity "shared@domain.com" -UserIdentity "user@domain.com" -RemoveAccess -Force
-    Revokes FullAccess silently without confirmation.
+    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity "shared@domain.com" -UserIdentity "user@domain.com" -RemoveAccess -SendAs -Force
+    Revokes FullAccess and SendAs silently without confirmation.
 
 .EXAMPLE
     .\Manage-MailboxUserAccess.ps1 -MailboxIdentity "shared@domain.com" -ShowPermissionsOnly
@@ -54,15 +67,21 @@
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: https://github.com/romanpindela
-    Version: 2.1.3
+    Version: 2.2.0
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'ManageAccess')]
 param(
     [Parameter(ParameterSetName = 'ManageAccess', Mandatory = $false, Position = 0)]
-    [Parameter(ParameterSetName = 'ViewPermissions', Mandatory = $false, Position = 0)]     [string]$MailboxIdentity,
+    [Parameter(ParameterSetName = 'ViewPermissions', Mandatory = $false, Position = 0)]
+    [string]$MailboxIdentity,
 
-    [Parameter(ParameterSetName = 'ManageAccess', Mandatory = $false, Position = 1)]     [string]$UserIdentity,
+    [Parameter(ParameterSetName = 'ManageAccess', Mandatory = $false, Position = 1)]
+    [string]$UserIdentity,
+
+    [Parameter(ParameterSetName = 'ManageAccess')]
+    [Alias('GrantSendAs')]
+    [switch]$SendAs,
 
     [Parameter(ParameterSetName = 'ManageAccess')]
     [switch]$RemoveAccess,
@@ -88,14 +107,14 @@ function Show-ScriptHelp {
     $helpLines = @(
         "================================================================================",
         "SCRIPT: Manage-MailboxUserAccess.ps1",
-        "VERSION: 2.1.3",
+        "VERSION: 2.2.0",
         "AUTHOR: Roman Pindela",
         "CONTACT: roman.pindela@gmail.com | https://github.com/romanpindela",
         "================================================================================",
         "",
         "DESCRIPTION:",
-        "    Manages FullAccess rights on a target mailbox (User or Shared).",
-        "    Supports granting access (with optional AutoMapping suppression), revoking access,",
+        "    Manages FullAccess and SendAs rights on a target mailbox (User or Shared).",
+        "    Supports granting access (with optional SendAs and AutoMapping suppression), revoking access,",
         "    and auditing current mailbox permissions.",
         "",
         "AUTHENTICATION:",
@@ -103,17 +122,20 @@ function Show-ScriptHelp {
         "    sessions or prompts for Microsoft 365 Exchange Administrator sign-in.",
         "",
         "USAGE EXAMPLES:",
-        "    # Grant access with confirmation and AutoMapping disabled:",
+        "    # Grant FullAccess with confirmation and AutoMapping disabled:",
         "    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity `"shared@domain.com`" -UserIdentity `"user@domain.com`" -DisableAutoMapping",
         "",
-        "    # Grant access silently without confirmation:",
-        "    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity `"shared@domain.com`" -UserIdentity `"user@domain.com`" -Force",
+        "    # Grant FullAccess and SendAs (allows sending/forwarding as the mailbox):",
+        "    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity `"shared@domain.com`" -UserIdentity `"user@domain.com`" -SendAs",
         "",
-        "    # Revoke access with confirmation:",
+        "    # Grant FullAccess and SendAs silently without confirmation:",
+        "    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity `"shared@domain.com`" -UserIdentity `"user@domain.com`" -SendAs -Force",
+        "",
+        "    # Revoke FullAccess with confirmation:",
         "    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity `"shared@domain.com`" -UserIdentity `"user@domain.com`" -RemoveAccess",
         "",
-        "    # Revoke access silently without confirmation:",
-        "    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity `"shared@domain.com`" -UserIdentity `"user@domain.com`" -RemoveAccess -Force",
+        "    # Revoke FullAccess and SendAs silently:",
+        "    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity `"shared@domain.com`" -UserIdentity `"user@domain.com`" -RemoveAccess -SendAs -Force",
         "",
         "    # View existing permissions only:",
         "    .\Manage-MailboxUserAccess.ps1 -MailboxIdentity `"shared@domain.com`" -ShowPermissionsOnly",
@@ -121,7 +143,8 @@ function Show-ScriptHelp {
         "PARAMETERS:",
         "    -MailboxIdentity       The email address/UPN/alias of the target mailbox.",
         "    -UserIdentity          The email address/UPN of the user to grant or revoke access.",
-        "    -RemoveAccess          Switch to revoke FullAccess permissions.",
+        "    -SendAs, -GrantSendAs  Switch to grant (or revoke) SendAs permission alongside FullAccess.",
+        "    -RemoveAccess          Switch to revoke FullAccess (and SendAs if specified) permissions.",
         "    -DisableAutoMapping    Switch to disable Outlook Autodiscover automapping when granting access.",
         "    -Force                 Switch to bypass confirmation prompts (Y/N).",
         "    -ShowPermissionsOnly   Switch to display current permissions without making changes.",
@@ -187,13 +210,26 @@ try {
 function Get-MailboxCurrentPermissions {
     param([string]$Identity)
     Write-Host "`n[*] Current permissions for mailbox '$Identity':" -ForegroundColor Cyan
-    $perms = Get-MailboxPermission -Identity $Identity | 
-        Where-Object { -not $_.IsInherited -and$_.User -notmatch "^NT AUTHORITY" } | 
+    Write-Host "  -- FullAccess Permissions --" -ForegroundColor DarkCyan
+    $perms = Get-MailboxPermission -Identity $Identity -ErrorAction SilentlyContinue | 
+        Where-Object { -not $_.IsInherited -and $_.User -notmatch "^NT AUTHORITY" } | 
         Select-Object User, AccessRights, Deny
 
-    if ($perms) {$perms | Format-Table -AutoSize | Out-String | Write-Host -ForegroundColor Yellow
+    if ($perms) {
+        $perms | Format-Table -AutoSize | Out-String | Write-Host -ForegroundColor Yellow
     } else {
-        Write-Host "    No explicit non-inherited permissions assigned." -ForegroundColor Gray
+        Write-Host "    No explicit non-inherited FullAccess permissions assigned." -ForegroundColor Gray
+    }
+
+    Write-Host "  -- SendAs Permissions --" -ForegroundColor DarkCyan
+    $sendAsPerms = Get-RecipientPermission -Identity $Identity -ErrorAction SilentlyContinue | 
+        Where-Object { -not $_.IsInherited -and $_.Trustee -notmatch "^NT AUTHORITY" } | 
+        Select-Object Trustee, AccessRights
+
+    if ($sendAsPerms) {
+        $sendAsPerms | Format-Table -AutoSize | Out-String | Write-Host -ForegroundColor Yellow
+    } else {
+        Write-Host "    No explicit non-inherited SendAs permissions assigned." -ForegroundColor Gray
     }
 }
 
@@ -213,13 +249,19 @@ try {
 
 Get-MailboxCurrentPermissions -Identity $MailboxIdentity
 
-$actionType = if ($RemoveAccess) { "REVOKE (Remove FullAccess)" } else { "GRANT (Assign FullAccess)" }
+$actionType = if ($RemoveAccess) {
+    if ($SendAs) { "REVOKE (Remove FullAccess and SendAs)" } else { "REVOKE (Remove FullAccess)" }
+} else {
+    if ($SendAs) { "GRANT (Assign FullAccess and SendAs)" } else { "GRANT (Assign FullAccess)" }
+}
 $autoMappingSetting = if ($RemoveAccess) { "N/A" } elseif ($DisableAutoMapping) { "FALSE (Disabled)" } else { "TRUE (Enabled)" }
+$sendAsSetting = if ($SendAs) { "YES (SendAs included)" } else { "NO (FullAccess only)" }
 
 Write-Host "`nAction Summary:" -ForegroundColor White
 Write-Host "  Action Type    : $actionType" -ForegroundColor White
 Write-Host "  Target Mailbox : $MailboxIdentity" -ForegroundColor White
 Write-Host "  User Identity  : $UserIdentity" -ForegroundColor White
+Write-Host "  SendAs Rights  : $sendAsSetting" -ForegroundColor White
 if (-not $RemoveAccess) {
     Write-Host "  AutoMapping    : $autoMappingSetting" -ForegroundColor White
 }
@@ -227,9 +269,17 @@ Write-Host ""
 
 if (-not $Force) {
     $promptQuestion = if ($RemoveAccess) {
-        "Are you sure you want to REVOKE permissions for this user? (Y/N)"
+        if ($SendAs) {
+            "Are you sure you want to REVOKE FullAccess and SendAs permissions for this user? (Y/N)"
+        } else {
+            "Are you sure you want to REVOKE permissions for this user? (Y/N)"
+        }
     } else {
-        "Are you sure you want to APPLY these permissions? (Y/N)"
+        if ($SendAs) {
+            "Are you sure you want to APPLY FullAccess and SendAs permissions? (Y/N)"
+        } else {
+            "Are you sure you want to APPLY these permissions? (Y/N)"
+        }
     }
     
     $confirmation = Read-Host $promptQuestion
@@ -245,13 +295,30 @@ try {
     $existingAccess = Get-MailboxPermission -Identity $MailboxIdentity -User $UserIdentity -ErrorAction SilentlyContinue |
         Where-Object { $_.AccessRights -contains "FullAccess" -and -not $_.IsInherited }
 
+    $existingSendAs = Get-RecipientPermission -Identity $MailboxIdentity -Trustee $UserIdentity -ErrorAction SilentlyContinue |
+        Where-Object { $_.AccessRights -contains "SendAs" -and -not $_.IsInherited }
+
     if ($RemoveAccess) {
+        if ($SendAs) {
+            if (-not $existingSendAs) {
+                Write-Host "[!] User '$UserIdentity' does not have explicit SendAs permission on '$MailboxIdentity'. Nothing to remove for SendAs." -ForegroundColor Yellow
+            } else {
+                Write-Host "`n[*] Revoking SendAs permission for '$UserIdentity'..." -ForegroundColor Cyan
+                Remove-RecipientPermission -Identity $MailboxIdentity -Trustee $UserIdentity -AccessRights SendAs -Confirm:$false -ErrorAction Stop
+                Write-Host "`n[SUCCESS] Successfully revoked SendAs from '$UserIdentity'!" -ForegroundColor Green
+            }
+        }
+
         if (-not $existingAccess) {
-            Write-Host "[!] User '$UserIdentity' does not have explicit FullAccess to '$MailboxIdentity'. Nothing to remove." -ForegroundColor Yellow
+            Write-Host "[!] User '$UserIdentity' does not have explicit FullAccess to '$MailboxIdentity'. Nothing to remove for FullAccess." -ForegroundColor Yellow
         } else {
             Write-Host "`n[*] Revoking FullAccess permission for '$UserIdentity'..." -ForegroundColor Cyan
             Remove-MailboxPermission -Identity $MailboxIdentity -User $UserIdentity -AccessRights FullAccess -Confirm:$false -ErrorAction Stop
             Write-Host "`n[SUCCESS] Successfully revoked FullAccess from '$UserIdentity'!" -ForegroundColor Green
+        }
+
+        if (-not $SendAs -and $existingSendAs) {
+            Write-Host "[i] Note: User '$UserIdentity' still retains explicit SendAs permission on '$MailboxIdentity'. Run with -SendAs -RemoveAccess to revoke SendAs as well." -ForegroundColor Yellow
         }
     } else {
         if ($existingAccess) {
@@ -264,6 +331,18 @@ try {
         Add-MailboxPermission -Identity $MailboxIdentity -User $UserIdentity -AccessRights FullAccess -AutoMapping $autoMappingParam -Confirm:$false -ErrorAction Stop
 
         Write-Host "`n[SUCCESS] Successfully assigned FullAccess to '$UserIdentity'!" -ForegroundColor Green
+
+        if ($SendAs) {
+            if ($existingSendAs) {
+                Write-Host "`n[*] Clearing existing SendAs assignment for clean re-application..." -ForegroundColor Cyan
+                Remove-RecipientPermission -Identity $MailboxIdentity -Trustee $UserIdentity -AccessRights SendAs -Confirm:$false -ErrorAction Stop
+            }
+
+            Write-Host "`n[*] Applying SendAs permission..." -ForegroundColor Cyan
+            Add-RecipientPermission -Identity $MailboxIdentity -Trustee $UserIdentity -AccessRights SendAs -Confirm:$false -ErrorAction Stop
+
+            Write-Host "`n[SUCCESS] Successfully assigned SendAs to '$UserIdentity'!" -ForegroundColor Green
+        }
     }
 
     Get-MailboxCurrentPermissions -Identity $MailboxIdentity
@@ -277,34 +356,51 @@ try {
             "================================================================================"
         )
         Write-Host ($revokeMsg -join "`n") -ForegroundColor Yellow
-    } elseif ($DisableAutoMapping) {$noAutoMsg = @(
-            "================================================================================",
-            "HOW TO OPEN THIS MAILBOX (AutoMapping is DISABLED):",
-            "================================================================================",
-            "1. Outlook on the Web (OWA):",
-            "   - Sign in to https://outlook.office.com",
-            "   - Click your profile photo/initials in the top right corner.",
-            "   - Select 'Open another mailbox...'.",
-            "   - Type '$MailboxIdentity' and click Open.",
-            "",
-            "2. Outlook Desktop (Manual Addition):",
-            "   - Open Outlook -> File -> Account Settings -> Account Settings.",
-            "   - Select your primary account -> Click 'Change'.",
-            "   - Click 'More Settings' -> 'Advanced' tab.",
-            "   - Under 'Open these additional mailboxes', click 'Add...' and enter '$MailboxIdentity'.",
-            "   - Click OK -> Next -> Finish.",
-            "================================================================================"
-        )
-        Write-Host ($noAutoMsg -join "`n") -ForegroundColor Yellow
     } else {
-        $autoMsg = @(
-            "================================================================================",
-            "AUTOMAPPING IS ENABLED:",
-            "The mailbox '$MailboxIdentity' will automatically map in Outlook Desktop within",
-            "15-60 minutes once Autodiscover updates.",
-            "================================================================================"
-        )
-        Write-Host ($autoMsg -join "`n") -ForegroundColor Cyan
+        if ($SendAs) {
+            $sendAsMsg = @(
+                "================================================================================",
+                "SEND AS PERMISSION CONFIGURED:",
+                "User '$UserIdentity' can now send and forward messages as '$MailboxIdentity'.",
+                "In Outlook (Desktop / Web):",
+                "1. When composing or forwarding an email, ensure the 'From' field is displayed.",
+                "2. Click 'From' -> select 'Other Email Address...' and enter '$MailboxIdentity'.",
+                "Note: Address book / token propagation in Exchange Online may take 15-60 minutes.",
+                "================================================================================"
+            )
+            Write-Host ($sendAsMsg -join "`n") -ForegroundColor Green
+        }
+
+        if ($DisableAutoMapping) {
+            $noAutoMsg = @(
+                "================================================================================",
+                "HOW TO OPEN THIS MAILBOX (AutoMapping is DISABLED):",
+                "================================================================================",
+                "1. Outlook on the Web (OWA):",
+                "   - Sign in to https://outlook.office.com",
+                "   - Click your profile photo/initials in the top right corner.",
+                "   - Select 'Open another mailbox...'.",
+                "   - Type '$MailboxIdentity' and click Open.",
+                "",
+                "2. Outlook Desktop (Manual Addition):",
+                "   - Open Outlook -> File -> Account Settings -> Account Settings.",
+                "   - Select your primary account -> Click 'Change'.",
+                "   - Click 'More Settings' -> 'Advanced' tab.",
+                "   - Under 'Open these additional mailboxes', click 'Add...' and enter '$MailboxIdentity'.",
+                "   - Click OK -> Next -> Finish.",
+                "================================================================================"
+            )
+            Write-Host ($noAutoMsg -join "`n") -ForegroundColor Yellow
+        } else {
+            $autoMsg = @(
+                "================================================================================",
+                "AUTOMAPPING IS ENABLED:",
+                "The mailbox '$MailboxIdentity' will automatically map in Outlook Desktop within",
+                "15-60 minutes once Autodiscover updates.",
+                "================================================================================"
+            )
+            Write-Host ($autoMsg -join "`n") -ForegroundColor Cyan
+        }
     }
 
 } catch {
