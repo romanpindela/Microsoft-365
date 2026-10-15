@@ -96,6 +96,18 @@ Unblock-File -Path .\Upload-LargeFilesSession.ps1
 
 ---
 
+## 📚 Technical Documentation & PDF Guides
+
+This tool is accompanied by three comprehensive, in-depth PDF handbooks providing architectural reference, enterprise security hardening, and passwordless certificate configuration:
+
+| Document | Focus Area | Description | Format |
+| :--- | :--- | :--- | :--- |
+| [**Kompendium Microsoft Graph SDK i PowerShell: Automatyzacja OneDrive i Exchange**](Kompendium%20Microsoft%20Graph%20SDK%20i%20PowerShell_%20Automatyzacja%20OneDrive%20i%20Exchange.pdf) | Graph API & SDK Architecture | Comprehensive 324 KB engineering compendium detailing Microsoft Graph SDK internals, REST endpoints, rate limiting (HTTP 429), upload sessions, and cross-service automation across OneDrive and Exchange Online. | 📕 PDF |
+| [**Przewodnik Bezpieczeństwa - Upload-LargeFilesSession.ps1**](Przewodnik%20Bezpiecze%C5%84stwa%20-%20Upload-LargeFilesSession.ps1.pdf) | Security & Governance | Hardening guide (555 KB) covering least-privilege scoping, Entra ID application governance, secure credential storage, audit log monitoring, and protection against accidental data leakage. | 📕 PDF |
+| [**Przewodnik Certyfikatów X.509 - Upload-LargeFilesSession.ps1**](Przewodnik%20Certyfikat%C3%B3w%20X.509%20-%20Upload-LargeFilesSession.ps1.pdf) | X.509 Certificate Authentication | Practical walkthrough (295 KB) for passwordless authentication: generating RSA/X.509 certificates (self-signed or PKI), uploading public keys to Entra ID, and configuring `-CertificateThumbprint` for unattended headless execution. | 📕 PDF |
+
+---
+
 ## 📋 Parameters & Syntax
 
 ```powershell

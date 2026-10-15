@@ -79,6 +79,10 @@ A centralized, enterprise-grade PowerShell automation suite engineered for Micro
   * **Missing Folder Provisioning**: Automatically inspects and creates missing parent and child folders in OneDrive if the destination folder path does not exist.
   * **Flexible Input & Wildcards**: Accepts individual files, folders, or pattern masks (e.g. `*.pdf`, `p?indela.pdf`, `p*.docx`, or `ten_folder`), with optional directory recursion (`-Recurse`) and local folder tree replication (`-PreserveStructure`).
   * **Dual Progress Bars & Telemetry**: Detailed real-time progress indicators displaying overall transferred bytes, active chunk progress, instantaneous transfer throughput (MB/s), and estimated completion time (ETA).
+  * **Accompanying PDF Guides**:
+    * 📕 [Kompendium Microsoft Graph SDK i PowerShell (PDF)](Upload-LargeFilesSession/Kompendium%20Microsoft%20Graph%20SDK%20i%20PowerShell_%20Automatyzacja%20OneDrive%20i%20Exchange.pdf)
+    * 📕 [Przewodnik Bezpieczeństwa - Upload-LargeFilesSession.ps1 (PDF)](Upload-LargeFilesSession/Przewodnik%20Bezpiecze%C5%84stwa%20-%20Upload-LargeFilesSession.ps1.pdf)
+    * 📕 [Przewodnik Certyfikatów X.509 - Upload-LargeFilesSession.ps1 (PDF)](Upload-LargeFilesSession/Przewodnik%20Certyfikat%C3%B3w%20X.509%20-%20Upload-LargeFilesSession.ps1.pdf)
 * **Quick Example**:
   ```powershell
   # Upload all PDF files matching mask *.pdf to user's OneDrive with Entra ID App Credentials:
