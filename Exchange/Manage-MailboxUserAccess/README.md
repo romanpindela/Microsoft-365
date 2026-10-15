@@ -104,8 +104,14 @@ Unblock-File -Path .\Manage-MailboxUserAccess.ps1
 ### Info run
 ![PowerShell Output](assets/InfoRun.jpg)
 
-### Changing persmission
-![HTML Report](assets/Showing_and_changing_permission_to_userinbox.jpg)
+### Changing permission
+![Changing Permissions](assets/Showing_and_changing_permission_to_userinbox.jpg)
+
+### Granting Send As permissions
+![Granting Send As](assets/Send_as_permissions.jpg)
+
+### Applying FullAccess and SendAs with summary
+![Applying FullAccess and SendAs](assets/Send_as_permissions2.jpg)
 
 ---
 
