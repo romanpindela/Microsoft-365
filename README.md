@@ -3,9 +3,10 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-blue.svg)](https://microsoft.com/powershell)
 [![Microsoft Graph](https://img.shields.io/badge/Microsoft%20Graph-v1.0%20%2F%20v2.0-008272.svg)](https://learn.microsoft.com/graph/)
 [![Exchange Online](https://img.shields.io/badge/Exchange%20Online-v3.0%2B-0078D4.svg)](https://learn.microsoft.com/powershell/exchange/)
+[![OneDrive for Business](https://img.shields.io/badge/OneDrive%20for%20Business-Cloud%20Storage-0078D4.svg)](https://onedrive.live.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-A centralized, enterprise-grade PowerShell automation suite engineered for **Microsoft 365**, **Entra ID**, **Exchange Online**, and **OneDrive for Business** administration. Designed, developed, and maintained by **Roman Pindela**, this repository provides battle-tested, production-ready solutions for identity management, security auditing, mailflow hygiene, mailbox provisioning, and cloud synchronization.
+A centralized, enterprise-grade PowerShell automation suite engineered for **Microsoft 365**, **Entra ID**, **Exchange Online**, and **OneDrive for Business** administration. Designed, developed, and maintained by **Roman Pindela**, this repository provides battle-tested, production-ready solutions for identity management, security auditing, mailflow hygiene, mailbox provisioning, large file uploads, and cloud synchronization.
 
 ---
 
@@ -28,46 +29,53 @@ Microsoft 365/
 │   ├── Manage-MailflowRules/        # Transport rules lifecycle and backup
 │   ├── Manage-M365TenantFilterList/ # Anti-Spam whitelists/blacklists and TABL synchronization
 │   └── set-Mailbox1YearArchive...   # Retention policy configuration
-└── OneDrive/                        # Cloud storage administration and synchronization
-    ├── Upload-LargeFilesSession     # Chunked Graph upload sessions for large files up to 250 GB and wildcards
-    └── Sync-OneDriveFolderAndNotify # Cloud-to-local and local-to-cloud sync with progress and notifications
+└── OneDrive/                        # Cloud storage administration, synchronization, and uploads
+    ├── Sync-OneDriveFolderAndNotify # Cloud-to-local and local-to-cloud sync with progress and notifications
+    └── Upload-LargeFilesSession     # Chunked Graph upload session for files up to 250 GB
 ```
 
 ---
 
-## 🚀 Featured Tools
+## ☁️ Module Catalogs & Featured Tools
 
-### [Upload-LargeFilesSession](OneDrive/Upload-LargeFilesSession/README.md)
-* **Path**: [`OneDrive/Upload-LargeFilesSession/Upload-LargeFilesSession.ps1`](OneDrive/Upload-LargeFilesSession/Upload-LargeFilesSession.ps1)
-* **Author**: Roman Pindela (`roman.pindela@gmail.com`)
-* **Focus**: High-performance multi-gigabyte upload sessions (up to 250 GB) to OneDrive for Business using Microsoft Graph chunking.
-* **Capabilities**:
-  * Uploads individual files, directory trees, or wildcard sets (`*.pdf`, `p?indela.pdf`, `p*.docx`, folder names).
-  * Auto-provisions missing remote folder hierarchies in OneDrive.
-  * Real-time dual progress bars (MB/s speed, ETA, chunk byte ranges).
-  * Unattended daemon execution via Entra ID App Registrations (Client Secret or Certificate).
+### 1. OneDrive for Business (`/OneDrive`)
+* [**Sync-OneDriveFolderAndNotify**](OneDrive/Sync-OneDriveFolderAndNotify/README.md) — Synchronizes files between an Office 365 user's OneDrive for Business folder and a local filesystem directory. Features multi-directional sync (`TwoWay`, `Upload`, `Download`), automatic creation of missing cloud/local folders, granular `Write-Progress` status bars, multi-chunk upload sessions (>4 MB), persistent logging, native Windows balloon notifications, and headless Entra ID daemon authentication.
+* [**Upload-LargeFilesSession**](OneDrive/Upload-LargeFilesSession/README.md) — Uploads large files (up to 250 GB), entire directory trees, and wildcard file sets (`*.pdf`, `p?indela.pdf`, `p*.docx`, folder names) to user OneDrive libraries using Microsoft Graph `createUploadSession` chunking. Features automatic remote folder creation, dual progress bars (MB/s, ETA), UTF-8 file logging, and Entra ID App-Only non-interactive authentication.
 
-### [Sync-OneDriveFolderAndNotify](OneDrive/Sync-OneDriveFolderAndNotify/README.md)
-* **Path**: [`OneDrive/Sync-OneDriveFolderAndNotify/Sync-OneDriveFolderAndNotify.ps1`](OneDrive/Sync-OneDriveFolderAndNotify/Sync-OneDriveFolderAndNotify.ps1)
-* **Author**: Roman Pindela (`roman.pindela@gmail.com`)
-* **Focus**: Automated file synchronization between Microsoft 365 OneDrive accounts and local storage.
-* **Capabilities**:
-  * Multi-directional sync (`TwoWay`, `Upload`, `Download`).
-  * Auto-folder creation, balloon notifications, and Teams/Slack webhooks.
+### 2. Exchange Online (`/Exchange`)
+* [**Manage-M365TenantFilterList**](Exchange/Manage-M365TenantFilterList/README.md) — Audits, searches, adds, and removes sender domains and emails across Anti-Spam inbound policies and Tenant Allow/Block Lists (TABL).
+* [**Get-MailboxSizeAndArchiveDetails**](Exchange/Get-MailboxSizeAndArchiveDetails/README.md) — Capacity auditing of primary mailboxes, archive quotas, item counts, and storage usage.
+* [**Manage-AutomaticRepliesMailbox**](Exchange/Manage-AutomaticRepliesMailbox/README.md) — Auditing and scheduling internal/external Out-Of-Office (OOF) auto-replies.
+* [**Manage-MailflowRules**](Exchange/Manage-MailflowRules/README.md) — Management, testing, toggling, and auditing of Exchange transport and routing rules.
+* [**Manage-MailboxUserAccess**](Exchange/Manage-MailboxUserAccess/README.md) — Grants, revokes, and audits FullAccess, SendAs, and SendOnBehalf mailbox permissions.
+* [**Enable-OnlineArchive**](Exchange/Enable-OnlineArchive/README.md) — Provisions Exchange Online Archive mailboxes and triggers Managed Folder Assistant.
+* [**set-Mailbox1YearArchivePolicy**](Exchange/set-Mailbox1YearArchivePolicy/README.md) — Enforces retention policies for 1-year archive migration.
+* [**Get-M365MessageTrace**](Exchange/Get-M365MessageTrace/README.md) — Queries message delivery traces, spam verdicts, and quarantine statuses.
 
-### Key Highlights:
-* **Interactive & Daemon Authentication**: Supports interactive logins with modern MFA session reuse or headless, non-interactive execution via **Microsoft Entra ID App Registrations** (Client Secret or X.509 Certificate).
-* **Flexible Directionality**: Synchronize in `TwoWay` (bidirectional), `Upload` (local to cloud), or `Download` (cloud to local) modes.
-* **Smart Folder Handling**: Detects missing OneDrive or local directories, prompts interactively, or auto-provisions them with `-AutoCreate`.
-* **Large File Chunking**: Handles files larger than 4 MB (up to 250 GB) using official Graph chunked upload sessions with nested progress bars.
-* **Granular Observability**: Multi-level `Write-Progress` status bars, persistent timestamped UTF-8 log files, native Windows balloon notifications, and Microsoft Teams / Slack webhook support.
+### 3. Microsoft Entra ID (`/EntraID`)
+* [**Manage-M365UserAccount**](EntraID/Manage-M365UserAccount/README.md) — Password resets, sign-in blocking/unblocking, active session revocation, alias management, and user auditing via Microsoft Graph.
+* [**Get-M365Users**](EntraID/Get-M365Users/README.md) — Comprehensive tenant-wide user auditing, licensing SKU breakdowns, and mailbox status reporting.
+* [**Manage-M365Groups**](EntraID/Manage-M365Groups/README.md) — Management and membership auditing for M365 Unified Groups, Distribution Lists, and Security Groups.
 
-#### Quick Example:
+---
+
+## 🚀 Quick Start: Sync-OneDriveFolderAndNotify
+
 ```powershell
-# Unblock after cloning
+# 1. Unblock downloaded script
 Unblock-File -Path .\OneDrive\Sync-OneDriveFolderAndNotify\Sync-OneDriveFolderAndNotify.ps1
 
-# Execute unattended backup to OneDrive
+# 2. View built-in help and Entra ID daemon configuration guide
+.\OneDrive\Sync-OneDriveFolderAndNotify\Sync-OneDriveFolderAndNotify.ps1 -Help
+
+# 3. Execute two-way synchronization with auto-folder creation
+.\OneDrive\Sync-OneDriveFolderAndNotify\Sync-OneDriveFolderAndNotify.ps1 -UserPrincipalName "john.doe@company.com" `
+    -OneDriveFolderPath "ProjectFiles" `
+    -LocalFolderPath "C:\Data\ProjectFiles" `
+    -Direction TwoWay `
+    -AutoCreate
+
+# 4. Execute unattended background backup via Entra ID Client Secret
 .\OneDrive\Sync-OneDriveFolderAndNotify\Sync-OneDriveFolderAndNotify.ps1 -UserPrincipalName "backup@company.com" `
     -OneDriveFolderPath "DailyBackups/SQL" `
     -LocalFolderPath "D:\SQLBackups" `
@@ -101,9 +109,9 @@ Unblock-File -Path .\OneDrive\Sync-OneDriveFolderAndNotify\Sync-OneDriveFolderAn
    Get-ChildItem -Path . -Filter *.ps1 -Recurse | Unblock-File
    ```
 2. **Defensive Input Validation**:
-   All scripts in this repository implement strict input sanitization, directory traversal protection, and RFC email format validation.
+   All scripts in this repository implement strict input sanitization, directory traversal protection (`..`), and RFC email format validation.
 3. **Language-Independent Execution**:
-   Scripts and prompts support both English (`Y`/`N`) and Polish (`T`/`N`) operational environments.
+   Scripts and confirmation prompts support both English (`Y`/`N`) and Polish (`T`/`N`) operational environments.
 
 ---
 
