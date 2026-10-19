@@ -14,7 +14,7 @@
        - Initiates secure web/MFA authentication to the SharePoint Online Admin Center if disconnected.
     2. Company-Wide Preview Site Creation (-CompanyWide / -SiteType CompanyWide):
        - Provisions a modern communication site (SITEPAGEPUBLISHING#0) or custom template.
-       - Assigns the specified user as the Primary Site Collection Administrator and Site Owner.
+       - Assigns the specified user as Primary Site Collection Administrator via Set-SPOSite and Set-SPOUser.
        - Automatically resolves tenant GUID and assigns the canonical company-wide claim
          'c:0-.f|rolemanager|spo-grid-all-users/<TenantId>' and bilingual claims ('Everyone except external users'
          / 'Wszyscy oprócz użytkowników zewnętrznych') to the site's Visitors / Odwiedzający group.
@@ -27,6 +27,7 @@
        - If -SiteAlias is omitted, automatically generates a clean URL slug from -SiteTitle.
     5. Detailed Operation Auditing:
        - Real-time step-by-step console reporting for each provisioning phase.
+       - Enforces Site Collection Administrator rights before querying site groups.
        - Polling retry loop with progressive backoff for site hydration and group discovery.
        - Comprehensive operation audit summary table upon completion.
     6. Enterprise File Logging:
@@ -91,6 +92,11 @@
     The SharePoint Online Admin Center URL (e.g., 'https://contoso-admin.sharepoint.com').
     If omitted, automatically derived from the TenantName.
 
+.PARAMETER AdminUserPrincipalName
+    Optional administrator UPN used if the administrator executing the script is different from the site Owner.
+    Ensures the executing administrator is also granted Site Collection Administrator rights on the site.
+    Aliases: -AdminUPN, -AdminEmail.
+
 .PARAMETER StorageQuotaMB
     Site storage quota limit in megabytes (MB).
     Default: 1048576 MB (1 TB). Maximum: 26214400 MB (25 TB).
@@ -148,7 +154,7 @@
     Author        : Roman Pindela
     Email         : roman.pindela@gmail.com
     GitHub        : https://github.com/romanpindela
-    Version       : 1.1.0
+    Version       : 1.2.0
     Created       : 2026-10-19
     Updated       : 2026-10-19
     Standards     : Adheres to CleanCode and PowerShell Script Standards (C:\Dane\rpindela\GitHub\PowerShell Script Standards.txt)
@@ -207,6 +213,10 @@ param(
     [Parameter()]
     [string]$AdminUrl,
 
+    [Parameter()]
+    [Alias('AdminUPN', 'AdminEmail')]
+    [string]$AdminUserPrincipalName,
+
     # Site Configuration Quotas and Localization
     [Parameter()]
     [ValidateRange(1024, 26214400)]
@@ -249,7 +259,7 @@ if ((Test-Path -Path $userWinPSModules) -and ($env:PSModulePath -notlike "*$user
 # ==============================================================================
 $Script:Metadata = @{
     Title       = "New-SharePoint-Site.ps1"
-    Version     = "1.1.0"
+    Version     = "1.2.0"
     Author      = "Roman Pindela"
     Email       = "roman.pindela@gmail.com"
     GitHub      = "https://github.com/romanpindela"
@@ -260,6 +270,7 @@ $Script:Metadata = @{
 # Execution tracking
 $Script:StartTime   = Get-Date
 $Script:LogFilePath = $null
+$Script:CanonicalSiteUrl = $null
 $Script:OperationDetails = [System.Collections.Generic.List[PSObject]]::new()
 
 # ==============================================================================
@@ -448,6 +459,7 @@ function Show-ScriptHelp {
         "    -Visitors                   Optional array of user UPNs granted Read permissions.",
         "    -TenantName                 Tenant domain name (e.g. 'contoso' or 'contoso.onmicrosoft.com').",
         "    -AdminUrl                   SharePoint Admin Center URL ('https://contoso-admin.sharepoint.com').",
+        "    -AdminUserPrincipalName     (Optional) UPN of executing admin if different from Owner.",
         "    -StorageQuotaMB             Storage quota in MB (default: 1048576 = 1 TB).",
         "    -TimeZoneId                 Time Zone ID (default: 4 = UTC+1 Warsaw / Romance Standard Time).",
         "    -LocaleId, -Lcid            Language LCID (default: 1045 = Polish, 1033 = English).",
@@ -589,6 +601,13 @@ try {
 
     if (-not (Test-ValidEmailAddress -Email $Owner)) {
         throw "Parameter -Owner '$Owner' is not a valid email address or UserPrincipalName."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($AdminUserPrincipalName)) {
+        Assert-SafeInputString -InputText $AdminUserPrincipalName -ParamName "AdminUserPrincipalName" -MaxLength 256
+        if (-not (Test-ValidEmailAddress -Email $AdminUserPrincipalName)) {
+            throw "Parameter -AdminUserPrincipalName '$AdminUserPrincipalName' is not a valid email address."
+        }
     }
 
     foreach ($m in $Members) {
@@ -796,8 +815,9 @@ function Test-SharePointSiteAvailability {
     try {
         $existingSite = Get-SPOSite -Identity $SiteUrl -Detailed -ErrorAction SilentlyContinue
         if ($existingSite) {
+            $Script:CanonicalSiteUrl = $existingSite.Url
             Write-ScriptLog -Level WARN -Message "Site URL '$SiteUrl' already exists! (Status: $($existingSite.Status), Title: '$($existingSite.Title)')"
-            Write-ScriptLog -Level INFO -Message "Existing site detected. Script will apply security/permission configuration to the existing site."
+            Write-ScriptLog -Level INFO -Message "Existing site detected at canonical URL: '$($existingSite.Url)'. Script will apply security/permission configuration to the existing site."
             Add-OperationDetail -Step "06-PreFlight" -Operation "Site URL Availability Check" -Status "Warning" -Details "Site exists with status $($existingSite.Status); configuring existing site."
             return $true
         }
@@ -942,7 +962,52 @@ function Invoke-CreateSharePointSite {
 # PERMISSION & GROUP RESOLUTION (Bilingual: EN / PL with Progressive Retries)
 # ==============================================================================
 function Get-SiteSecurityGroups {
-    param([string]$Url, [string]$Title, [string]$OwnerEmail)
+    param(
+        [string]$Url,
+        [string]$Title,
+        [string]$OwnerEmail,
+        [string]$AdminUPN
+    )
+
+    Write-ScriptLog -Level INFO -Message "Ensuring Site Collection Administrator rights on '$Url'..."
+    
+    # 1. Ensure Owner is Primary Site Collection Administrator via Set-SPOSite
+    try {
+        Set-SPOSite -Identity $Url -Owner $OwnerEmail -ErrorAction Stop | Out-Null
+        Write-ScriptLog -Level SUCCESS -Message "Set-SPOSite: Primary Site Collection Administrator assigned to '$OwnerEmail'."
+        Add-OperationDetail -Step "10a-SiteAdmin" -Operation "Set Primary Site Owner" -Status "Success" -Details "Owner: $OwnerEmail"
+    }
+    catch {
+        Write-ScriptLog -Level WARN -Message "Set-SPOSite notice: $($_.Exception.Message)"
+        Add-OperationDetail -Step "10a-SiteAdmin" -Operation "Set Primary Site Owner" -Status "Warning" -Details $_.Exception.Message
+    }
+
+    # 2. Grant explicit Site Collection Administrator rights via Set-SPOUser
+    try {
+        Set-SPOUser -Site $Url -LoginName $OwnerEmail -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+        Write-ScriptLog -Level SUCCESS -Message "Set-SPOUser: Confirmed Site Collection Administrator for '$OwnerEmail'."
+        Add-OperationDetail -Step "10b-SiteAdmin" -Operation "Grant Site Collection Admin" -Status "Success" -Details "User: $OwnerEmail"
+    }
+    catch {
+        Write-ScriptLog -Level WARN -Message "Set-SPOUser notice: $($_.Exception.Message)"
+        Add-OperationDetail -Step "10b-SiteAdmin" -Operation "Grant Site Collection Admin" -Status "Warning" -Details $_.Exception.Message
+    }
+
+    # 3. If executing admin identity is different, grant SCA to executing admin as well
+    if (-not [string]::IsNullOrWhiteSpace($AdminUPN) -and ($AdminUPN.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
+        try {
+            Set-SPOUser -Site $Url -LoginName $AdminUPN -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+            Write-ScriptLog -Level SUCCESS -Message "Set-SPOUser: Confirmed Site Collection Administrator for executing admin '$AdminUPN'."
+            Add-OperationDetail -Step "10c-SiteAdmin" -Operation "Grant Site Collection Admin (Executing Admin)" -Status "Success" -Details "User: $AdminUPN"
+        }
+        catch {
+            Write-ScriptLog -Level WARN -Message "Notice granting SCA to executing admin '$AdminUPN': $($_.Exception.Message)"
+        }
+    }
+
+    # Pause 5 seconds for permission token propagation across the SharePoint farm
+    Write-ScriptLog -Level INFO -Message "Waiting 5 seconds for security token propagation..."
+    Start-Sleep -Seconds 5
 
     Write-ScriptLog -Level INFO -Message "Resolving SharePoint security groups for site '$Url'..."
     $groups = @{
@@ -951,12 +1016,6 @@ function Get-SiteSecurityGroups {
         Owners   = $null
     }
 
-    # Pre-emptively ensure Owner is Primary Administrator using tenant admin cmdlets
-    try {
-        Set-SPOSite -Identity $Url -Owner $OwnerEmail -ErrorAction SilentlyContinue | Out-Null
-    } catch {}
-
-    # Progressive retry loop allowing SharePoint Online to complete internal permission & group hydration
     $maxRetries = 6
     $retryDelay = 10
     $siteGroups = $null
@@ -974,9 +1033,9 @@ function Get-SiteSecurityGroups {
             Write-ScriptLog -Level DEBUG -Message "Attempt $i encountered error: $($_.Exception.Message)"
             if ($i -lt $maxRetries) {
                 Write-ScriptLog -Level WARN -Message "Site groups are still initializing in SharePoint Online (hydration latency). Retrying in ${retryDelay}s..."
-                # Try setting site admin via Set-SPOUser
+                # Re-assert SCA on retry
                 try {
-                    Set-SPOUser -Site $Url -LoginName $OwnerEmail -IsSiteAdmin $true -ErrorAction SilentlyContinue | Out-Null
+                    Set-SPOUser -Site $Url -LoginName $OwnerEmail -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
                 } catch {}
                 Start-Sleep -Seconds $retryDelay
             }
@@ -1021,11 +1080,11 @@ function Get-SiteSecurityGroups {
         $ownTitle = if ($groups.Owners) { $groups.Owners.Title } else { "Not Found" }
 
         Write-ScriptLog -Level SUCCESS -Message "Resolved groups -> Owners: '$ownTitle', Members: '$memTitle', Visitors: '$visTitle'"
-        Add-OperationDetail -Step "10-GroupResolution" -Operation "Security Group Discovery" -Status "Success" -Details "Owners: $ownTitle | Members: $memTitle | Visitors: $visTitle"
+        Add-OperationDetail -Step "10d-GroupResolution" -Operation "Security Group Discovery" -Status "Success" -Details "Owners: $ownTitle | Members: $memTitle | Visitors: $visTitle"
     }
     else {
         Write-ScriptLog -Level WARN -Message "Unable to query site groups via Get-SPOSiteGroup. Utilizing localized fallback candidates."
-        Add-OperationDetail -Step "10-GroupResolution" -Operation "Security Group Discovery" -Status "Warning" -Details "Get-SPOSiteGroup access delayed. Using localized fallback candidates."
+        Add-OperationDetail -Step "10d-GroupResolution" -Operation "Security Group Discovery" -Status "Warning" -Details "Get-SPOSiteGroup access delayed. Using localized fallback candidates."
     }
 
     return $groups
@@ -1045,17 +1104,6 @@ function Configure-SharePointPermissions {
 
     Write-ScriptLog -Level INFO -Message "Configuring permissions for mode '$SiteTypeMode'..."
     Add-OperationDetail -Step "11-Permissions" -Operation "Permission Configuration" -Status "Running" -Details "Applying rules for $SiteTypeMode"
-
-    # Step 1: Ensure Owner is configured as Primary Administrator and Site Admin
-    try {
-        Write-ScriptLog -Level INFO -Message "Confirming Primary Site Collection Administrator ($OwnerEmail)..."
-        Set-SPOSite -Identity $Url -Owner $OwnerEmail -ErrorAction SilentlyContinue | Out-Null
-        Set-SPOUser -Site $Url -LoginName $OwnerEmail -IsSiteAdmin $true -ErrorAction SilentlyContinue | Out-Null
-        Write-ScriptLog -Level SUCCESS -Message "Owner '$OwnerEmail' confirmed as Site Collection Administrator."
-    }
-    catch {
-        Write-ScriptLog -Level WARN -Message "Setting Site Admin via Set-SPOUser logged notice: $($_.Exception.Message)"
-    }
 
     # Step 2: Handle CompanyWide Preview Access
     if ($SiteTypeMode -eq 'CompanyWide') {
@@ -1192,8 +1240,12 @@ try {
     # 2. Authenticate to SharePoint Online Admin Center
     Connect-SharePointAdminSession -Url $AdminUrl
 
-    # 3. Pre-Flight Availability Check (detects if site already exists)
+    # 3. Pre-Flight Availability Check (detects if site already exists and captures canonical URL)
     $siteExists = Test-SharePointSiteAvailability -SiteUrl $targetSiteUrl
+    if ($siteExists -and (-not [string]::IsNullOrWhiteSpace($Script:CanonicalSiteUrl))) {
+        $targetSiteUrl = $Script:CanonicalSiteUrl
+        Write-ScriptLog -Level INFO -Message "Using canonical SharePoint site URL: $targetSiteUrl"
+    }
 
     # 4. User Confirmation
     Confirm-SiteCreation -IsExistingSite $siteExists
@@ -1207,6 +1259,10 @@ try {
                                                    -StorageLimitMB $StorageQuotaMB `
                                                    -TzId $TimeZoneId `
                                                    -Lcid $LocaleId
+        if ($createdSite -and (-not [string]::IsNullOrWhiteSpace($createdSite.Url))) {
+            $targetSiteUrl = $createdSite.Url
+            Write-ScriptLog -Level INFO -Message "Using newly provisioned canonical site URL: $targetSiteUrl"
+        }
     }
     else {
         Write-ScriptLog -Level INFO -Message "Skipping site collection creation because site '$targetSiteUrl' already exists."
@@ -1214,7 +1270,7 @@ try {
     }
 
     # 6. Group Discovery & Permission Configuration
-    $secGroups = Get-SiteSecurityGroups -Url $targetSiteUrl -Title $SiteTitle -OwnerEmail $Owner
+    $secGroups = Get-SiteSecurityGroups -Url $targetSiteUrl -Title $SiteTitle -OwnerEmail $Owner -AdminUPN $AdminUserPrincipalName
     Configure-SharePointPermissions -Url $targetSiteUrl `
                                     -Title $SiteTitle `
                                     -SiteTypeMode $SiteType `
