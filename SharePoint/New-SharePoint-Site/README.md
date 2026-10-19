@@ -215,6 +215,7 @@ $siteInfo | Format-List
 | `-Visitors` / `-VisitorList` | `String[]` | No | `@()` | Optional user email(s)/UPN(s) assigned Read permissions. |
 | `-TenantName` / `-Tenant` | `String` | No | *Auto-detected* | Microsoft 365 tenant domain prefix (e.g. `contoso`). |
 | `-AdminUrl` | `String` | No | *Auto-derived* | SharePoint Online Admin Center URL (`https://<tenant>-admin.sharepoint.com`). |
+| `-AdminUserPrincipalName` / `-AdminUPN` | `String` | No | *Auto-discovered* | UPN/Email of the administrator running the script, if different from `-Owner`. Ensures executing admin receives Site Collection Admin rights on the site. |
 | `-StorageQuotaMB` | `Int64` | No | `1048576` (1 TB) | Maximum storage limit in megabytes (range: 1,024 to 26,214,400 MB). |
 | `-TimeZoneId` | `Int32` | No | `4` | SharePoint Time Zone ID (default: 4 = UTC+1 Romance Standard Time - Warsaw/Brussels). |
 | `-LocaleId` / `-Lcid` | `Int32` | No | `1045` (Polish) | SharePoint Language ID (e.g. `1045` for Polish, `1033` for English). |
@@ -262,5 +263,6 @@ Logs are stored in `C:\Logs` (or `$env:LOCALAPPDATA\Logs` as fallback) using the
 - **Author**: Roman Pindela
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
-- **Version**: 1.1.0
+- **Version**: 1.3.0
 - **Created**: 2026-10-19
+- **Updated**: 2026-10-19

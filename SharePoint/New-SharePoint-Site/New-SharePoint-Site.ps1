@@ -154,7 +154,7 @@
     Author        : Roman Pindela
     Email         : roman.pindela@gmail.com
     GitHub        : https://github.com/romanpindela
-    Version       : 1.2.0
+    Version       : 1.3.0
     Created       : 2026-10-19
     Updated       : 2026-10-19
     Standards     : Adheres to CleanCode and PowerShell Script Standards (C:\Dane\rpindela\GitHub\PowerShell Script Standards.txt)
@@ -259,7 +259,7 @@ if ((Test-Path -Path $userWinPSModules) -and ($env:PSModulePath -notlike "*$user
 # ==============================================================================
 $Script:Metadata = @{
     Title       = "New-SharePoint-Site.ps1"
-    Version     = "1.2.0"
+    Version     = "1.3.0"
     Author      = "Roman Pindela"
     Email       = "roman.pindela@gmail.com"
     GitHub      = "https://github.com/romanpindela"
@@ -966,7 +966,9 @@ function Get-SiteSecurityGroups {
         [string]$Url,
         [string]$Title,
         [string]$OwnerEmail,
-        [string]$AdminUPN
+        [string]$AdminUPN,
+        [string]$TenantDomainPrefix,
+        [bool]$BypassPrompts = $false
     )
 
     Write-ScriptLog -Level INFO -Message "Ensuring Site Collection Administrator rights on '$Url'..."
@@ -993,7 +995,7 @@ function Get-SiteSecurityGroups {
         Add-OperationDetail -Step "10b-SiteAdmin" -Operation "Grant Site Collection Admin" -Status "Warning" -Details $_.Exception.Message
     }
 
-    # 3. If executing admin identity is different, grant SCA to executing admin as well
+    # 3. If executing admin identity is passed via parameter, grant SCA to executing admin as well
     if (-not [string]::IsNullOrWhiteSpace($AdminUPN) -and ($AdminUPN.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
         try {
             Set-SPOUser -Site $Url -LoginName $AdminUPN -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
@@ -1003,6 +1005,33 @@ function Get-SiteSecurityGroups {
         catch {
             Write-ScriptLog -Level WARN -Message "Notice granting SCA to executing admin '$AdminUPN': $($_.Exception.Message)"
         }
+    }
+
+    # 4. Proactive Discovery: Automatically grant SCA to Root Site Owner and Root Site Admins
+    # In SharePoint Online, the account executing Connect-SPOService is almost always a Site Admin on the root site.
+    if (-not [string]::IsNullOrWhiteSpace($TenantDomainPrefix)) {
+        $rootSiteUrl = "https://${TenantDomainPrefix}.sharepoint.com"
+        try {
+            $rootSite = Get-SPOSite -Identity $rootSiteUrl -Detailed -ErrorAction SilentlyContinue
+            if ($rootSite -and $rootSite.Owner -and ($rootSite.Owner.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
+                Write-ScriptLog -Level INFO -Message "Auto-discovered Root Site Owner '$($rootSite.Owner)'. Ensuring SCA on '$Url'..."
+                Set-SPOUser -Site $Url -LoginName $rootSite.Owner -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
+            }
+        }
+        catch {}
+
+        try {
+            $rootAdmins = Get-SPOUser -Site $rootSiteUrl -Limit 50 -ErrorAction SilentlyContinue | Where-Object { $_.IsSiteAdmin -eq $true }
+            if ($rootAdmins) {
+                foreach ($ra in $rootAdmins) {
+                    if ($ra.LoginName -and ($ra.LoginName -notlike "*spo-grid-all-users*") -and ($ra.LoginName -notlike "*app*") -and ($ra.LoginName.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
+                        Write-ScriptLog -Level DEBUG -Message "Ensuring Root Site Admin '$($ra.LoginName)' has SCA on '$Url'..."
+                        Set-SPOUser -Site $Url -LoginName $ra.LoginName -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
+                    }
+                }
+            }
+        }
+        catch {}
     }
 
     # Pause 5 seconds for permission token propagation across the SharePoint farm
@@ -1019,6 +1048,7 @@ function Get-SiteSecurityGroups {
     $maxRetries = 6
     $retryDelay = 10
     $siteGroups = $null
+    $promptedForAdmin = $false
 
     for ($i = 1; $i -le $maxRetries; $i++) {
         try {
@@ -1030,12 +1060,49 @@ function Get-SiteSecurityGroups {
             }
         }
         catch {
-            Write-ScriptLog -Level DEBUG -Message "Attempt $i encountered error: $($_.Exception.Message)"
+            $errMessage = $_.Exception.Message
+            Write-ScriptLog -Level DEBUG -Message "Attempt $i encountered error: $errMessage"
+
+            # Check if this is an Access Denied error (0x80070005)
+            $isAccessDenied = ($errMessage -like "*0x80070005*" -or $errMessage -like "*Access is denied*" -or $errMessage -like "*Odmowa dostępu*")
+
+            if ($isAccessDenied -and (-not $promptedForAdmin) -and [string]::IsNullOrWhiteSpace($AdminUPN) -and (-not $BypassPrompts)) {
+                $promptedForAdmin = $true
+                Write-ScriptLog -Level WARN -Message "Access Denied (0x80070005) detected. The logged-in administrator is likely different from Owner '$OwnerEmail'."
+                
+                # If interactive console is available, prompt user for executing admin UPN
+                $interactiveAdmin = $null
+                try {
+                    Write-Host "`n[!] ACCESS DENIED (0x80070005): SharePoint Online blocked site group discovery." -ForegroundColor Yellow
+                    Write-Host "    Reason: The administrator session currently logged into PowerShell is not a Site Collection Administrator on '$Url'." -ForegroundColor Yellow
+                    Write-Host "    Owner '$OwnerEmail' has SCA, but if you logged in with a different admin account (e.g., admin@$TenantDomainPrefix.pl)," -ForegroundColor Yellow
+                    Write-Host "    that account must also be granted Site Collection Administrator privileges." -ForegroundColor Yellow
+                    $interactiveAdmin = Read-Host "    Please enter your administrator login UPN/email [Press Enter to skip]"
+                }
+                catch {}
+
+                if (-not [string]::IsNullOrWhiteSpace($interactiveAdmin)) {
+                    $AdminUPN = $interactiveAdmin.Trim()
+                    Write-ScriptLog -Level INFO -Message "Granting Site Collection Administrator to executing admin '$AdminUPN'..."
+                    try {
+                        Set-SPOUser -Site $Url -LoginName $AdminUPN -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+                        Write-ScriptLog -Level SUCCESS -Message "Confirmed SCA for '$AdminUPN'. Retrying in 5 seconds..."
+                        Start-Sleep -Seconds 5
+                    }
+                    catch {
+                        Write-ScriptLog -Level WARN -Message "Notice adding SCA: $($_.Exception.Message)"
+                    }
+                }
+            }
+
             if ($i -lt $maxRetries) {
                 Write-ScriptLog -Level WARN -Message "Site groups are still initializing in SharePoint Online (hydration latency). Retrying in ${retryDelay}s..."
                 # Re-assert SCA on retry
                 try {
                     Set-SPOUser -Site $Url -LoginName $OwnerEmail -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
+                    if (-not [string]::IsNullOrWhiteSpace($AdminUPN)) {
+                        Set-SPOUser -Site $Url -LoginName $AdminUPN -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
+                    }
                 } catch {}
                 Start-Sleep -Seconds $retryDelay
             }
@@ -1096,8 +1163,10 @@ function Configure-SharePointPermissions {
         [string]$Title,
         [string]$SiteTypeMode,
         [string]$OwnerEmail,
+        [string]$AdminUPN,
         [hashtable]$Groups,
         [string]$TenantId,
+        [string]$TenantDomainPrefix,
         [string[]]$MemberList,
         [string[]]$VisitorList
     )
@@ -1111,8 +1180,13 @@ function Configure-SharePointPermissions {
         
         # Build candidate target groups (starting with resolved, then localized candidates)
         $targetVisitorGroups = @()
-        if ($Groups.Visitors -and (-not [string]::IsNullOrWhiteSpace($Groups.Visitors.Title))) {
-            $targetVisitorGroups += $Groups.Visitors.Title
+        if ($Groups.Visitors) {
+            if (-not [string]::IsNullOrWhiteSpace($Groups.Visitors.Title)) {
+                $targetVisitorGroups += $Groups.Visitors.Title
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Groups.Visitors.LoginName)) {
+                $targetVisitorGroups += $Groups.Visitors.LoginName
+            }
         }
         $targetVisitorGroups += "$Title Odwiedzający"
         $targetVisitorGroups += "$Title Goście"
@@ -1133,6 +1207,8 @@ function Configure-SharePointPermissions {
         $candidatePrincipals += "c:0(.s|true"
 
         $companyWideAdded = $false
+        $assignedGroup = $null
+        $assignedPrincipal = $null
 
         foreach ($groupName in $targetVisitorGroups) {
             foreach ($principal in $candidatePrincipals) {
@@ -1141,6 +1217,8 @@ function Configure-SharePointPermissions {
                     Add-SPOUser -Site $Url -LoginName $principal -Group $groupName -ErrorAction Stop | Out-Null
                     Write-ScriptLog -Level SUCCESS -Message "Successfully granted Company-Wide Preview access to '$principal' in group '$groupName'!"
                     $companyWideAdded = $true
+                    $assignedGroup = $groupName
+                    $assignedPrincipal = $principal
                     Add-OperationDetail -Step "12-CompanyAccess" -Operation "Grant Company-Wide Preview" -Status "Success" -Details "Assigned '$principal' to '$groupName'"
                     break
                 }
@@ -1151,10 +1229,40 @@ function Configure-SharePointPermissions {
             if ($companyWideAdded) { break }
         }
 
-        if (-not $companyWideAdded) {
-            Write-ScriptLog -Level WARN -Message "Could not automatically resolve 'Everyone except external users'. Tenant permissions may restrict script claim assignment."
-            Write-ScriptLog -Level WARN -Message "You can assign 'Everyone except external users' manually in Site Permissions or check Set-SPOTenant -ShowEveryoneExceptExternalUsersClaim `$true."
-            Add-OperationDetail -Step "12-CompanyAccess" -Operation "Grant Company-Wide Preview" -Status "Warning" -Details "Automatic claim assignment did not succeed; verify tenant claim settings."
+        # Post-assignment membership verification
+        if ($companyWideAdded -and $assignedGroup) {
+            try {
+                $groupUsers = Get-SPOUser -Site $Url -Group $assignedGroup -ErrorAction SilentlyContinue
+                $claimFound = $groupUsers | Where-Object { 
+                    ($_.LoginName -like "*spo-grid-all-users*") -or 
+                    ($_.DisplayName -like "*Everyone*") -or 
+                    ($_.DisplayName -like "*Wszyscy*") 
+                }
+                if ($claimFound) {
+                    Write-ScriptLog -Level SUCCESS -Message "Confirmed: 'Everyone except external users' is actively listed in '$assignedGroup'."
+                    Add-OperationDetail -Step "12b-VerifyCompanyAccess" -Operation "Verify Group Membership" -Status "Success" -Details "Claim confirmed in $assignedGroup"
+                }
+            }
+            catch {}
+        }
+        else {
+            Write-ScriptLog -Level ERROR -Message "Could not automatically assign 'Everyone except external users' to site visitors."
+            Add-OperationDetail -Step "12-CompanyAccess" -Operation "Grant Company-Wide Preview" -Status "Failed" -Details "Permission denied or group not found."
+
+            Write-Host "`n[!] ===========================================================================" -ForegroundColor Red
+            Write-Host "    ATTENTION: Company-Wide Preview permissions could not be applied automatically!" -ForegroundColor Red
+            Write-Host "    ===========================================================================" -ForegroundColor Red
+            Write-Host "    SharePoint Online reported 'Unauthorized operation' or 'Access is denied'." -ForegroundColor Yellow
+            Write-Host "    Root Cause: The administrator account currently authenticated in PowerShell" -ForegroundColor Yellow
+            Write-Host "    lacks Site Collection Administrator (SCA) privileges on '$Url'." -ForegroundColor Yellow
+            Write-Host "`n    Remediation Options:" -ForegroundColor Cyan
+            Write-Host "    1. Re-run this script specifying your executing administrator account:" -ForegroundColor Cyan
+            Write-Host "       .\New-SharePoint-Site.ps1 -SiteTitle '$Title' -Owner '$OwnerEmail' -AdminUserPrincipalName '<YourAdminUPN>' -CompanyWide -Force" -ForegroundColor White
+            Write-Host "    2. Or open SharePoint Admin Center:" -ForegroundColor Cyan
+            Write-Host "       https://${TenantDomainPrefix}-admin.sharepoint.com" -ForegroundColor White
+            Write-Host "       Go to Active Sites -> select '$Title' -> Membership / Site Admins -> Add your admin account." -ForegroundColor Gray
+            Write-Host "       Then re-run this script to automatically apply the company-wide visitor claims." -ForegroundColor Gray
+            Write-Host "===========================================================================`n" -ForegroundColor Red
         }
     }
     else {
@@ -1165,8 +1273,13 @@ function Configure-SharePointPermissions {
     # Step 3: Assign Optional Members
     if ($MemberList -and $MemberList.Count -gt 0) {
         $targetMemberGroups = @()
-        if ($Groups.Members -and (-not [string]::IsNullOrWhiteSpace($Groups.Members.Title))) {
-            $targetMemberGroups += $Groups.Members.Title
+        if ($Groups.Members) {
+            if (-not [string]::IsNullOrWhiteSpace($Groups.Members.Title)) {
+                $targetMemberGroups += $Groups.Members.Title
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Groups.Members.LoginName)) {
+                $targetMemberGroups += $Groups.Members.LoginName
+            }
         }
         $targetMemberGroups += "$Title Członkowie"
         $targetMemberGroups += "$Title Members"
@@ -1198,8 +1311,13 @@ function Configure-SharePointPermissions {
     # Step 4: Assign Optional Visitors
     if ($VisitorList -and $VisitorList.Count -gt 0) {
         $targetVisitorGroups = @()
-        if ($Groups.Visitors -and (-not [string]::IsNullOrWhiteSpace($Groups.Visitors.Title))) {
-            $targetVisitorGroups += $Groups.Visitors.Title
+        if ($Groups.Visitors) {
+            if (-not [string]::IsNullOrWhiteSpace($Groups.Visitors.Title)) {
+                $targetVisitorGroups += $Groups.Visitors.Title
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Groups.Visitors.LoginName)) {
+                $targetVisitorGroups += $Groups.Visitors.LoginName
+            }
         }
         $targetVisitorGroups += "$Title Odwiedzający"
         $targetVisitorGroups += "$Title Goście"
@@ -1270,13 +1388,20 @@ try {
     }
 
     # 6. Group Discovery & Permission Configuration
-    $secGroups = Get-SiteSecurityGroups -Url $targetSiteUrl -Title $SiteTitle -OwnerEmail $Owner -AdminUPN $AdminUserPrincipalName
+    $secGroups = Get-SiteSecurityGroups -Url $targetSiteUrl `
+                                        -Title $SiteTitle `
+                                        -OwnerEmail $Owner `
+                                        -AdminUPN $AdminUserPrincipalName `
+                                        -TenantDomainPrefix $tenantPrefix `
+                                        -BypassPrompts $Force
     Configure-SharePointPermissions -Url $targetSiteUrl `
                                     -Title $SiteTitle `
                                     -SiteTypeMode $SiteType `
                                     -OwnerEmail $Owner `
+                                    -AdminUPN $AdminUserPrincipalName `
                                     -Groups $secGroups `
                                     -TenantId $Script:TenantId `
+                                    -TenantDomainPrefix $tenantPrefix `
                                     -MemberList $Members `
                                     -VisitorList $Visitors
 
