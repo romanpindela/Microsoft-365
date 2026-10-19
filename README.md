@@ -29,9 +29,13 @@ Microsoft 365/
 │   ├── Manage-MailflowRules/        # Transport rules lifecycle and backup
 │   ├── Manage-M365TenantFilterList/ # Anti-Spam whitelists/blacklists and TABL synchronization
 │   └── set-Mailbox1YearArchive...   # Retention policy configuration
-└── OneDrive/                        # Cloud storage administration, synchronization, and uploads
-    ├── Sync-OneDriveFolderAndNotify # Cloud-to-local and local-to-cloud sync with progress and notifications
-    └── Upload-LargeFilesSession     # Chunked Graph upload session for files up to 250 GB
+├── Helpdesk/                        # Helpdesk troubleshooting, endpoint remediation, and cache resets
+│   └── Reset-TeamsIdentityCache     # Reset Teams caches, WAM token broker, and identity credentials
+├── OneDrive/                        # Cloud storage administration, synchronization, and uploads
+│   ├── Sync-OneDriveFolderAndNotify # Cloud-to-local and local-to-cloud sync with progress and notifications
+│   └── Upload-LargeFilesSession     # Chunked Graph upload session for files up to 250 GB
+└── SharePoint/                      # SharePoint Online synchronization and document library mapping
+    └── Sync-SharePointLibrary       # Automatic mapping of SharePoint libraries via OneDrive sync client
 ```
 
 ---
@@ -56,6 +60,12 @@ Microsoft 365/
 * [**Manage-M365UserAccount**](EntraID/Manage-M365UserAccount/README.md) — Password resets, sign-in blocking/unblocking, active session revocation, alias management, and user auditing via Microsoft Graph.
 * [**Get-M365Users**](EntraID/Get-M365Users/README.md) — Comprehensive tenant-wide user auditing, licensing SKU breakdowns, and mailbox status reporting.
 * [**Manage-M365Groups**](EntraID/Manage-M365Groups/README.md) — Management and membership auditing for M365 Unified Groups, Distribution Lists, and Security Groups.
+
+### 4. Helpdesk & Endpoint Remediation (`/Helpdesk`)
+* [**Reset-TeamsIdentityCache**](Helpdesk/Reset-TeamsIdentityCache/README.md) — Comprehensive remediation tool for Microsoft Teams authentication loops, token expiration, stale tenant profiles, and WAM/IdentityCache corruption. Purges New Teams (MSIX) and Classic Teams caches, OneAuth tokens, Web Account Manager broker state, and Windows Credential Manager entries with detailed feature cataloging (`-ListFeatures`), simulation mode (`-WhatIf`), and structured logging.
+
+### 5. SharePoint Online (`/SharePoint`)
+* [**Sync-SharePointLibrary**](SharePoint/Sync-SharePointLibrary/README.md) — Automates SharePoint Online document library mapping and synchronization to Windows 10/11 File Explorer using native OneDrive sync client (`odopen://sync?`), supporting tenant auto-discovery, interactive device code login, and non-interactive Entra ID app credentials.
 
 ---
 
