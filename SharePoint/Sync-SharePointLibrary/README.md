@@ -70,6 +70,9 @@ When downloading the script from GitHub or an email attachment, Windows marks it
 Unblock-File -Path .\Sync-SharePointLibrary.ps1
 ```
 
+> [!TIP]
+> A step-by-step PDF end-user guide (*Instrukcja Podłączenia SharePoint Automatyka do Windows 11*) is available in [`assets/Instrukcja Podlaczenia SharePoint Automatyka do Windows 11 v2.0.pdf`](assets/Instrukcja%20Podlaczenia%20SharePoint%20Automatyka%20do%20Windows%2011%20v2.0.pdf).
+
 ---
 
 ## Parameter Reference
@@ -152,6 +155,30 @@ Discovers all accessible sites and immediately synchronizes all of them:
 
 ---
 
+## Visual Walkthrough & Screenshots
+
+### 1. Built-in Help & CLI Parameter Reference
+Running the script without arguments or with `-Help` / `-h` renders comprehensive CLI documentation, syntax examples, prerequisite checks, and non-interactive Entra ID setup instructions:
+
+![Script Help & CLI Parameter Reference](assets/Standard_run.jpg)
+
+### 2. Interactive Microsoft 365 Device Code Authentication & Site Discovery
+Executing `.\Sync-SharePointLibrary.ps1 -AutoDiscover -All` triggers the OAuth2 Device Code login, validates the user's corporate identity, and discovers all security-trimmed SharePoint sites:
+
+![M365 Authentication and Site Discovery](assets/Discovering_sharepoint_sites_with_User_permissions.jpg)
+
+### 3. Delivering Sync Commands to the OneDrive Client
+The script automatically resolves SharePoint site collection, web, and document library GUIDs via Microsoft Graph API and invokes the OneDrive desktop sync engine (`odopen://sync?`):
+
+![OneDrive Synchronization Process and Client Mounts](assets/Connecting_a_SharePoint_sites.jpg)
+
+### 4. Execution Summary Report & Active SharePoint Sync in OneDrive Settings
+All selected document libraries are mounted into Windows File Explorer and registered in the Microsoft OneDrive desktop client settings with zero manual intervention:
+
+![Execution Summary Report and Synced Libraries](assets/Connecting_a_SharePoint_sites2.jpg)
+
+---
+
 ## Non-Interactive / Microsoft Entra ID Setup Guide
 
 For zero-touch employee onboarding, automated software deployment, or scheduled configuration management, the script can run non-interactively using an App Registration in Microsoft Entra ID.
@@ -207,21 +234,25 @@ If `C:\Logs` is inaccessible due to folder permission constraints, the script fa
 ========================================================================================
                                  EXECUTION SUMMARY REPORT                               
 ========================================================================================
- Total Libraries Processed : 3
- Sync Newly Initiated      : 2
+ Total Libraries Processed : 7
+ Sync Newly Initiated      : 6
  Already Synced Locally    : 1
  Failed Registrations      : 0
- Total Execution Time      : 00:00:14
- Execution Log File        : C:\Logs\20261019_085025-Sync-SharePointLibrary-RPINDELA-PC-rpindela.log
+ Total Execution Time      : 00:00:38
+ Execution Log File        : C:\Logs\20261019_094022-Sync-SharePointLibrary-RPINDELA-PC-rpindela.log
 ========================================================================================
 
 Site Name                 Library              Status           Details / Local Path
 ---------                 -------              ------           --------------------
-Automatyka                Dokumenty            Initiated        Handed off to OneDrive client (roman.pindela@elektrimont.pl)
-Projekty                  Dokumenty            Already Synced   C:\Users\rpindela\Elektrimont Sp. zo . o\Projekty - Dokumenty
-Zarzad                    Dokumenty            Initiated        Handed off to OneDrive client (roman.pindela@elektrimont.pl)
+IT                        Documents            Initiated        Handed off to OneDrive client (roman.pindela@elektrimont.pl)
+Automatyka                Documents            Initiated        Handed off to OneDrive client (roman.pindela@elektrimont.pl)
+Elektrimont Sp. zo . o.   Documents            Initiated        Handed off to OneDrive client (roman.pindela@elektrimont.pl)
+Elektrimont Sp. zo . o... Documents            Already Synced   C:\Users\rpindela\Elektrimont Sp. zo . o\IT - Documents
+Kierownicy                Documents            Initiated        Handed off to OneDrive client (roman.pindela@elektrimont.pl)
+Studio A                  Documents            Initiated        Handed off to OneDrive client (roman.pindela@elektrimont.pl)
+Podium Park               Documents            Initiated        Handed off to OneDrive client (roman.pindela@elektrimont.pl)
 
-Log details have been written to: C:\Logs\20261019_085025-Sync-SharePointLibrary-RPINDELA-PC-rpindela.log
+Log details have been written to: C:\Logs\20261019_094022-Sync-SharePointLibrary-RPINDELA-PC-rpindela.log
 ```
 
 ---
