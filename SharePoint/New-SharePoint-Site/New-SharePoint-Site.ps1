@@ -162,7 +162,7 @@
     Author        : Roman Pindela
     Email         : roman.pindela@gmail.com
     GitHub        : https://github.com/romanpindela
-    Version       : 1.4.0
+    Version       : 1.5.0
     Created       : 2026-10-19
     Updated       : 2026-10-19
     Standards     : Adheres to CleanCode and PowerShell Script Standards (C:\Dane\rpindela\GitHub\PowerShell Script Standards.txt)
@@ -274,7 +274,7 @@ if ((Test-Path -Path $userWinPSModules) -and ($env:PSModulePath -notlike "*$user
 # ==============================================================================
 $Script:Metadata = @{
     Title       = "New-SharePoint-Site.ps1"
-    Version     = "1.4.0"
+    Version     = "1.5.0"
     Author      = "Roman Pindela"
     Email       = "roman.pindela@gmail.com"
     GitHub      = "https://github.com/romanpindela"
@@ -1109,13 +1109,28 @@ function Get-SiteSecurityGroups {
         }
     }
 
-    # 4. Proactive Discovery: Automatically grant SCA to Root Site Owner and Root Site Admins
-    # In SharePoint Online, the account executing Connect-SPOService is almost always a Site Admin on the root site.
+    # 4. Proactive Discovery: Automatically grant SCA to active Site Owners across tenant and Root Site Admins
     if (-not [string]::IsNullOrWhiteSpace($TenantDomainPrefix)) {
+        # A. Query active tenant sites to harvest human site owners (Get-SPOSite is a tenant admin cmdlet that always succeeds)
+        try {
+            $tenantSites = Get-SPOSite -Limit 30 -ErrorAction SilentlyContinue
+            if ($tenantSites) {
+                $tenantOwners = $tenantSites | Select-Object -ExpandProperty Owner -Unique
+                foreach ($to in $tenantOwners) {
+                    if ($to -and ($to -match '@') -and ($to -notlike "*spo-grid*") -and ($to -notlike "*app*") -and ($to.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
+                        Write-ScriptLog -Level DEBUG -Message "Ensuring tenant site owner '$to' has SCA on '$Url'..."
+                        Set-SPOUser -Site $Url -LoginName $to -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
+                    }
+                }
+            }
+        }
+        catch {}
+
+        # B. Query root site collection admins with -Limit ALL
         $rootSiteUrl = "https://${TenantDomainPrefix}.sharepoint.com"
         try {
             $rootSite = Get-SPOSite -Identity $rootSiteUrl -Detailed -ErrorAction SilentlyContinue
-            if ($rootSite -and $rootSite.Owner -and ($rootSite.Owner.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
+            if ($rootSite -and $rootSite.Owner -and ($rootSite.Owner -match '@') -and ($rootSite.Owner.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
                 Write-ScriptLog -Level INFO -Message "Auto-discovered Root Site Owner '$($rootSite.Owner)'. Ensuring SCA on '$Url'..."
                 Set-SPOUser -Site $Url -LoginName $rootSite.Owner -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
             }
@@ -1123,10 +1138,10 @@ function Get-SiteSecurityGroups {
         catch {}
 
         try {
-            $rootAdmins = Get-SPOUser -Site $rootSiteUrl -Limit 50 -ErrorAction SilentlyContinue | Where-Object { $_.IsSiteAdmin -eq $true }
+            $rootAdmins = Get-SPOUser -Site $rootSiteUrl -Limit ALL -ErrorAction SilentlyContinue | Where-Object { $_.IsSiteAdmin -eq $true }
             if ($rootAdmins) {
                 foreach ($ra in $rootAdmins) {
-                    if ($ra.LoginName -and ($ra.LoginName -notlike "*spo-grid-all-users*") -and ($ra.LoginName -notlike "*app*") -and ($ra.LoginName.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
+                    if ($ra.LoginName -and ($ra.LoginName -match '@') -and ($ra.LoginName -notlike "*spo-grid-all-users*") -and ($ra.LoginName -notlike "*app*") -and ($ra.LoginName.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
                         Write-ScriptLog -Level DEBUG -Message "Ensuring Root Site Admin '$($ra.LoginName)' has SCA on '$Url'..."
                         Set-SPOUser -Site $Url -LoginName $ra.LoginName -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
                     }
@@ -1134,6 +1149,20 @@ function Get-SiteSecurityGroups {
             }
         }
         catch {}
+
+        # C. Common admin candidate heuristics based on tenant domain prefix and current Windows username
+        $candidateAdmins = @(
+            "admin@${TenantDomainPrefix}.pl",
+            "admin@${TenantDomainPrefix}.onmicrosoft.com",
+            "administrator@${TenantDomainPrefix}.pl",
+            "$($env:USERNAME)@${TenantDomainPrefix}.pl",
+            "$($env:USERNAME)@${TenantDomainPrefix}.onmicrosoft.com"
+        ) | Select-Object -Unique
+        foreach ($ca in $candidateAdmins) {
+            if ($ca.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower()) {
+                Set-SPOUser -Site $Url -LoginName $ca -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
+            }
+        }
     }
 
     # Pause 5 seconds for permission token propagation across the SharePoint farm
@@ -1168,18 +1197,19 @@ function Get-SiteSecurityGroups {
             # Check if this is an Access Denied error (0x80070005)
             $isAccessDenied = ($errMessage -like "*0x80070005*" -or $errMessage -like "*Access is denied*" -or $errMessage -like "*Odmowa dostępu*")
 
-            if ($isAccessDenied -and (-not $promptedForAdmin) -and [string]::IsNullOrWhiteSpace($AdminUPN) -and (-not $BypassPrompts)) {
+            if ($isAccessDenied -and (-not $promptedForAdmin) -and [string]::IsNullOrWhiteSpace($AdminUPN)) {
                 $promptedForAdmin = $true
                 Write-ScriptLog -Level WARN -Message "Access Denied (0x80070005) detected. The logged-in administrator is likely different from Owner '$OwnerEmail'."
                 
-                # If interactive console is available, prompt user for executing admin UPN
+                # Prompt user for executing admin UPN to remediate instantly
                 $interactiveAdmin = $null
                 try {
                     Write-Host "`n[!] ACCESS DENIED (0x80070005): SharePoint Online blocked site group discovery." -ForegroundColor Yellow
                     Write-Host "    Reason: The administrator session currently logged into PowerShell is not a Site Collection Administrator on '$Url'." -ForegroundColor Yellow
                     Write-Host "    Owner '$OwnerEmail' has SCA, but if you logged in with a different admin account (e.g., admin@$TenantDomainPrefix.pl)," -ForegroundColor Yellow
                     Write-Host "    that account must also be granted Site Collection Administrator privileges." -ForegroundColor Yellow
-                    $interactiveAdmin = Read-Host "    Please enter your administrator login UPN/email [Press Enter to skip]"
+                    Write-Host "    Please enter your administrator login UPN/email [or press Enter to skip]: " -NoNewline -ForegroundColor Cyan
+                    $interactiveAdmin = Read-Host
                 }
                 catch {}
 
@@ -1511,10 +1541,14 @@ try {
     $duration = (Get-Date) - $Script:StartTime
     $durationStr = "{0:D2}m {1:D2}s" -f $duration.Minutes, $duration.Seconds
 
+    $hasFailures = ($Script:OperationDetails | Where-Object { $_.Status -eq 'Failed' }).Count -gt 0
+    $bannerColor = if ($hasFailures) { 'Yellow' } else { 'Green' }
+    $bannerTitle = if ($hasFailures) { " OPERATION COMPLETED WITH WARNINGS: REVIEW AUDIT TRAIL" } else { " OPERATION COMPLETED SUCCESSFULLY: SHAREPOINT SITE CONFIGURATION" }
+
     Write-Host "`n"
-    Write-Host "================================================================================" -ForegroundColor Green
-    Write-Host " OPERATION COMPLETED SUCCESSFULLY: SHAREPOINT SITE CONFIGURATION" -ForegroundColor Green
-    Write-Host "================================================================================" -ForegroundColor Green
+    Write-Host "================================================================================" -ForegroundColor $bannerColor
+    Write-Host "$bannerTitle" -ForegroundColor $bannerColor
+    Write-Host "================================================================================" -ForegroundColor $bannerColor
     Write-Host "  Title         : $SiteTitle" -ForegroundColor White
     Write-Host "  URL           : $targetSiteUrl" -ForegroundColor Cyan
     Write-Host "  Archetype     : $SiteType" -ForegroundColor $(if ($SiteType -eq 'CompanyWide') { 'Green' } else { 'Magenta' })
@@ -1523,12 +1557,17 @@ try {
     Write-Host "  Storage Limit : $StorageQuotaMB MB ($([math]::Round($StorageQuotaMB / 1024, 2)) GB)" -ForegroundColor White
     Write-Host "  Total Runtime : $durationStr" -ForegroundColor White
     Write-Host "  Log File Path : $Script:LogFilePath" -ForegroundColor Yellow
-    Write-Host "================================================================================" -ForegroundColor Green
+    Write-Host "================================================================================" -ForegroundColor $bannerColor
 
     Write-Host "`n[+] Detailed Operation Audit Trail:" -ForegroundColor Cyan
     $Script:OperationDetails | Format-Table -AutoSize -Property Timestamp, Step, Operation, Status, Details | Out-String | Write-Host -ForegroundColor DarkCyan
 
-    Write-ScriptLog -Level SUCCESS -Message "New-SharePoint-Site completed successfully in $durationStr."
+    if ($hasFailures) {
+        Write-ScriptLog -Level WARN -Message "New-SharePoint-Site completed with warnings in $durationStr. Check audit trail above."
+    }
+    else {
+        Write-ScriptLog -Level SUCCESS -Message "New-SharePoint-Site completed successfully in $durationStr."
+    }
 
     if ($PassThru) {
         [PSCustomObject]@{

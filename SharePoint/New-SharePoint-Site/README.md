@@ -266,6 +266,6 @@ Logs are stored in `C:\Logs` (or `$env:LOCALAPPDATA\Logs` as fallback) using the
 - **Author**: Roman Pindela
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
-- **Version**: 1.4.0
+- **Version**: 1.5.0
 - **Created**: 2026-10-19
 - **Updated**: 2026-10-19
