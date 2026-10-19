@@ -167,8 +167,8 @@ $Script:StartTime   = Get-Date
 $Script:LogFilePath = $null
 $Script:SummaryList = [System.Collections.Generic.List[PSObject]]::new()
 
-# Well-known public Microsoft client ID (Azure CLI) pre-consented for SharePoint delegated access
-$Script:DefaultPublicClientId = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+# Well-known public Microsoft client ID (Microsoft Office) pre-consented across M365 for SharePoint & Graph
+$Script:DefaultPublicClientId = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
 
 # ==============================================================================
 # LOGGING SYSTEM (CleanCode & PowerShell Script Standards)
@@ -911,43 +911,193 @@ function Get-SharePointLibraryMetadata {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$FullSiteUrl,
-        [Parameter(Mandatory = $true)][string]$Token,
+        [string]$SharePointToken,
+        [string]$GraphToken,
         [string]$TargetLibraryTitle,
         [string]$DefaultUserEmail,
         [switch]$FetchAllLibraries
     )
 
-    $headers = @{
-        "Authorization" = "Bearer $Token"
-        "Accept"        = "application/json;odata=verbose"
-    }
+    Write-Log -Level INFO -Message "Querying site and document library metadata for: $FullSiteUrl"
 
-    Write-Log -Level INFO -Message "Querying site and web GUIDs from: $FullSiteUrl"
+    $siteUri   = [System.Uri]$FullSiteUrl
+    $hostName  = $siteUri.Host
+    $sitePath  = $siteUri.AbsolutePath.TrimEnd('/')
 
-    # 1. Web Metadata
-    $webResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web?`$select=Id,Title,Url,ServerRelativeUrl" -Headers $headers -Method Get
-    $webId    = if ($webResp.d) { $webResp.d.Id } else { $webResp.Id }
-    $webTitle = if ($webResp.d) { $webResp.d.Title } else { $webResp.Title }
-    $webUrl   = if ($webResp.d) { $webResp.d.Url } else { $webResp.Url }
-
-    # 2. Site Collection Metadata
-    $siteResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/site?`$select=Id" -Headers $headers -Method Get
-    $siteId   = if ($siteResp.d) { $siteResp.d.Id } else { $siteResp.Id }
-
-    # 3. User Identity (UPN / Email)
+    $resolvedLibraries = [System.Collections.Generic.List[PSObject]]::new()
+    $siteId    = $null
+    $webId     = $null
+    $webTitle  = $null
+    $webUrl    = $FullSiteUrl
     $userEmail = $DefaultUserEmail
-    if ([string]::IsNullOrWhiteSpace($userEmail)) {
+
+    # STRATEGY 1: Microsoft Graph API Resolution (Fast, modern, bypasses tenant-level SharePoint REST restrictions)
+    if (-not [string]::IsNullOrWhiteSpace($GraphToken)) {
         try {
-            $userResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/currentuser?`$select=Email,UserPrincipalName" -Headers $headers -Method Get
-            if ($userResp.d) {
-                $userEmail = if ($userResp.d.Email) { $userResp.d.Email } else { $userResp.d.UserPrincipalName }
-            } else {
-                $userEmail = if ($userResp.Email) { $userResp.Email } else { $userResp.UserPrincipalName }
+            Write-Log -Level DEBUG -Message "Attempting metadata resolution via Microsoft Graph API..."
+            $graphHeaders = @{
+                "Authorization" = "Bearer $GraphToken"
+                "Accept"        = "application/json"
             }
-        } catch { }
+
+            # 1a. Query site object from Graph
+            $graphSiteUrl = "https://graph.microsoft.com/v1.0/sites/$hostName`:$sitePath"
+            $siteResp = Invoke-RestMethod -Uri $graphSiteUrl -Headers $graphHeaders -Method Get -ErrorAction Stop
+
+            $webTitle = if ($siteResp.displayName) { $siteResp.displayName } else { $siteResp.name }
+            $webUrl   = if ($siteResp.webUrl) { $siteResp.webUrl } else { $FullSiteUrl }
+
+            # Site ID in Graph is: "hostname,siteId,webId"
+            if ($siteResp.id -and $siteResp.id.Contains(',')) {
+                $parts  = $siteResp.id.Split(',')
+                $siteId = $parts[1]
+                $webId  = $parts[2]
+            }
+
+            # 1b. Query document libraries (drives) for this site
+            $drivesUrl = "https://graph.microsoft.com/v1.0/sites/$hostName`:$sitePath/drives?`$select=id,name,webUrl,driveType,sharepointIds"
+            $drivesResp = Invoke-RestMethod -Uri $drivesUrl -Headers $graphHeaders -Method Get -ErrorAction Stop
+            $drives = if ($drivesResp.value) { $drivesResp.value } else { @() }
+
+            # Filter drives of type 'documentLibrary'
+            $docDrives = @($drives | Where-Object { $_.driveType -eq 'documentLibrary' -or -not $_.driveType })
+
+            foreach ($drv in $docDrives) {
+                # Determine listId
+                $listId = $null
+                if ($drv.sharepointIds -and $drv.sharepointIds.listId) {
+                    $listId = $drv.sharepointIds.listId
+                    if (-not $siteId -and $drv.sharepointIds.siteId) { $siteId = $drv.sharepointIds.siteId }
+                    if (-not $webId -and $drv.sharepointIds.webId) { $webId = $drv.sharepointIds.webId }
+                }
+
+                if (-not $listId) {
+                    try {
+                        $listQueryUrl = "https://graph.microsoft.com/v1.0/drives/$($drv.id)/list?`$select=id,displayName"
+                        $lResp = Invoke-RestMethod -Uri $listQueryUrl -Headers $graphHeaders -Method Get -ErrorAction Stop
+                        $listId = $lResp.id
+                    } catch { }
+                }
+
+                if ($listId) {
+                    $resolvedLibraries.Add([PSCustomObject]@{
+                        ListId    = $listId
+                        ListTitle = $drv.name
+                    })
+                }
+            }
+
+            if (-not $FetchAllLibraries -and $resolvedLibraries.Count -gt 0) {
+                # Filter by TargetLibraryTitle if requested, otherwise pick default library
+                if (-not [string]::IsNullOrWhiteSpace($TargetLibraryTitle)) {
+                    $matched = $resolvedLibraries | Where-Object { $_.ListTitle -like "*$TargetLibraryTitle*" }
+                    if ($matched) {
+                        $resolvedLibraries = [System.Collections.Generic.List[PSObject]]::new(@($matched))
+                    }
+                }
+                else {
+                    # Pick default library: prefer 'Dokumenty' or 'Documents' or first drive
+                    $fav = $resolvedLibraries | Where-Object { $_.ListTitle -match '(?i)^(Dokumenty|Documents|Shared Documents)' } | Select-Object -First 1
+                    if ($fav) {
+                        $resolvedLibraries = [System.Collections.Generic.List[PSObject]]::new(@($fav))
+                    } else {
+                        $resolvedLibraries = [System.Collections.Generic.List[PSObject]]::new(@($resolvedLibraries[0]))
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Log -Level DEBUG -Message "Microsoft Graph metadata resolution skipped: $($_.Exception.Message)"
+        }
     }
 
-    # Fallback to local OneDrive registry account email if REST user is blank
+    # STRATEGY 2: SharePoint REST API Resolution (Fallback if Graph resolution did not complete)
+    if ((-not $siteId -or -not $webId -or $resolvedLibraries.Count -eq 0) -and -not [string]::IsNullOrWhiteSpace($SharePointToken)) {
+        try {
+            Write-Log -Level DEBUG -Message "Attempting metadata resolution via SharePoint REST API..."
+            $headers = @{
+                "Authorization" = "Bearer $SharePointToken"
+                "Accept"        = "application/json;odata=verbose"
+            }
+
+            # 1. Web Metadata
+            $webResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web?`$select=Id,Title,Url,ServerRelativeUrl" -Headers $headers -Method Get -ErrorAction Stop
+            $webId    = if ($webResp.d) { $webResp.d.Id } else { $webResp.Id }
+            $webTitle = if ($webResp.d) { $webResp.d.Title } else { $webResp.Title }
+            $webUrl   = if ($webResp.d) { $webResp.d.Url } else { $webResp.Url }
+
+            # 2. Site Collection Metadata
+            $siteResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/site?`$select=Id" -Headers $headers -Method Get -ErrorAction Stop
+            $siteId   = if ($siteResp.d) { $siteResp.d.Id } else { $siteResp.Id }
+
+            # 3. User Identity (UPN / Email)
+            if ([string]::IsNullOrWhiteSpace($userEmail)) {
+                try {
+                    $userResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/currentuser?`$select=Email,UserPrincipalName" -Headers $headers -Method Get -ErrorAction Stop
+                    if ($userResp.d) {
+                        $userEmail = if ($userResp.d.Email) { $userResp.d.Email } else { $userResp.d.UserPrincipalName }
+                    } else {
+                        $userEmail = if ($userResp.Email) { $userResp.Email } else { $userResp.UserPrincipalName }
+                    }
+                } catch { }
+            }
+
+            # 4. Resolve Document Libraries
+            if ($FetchAllLibraries) {
+                $listsResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/lists?`$filter=BaseTemplate eq 101 and Hidden eq false&`$select=Id,Title" -Headers $headers -Method Get -ErrorAction Stop
+                $items = if ($listsResp.d) { $listsResp.d.results } else { $listsResp.value }
+                foreach ($lib in $items) {
+                    $resolvedLibraries.Add([PSCustomObject]@{
+                        ListId    = $lib.Id
+                        ListTitle = $lib.Title
+                    })
+                }
+            }
+            else {
+                $found = $false
+                if (-not [string]::IsNullOrWhiteSpace($TargetLibraryTitle)) {
+                    try {
+                        $encTitle = [System.Uri]::EscapeDataString($TargetLibraryTitle)
+                        $lResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/lists/getbytitle('$encTitle')?`$select=Id,Title" -Headers $headers -Method Get -ErrorAction Stop
+                        $lid = if ($lResp.d) { $lResp.d.Id } else { $lResp.Id }
+                        $ltitle = if ($lResp.d) { $lResp.d.Title } else { $lResp.Title }
+                        $resolvedLibraries.Add([PSCustomObject]@{ ListId = $lid; ListTitle = $ltitle })
+                        $found = $true
+                    } catch { }
+                }
+
+                if (-not $found) {
+                    try {
+                        $defResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/defaultDocumentLibrary?`$select=Id,Title" -Headers $headers -Method Get -ErrorAction Stop
+                        $lid = if ($defResp.d) { $defResp.d.Id } else { $defResp.Id }
+                        $ltitle = if ($defResp.d) { $defResp.d.Title } else { $defResp.Title }
+                        $resolvedLibraries.Add([PSCustomObject]@{ ListId = $lid; ListTitle = $ltitle })
+                        $found = $true
+                    } catch { }
+                }
+
+                if (-not $found) {
+                    $trialTitles = @("Dokumenty", "Documents", "Shared Documents", "Dokumenty udostepnione")
+                    foreach ($t in $trialTitles) {
+                        try {
+                            $encT = [System.Uri]::EscapeDataString($t)
+                            $lResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/lists/getbytitle('$encT')?`$select=Id,Title" -Headers $headers -Method Get -ErrorAction Stop
+                            $lid = if ($lResp.d) { $lResp.d.Id } else { $lResp.Id }
+                            $ltitle = if ($lResp.d) { $lResp.d.Title } else { $lResp.Title }
+                            $resolvedLibraries.Add([PSCustomObject]@{ ListId = $lid; ListTitle = $ltitle })
+                            $found = $true
+                            break
+                        } catch { }
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Log -Level DEBUG -Message "SharePoint REST API metadata resolution failed: $($_.Exception.Message)"
+        }
+    }
+
+    # Fallback to local OneDrive registry account email if still blank
     if ([string]::IsNullOrWhiteSpace($userEmail)) {
         $accounts = Get-LocalOneDriveAccounts
         if (@($accounts).Count -gt 0) {
@@ -955,68 +1105,8 @@ function Get-SharePointLibraryMetadata {
         }
     }
 
-    # 4. Resolve Document Libraries
-    $resolvedLibraries = [System.Collections.Generic.List[PSObject]]::new()
-
-    if ($FetchAllLibraries) {
-        Write-Log -Level INFO -Message "Enumerating all visible document libraries for site '$webTitle'..."
-        $listsResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/lists?`$filter=BaseTemplate eq 101 and Hidden eq false&`$select=Id,Title" -Headers $headers -Method Get
-        $items = if ($listsResp.d) { $listsResp.d.results } else { $listsResp.value }
-        foreach ($lib in $items) {
-            $resolvedLibraries.Add([PSCustomObject]@{
-                ListId    = $lib.Id
-                ListTitle = $lib.Title
-            })
-        }
-    }
-    else {
-        # Check by requested title if specified
-        $found = $false
-        if (-not [string]::IsNullOrWhiteSpace($TargetLibraryTitle)) {
-            try {
-                $encTitle = [System.Uri]::EscapeDataString($TargetLibraryTitle)
-                $lResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/lists/getbytitle('$encTitle')?`$select=Id,Title" -Headers $headers -Method Get
-                $lid = if ($lResp.d) { $lResp.d.Id } else { $lResp.Id }
-                $ltitle = if ($lResp.d) { $lResp.d.Title } else { $lResp.Title }
-                $resolvedLibraries.Add([PSCustomObject]@{ ListId = $lid; ListTitle = $ltitle })
-                $found = $true
-            }
-            catch {
-                Write-Log -Level WARN -Message "Library '$TargetLibraryTitle' not found by explicit title. Attempting default document library resolution..."
-            }
-        }
-
-        # Fallback to default document library (supports both Polish 'Dokumenty' and English 'Documents')
-        if (-not $found) {
-            try {
-                $defResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/defaultDocumentLibrary?`$select=Id,Title" -Headers $headers -Method Get
-                $lid = if ($defResp.d) { $defResp.d.Id } else { $defResp.Id }
-                $ltitle = if ($defResp.d) { $defResp.d.Title } else { $defResp.Title }
-                $resolvedLibraries.Add([PSCustomObject]@{ ListId = $lid; ListTitle = $ltitle })
-                $found = $true
-            }
-            catch { }
-        }
-
-        # Fallback bilingual trial: 'Dokumenty', 'Documents', 'Shared Documents'
-        if (-not $found) {
-            $trialTitles = @("Dokumenty", "Documents", "Shared Documents", "Dokumenty udostepnione")
-            foreach ($t in $trialTitles) {
-                try {
-                    $encT = [System.Uri]::EscapeDataString($t)
-                    $lResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/lists/getbytitle('$encT')?`$select=Id,Title" -Headers $headers -Method Get
-                    $lid = if ($lResp.d) { $lResp.d.Id } else { $lResp.Id }
-                    $ltitle = if ($lResp.d) { $lResp.d.Title } else { $lResp.Title }
-                    $resolvedLibraries.Add([PSCustomObject]@{ ListId = $lid; ListTitle = $ltitle })
-                    $found = $true
-                    break
-                } catch { }
-            }
-        }
-    }
-
-    if ($resolvedLibraries.Count -eq 0) {
-        throw "No accessible document libraries could be resolved for site: $FullSiteUrl"
+    if (-not $siteId -or -not $webId -or $resolvedLibraries.Count -eq 0) {
+        throw "Could not resolve SharePoint GUIDs for site '$FullSiteUrl'. Ensure your account has access to this site."
     }
 
     return @{
@@ -1268,7 +1358,8 @@ try {
             Write-Log -Level INFO -Message "Target Site URL: $siteUrl"
 
             $meta = Get-SharePointLibraryMetadata -FullSiteUrl $siteUrl `
-                                                  -Token $authContext.SharePointToken `
+                                                  -SharePointToken $authContext.SharePointToken `
+                                                  -GraphToken $authContext.GraphToken `
                                                   -TargetLibraryTitle $DocumentLibraryTitle `
                                                   -DefaultUserEmail $authContext.UserEmail `
                                                   -FetchAllLibraries:$AllLibraries
