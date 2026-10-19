@@ -512,27 +512,51 @@ function Get-SharePointAccessToken {
     )
 
     # 1. Non-Interactive Client Credentials Grant (Microsoft Entra ID App)
+    # 1. Non-Interactive Client Credentials Grant (Microsoft Entra ID App)
     if (-not [string]::IsNullOrWhiteSpace($CustomClientSecret)) {
         Write-Log -Level INFO -Message "Authenticating non-interactively using Microsoft Entra ID App credentials..."
         $tId = if ([string]::IsNullOrWhiteSpace($CustomTenantId)) { "common" } else { $CustomTenantId }
         $tokenEndpoint = "https://login.microsoftonline.com/$tId/oauth2/v2.0/token"
 
-        $tokenBody = @{
+        $spTokenBody = @{
             client_id     = $CustomClientId
             client_secret = $CustomClientSecret
             scope         = "https://$CleanTenantHost/.default"
             grant_type    = "client_credentials"
         }
 
+        $graphTokenBody = @{
+            client_id     = $CustomClientId
+            client_secret = $CustomClientSecret
+            scope         = "https://graph.microsoft.com/.default"
+            grant_type    = "client_credentials"
+        }
+
+        $spToken = $null
         try {
-            $tokenResp = Invoke-RestMethod -Uri $tokenEndpoint -Method Post -Body $tokenBody -ErrorAction Stop
-            if ($tokenResp.access_token) {
-                Write-Log -Level SUCCESS -Message "Non-interactive app token acquired successfully."
-                return $tokenResp.access_token
-            }
+            $spResp = Invoke-RestMethod -Uri $tokenEndpoint -Method Post -Body $spTokenBody -ErrorAction Stop
+            $spToken = $spResp.access_token
+            Write-Log -Level SUCCESS -Message "Non-interactive SharePoint app token acquired."
         }
         catch {
             throw "Non-interactive Entra ID token acquisition failed: $($_.Exception.Message)"
+        }
+
+        $graphToken = $null
+        try {
+            $graphResp = Invoke-RestMethod -Uri $tokenEndpoint -Method Post -Body $graphTokenBody -ErrorAction Stop
+            $graphToken = $graphResp.access_token
+            Write-Log -Level SUCCESS -Message "Non-interactive Microsoft Graph app token acquired."
+        }
+        catch {
+            Write-Log -Level DEBUG -Message "Non-interactive Graph token skipped: $($_.Exception.Message)"
+        }
+
+        return [PSCustomObject]@{
+            SharePointToken = $spToken
+            GraphToken      = $graphToken
+            UserEmail       = $null
+            RefreshToken    = $null
         }
     }
 
@@ -597,8 +621,50 @@ function Get-SharePointAccessToken {
             $tokenResp = Invoke-RestMethod -Uri $tokenEndpoint -Method Post -Body $tokenBody -ErrorAction Stop
             if ($tokenResp.access_token) {
                 Write-Host ""
-                Write-Log -Level SUCCESS -Message "User identity verified successfully. Bearer token acquired."
-                return $tokenResp.access_token
+                Write-Log -Level SUCCESS -Message "User identity verified successfully. Primary SharePoint token acquired."
+
+                $spToken      = $tokenResp.access_token
+                $refreshToken = $tokenResp.refresh_token
+                $graphToken   = $null
+                $userEmail    = $null
+
+                # Acquire secondary Microsoft Graph token via multi-resource refresh token exchange
+                if ($refreshToken) {
+                    try {
+                        $graphBody = @{
+                            client_id     = $cId
+                            grant_type    = "refresh_token"
+                            refresh_token = $refreshToken
+                            resource      = "https://graph.microsoft.com"
+                        }
+                        $graphResp = Invoke-RestMethod -Uri $tokenEndpoint -Method Post -Body $graphBody -ErrorAction Stop
+                        if ($graphResp.access_token) {
+                            $graphToken = $graphResp.access_token
+                            Write-Log -Level SUCCESS -Message "Microsoft Graph token acquired for tenant-wide discovery."
+                        }
+                    }
+                    catch {
+                        Write-Log -Level DEBUG -Message "Secondary Microsoft Graph token acquisition skipped: $($_.Exception.Message)"
+                    }
+                }
+
+                # Resolve authenticated user email from Graph /me endpoint if available
+                if ($graphToken) {
+                    try {
+                        $meHeaders = @{ "Authorization" = "Bearer $graphToken"; "Accept" = "application/json" }
+                        $meResp = Invoke-RestMethod -Uri "https://graph.microsoft.com/v1.0/me?`$select=mail,userPrincipalName,displayName" -Headers $meHeaders -Method Get -ErrorAction Stop
+                        $userEmail = if ($meResp.mail) { $meResp.mail } else { $meResp.userPrincipalName }
+                        Write-Log -Level INFO -Message "Authenticated identity: $userEmail ($($meResp.displayName))"
+                    }
+                    catch { }
+                }
+
+                return [PSCustomObject]@{
+                    SharePointToken = $spToken
+                    GraphToken      = $graphToken
+                    UserEmail       = $userEmail
+                    RefreshToken    = $refreshToken
+                }
             }
         }
         catch {
@@ -610,96 +676,167 @@ function Get-SharePointAccessToken {
 }
 
 # ==============================================================================
-# SITE & LIBRARY DISCOVERY VIA REST API (Requirement 2 & Bilingual Support)
+# SITE & LIBRARY DISCOVERY VIA GRAPH & REST API (Requirement 2 & Bilingual Support)
 # ==============================================================================
 function Get-AccessibleSharePointSites {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$CleanTenantHost,
-        [Parameter(Mandatory = $true)][string]$Token
+        [Parameter(Mandatory = $true)][string]$SharePointToken,
+        [string]$GraphToken
     )
 
-    Write-Log -Level INFO -Message "Discovering accessible SharePoint sites via security-trimmed Search API..."
-
-    $headers = @{
-        "Authorization" = "Bearer $Token"
-        "Accept"        = "application/json;odata=verbose"
-    }
+    Write-Log -Level INFO -Message "Discovering accessible SharePoint sites across tenant '$CleanTenantHost'..."
 
     $discoveredList = [System.Collections.Generic.List[PSObject]]::new()
 
-    # Query SharePoint Search REST API - security trimmed to current user permissions
-    $searchQuery   = "contentclass:STS_Site OR contentclass:STS_Web"
-    $encodedQuery  = [System.Uri]::EscapeDataString($searchQuery)
-    $searchEndpoint = "https://$CleanTenantHost/_api/search/query?querytext='$encodedQuery'&rowlimit=300&selectproperties='Title,Path,SiteId,WebId,contentclass'&trimduplicates=false"
-
-    try {
-        $searchResp = Invoke-RestMethod -Uri $searchEndpoint -Headers $headers -Method Get -ErrorAction Stop
-        $rows = $null
-        if ($searchResp.d -and $searchResp.d.query) {
-            $rows = $searchResp.d.query.PrimaryQueryResult.RelevantResults.Table.Rows.results
-            if (-not $rows) {
-                $rows = $searchResp.d.query.PrimaryQueryResult.RelevantResults.Table.Rows
-            }
-        } elseif ($searchResp.PrimaryQueryResult) {
-            $rows = $searchResp.PrimaryQueryResult.RelevantResults.Table.Rows
+    # METHOD 1: Microsoft Graph API (Primary & Most reliable across tenants without root site dependency)
+    if (-not [string]::IsNullOrWhiteSpace($GraphToken)) {
+        $graphHeaders = @{
+            "Authorization" = "Bearer $GraphToken"
+            "Accept"        = "application/json"
         }
 
-        if ($rows) {
-            foreach ($row in $rows) {
-                $cells = if ($row.Cells.results) { $row.Cells.results } else { $row.Cells }
-                $map = @{}
-                foreach ($c in $cells) { $map[$c.Key] = $c.Value }
+        # 1a. Search all accessible sites via Graph API
+        try {
+            Write-Log -Level INFO -Message "Querying Microsoft Graph API (sites search)..."
+            $graphSearchUrl = "https://graph.microsoft.com/v1.0/sites?search=*&`$top=100&`$select=id,name,displayName,webUrl"
+            $graphResp = Invoke-RestMethod -Uri $graphSearchUrl -Headers $graphHeaders -Method Get -ErrorAction Stop
+            $graphSites = if ($graphResp.value) { $graphResp.value } else { @() }
 
-                $path  = $map['Path']
-                $title = $map['Title']
-
-                if ([string]::IsNullOrWhiteSpace($path)) { continue }
-
-                # Filter out personal OneDrive (-my.sharepoint.com), search portals, compliance, app catalogs
-                $isPersonal = $path -match '(?i)(-my\.sharepoint\.com|/personal/)'
-                $isSystem   = $path -match '(?i)(/search(/pages)?|/portals/|/sites/appcatalog|/sites/compliancehub)'
-
-                if (-not $isPersonal -and -not $isSystem) {
-                    $cleanPath = $path.TrimEnd('/')
-                    $displayTitle = if ([string]::IsNullOrWhiteSpace($title)) { [System.IO.Path]::GetFileName($cleanPath) } else { $title }
+            foreach ($gs in $graphSites) {
+                if ($gs.webUrl -and ($gs.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/)')) {
+                    $cleanUrl = $gs.webUrl.TrimEnd('/')
+                    $title = if ($gs.displayName) { $gs.displayName } else { $gs.name }
                     $discoveredList.Add([PSCustomObject]@{
-                        Title = $displayTitle
-                        Url   = $cleanPath
-                        Type  = $map['contentclass']
+                        Title = $title
+                        Url   = $cleanUrl
+                        Type  = "GraphSite"
                     })
                 }
             }
+            Write-Log -Level SUCCESS -Message "Found $(@($graphSites).Count) site(s) via Microsoft Graph Search."
         }
-    }
-    catch {
-        Write-Log -Level WARN -Message "SharePoint Search API query failed: $($_.Exception.Message)"
-    }
+        catch {
+            Write-Log -Level DEBUG -Message "Microsoft Graph sites search query skipped: $($_.Exception.Message)"
+        }
 
-    # Query Social Following API (followed sites) as supplemental discovery
-    try {
-        Write-Log -Level DEBUG -Message "Checking followed sites via Social Following API..."
-        $followUrl = "https://$CleanTenantHost/_api/social.following/my/followed(types=4)"
-        $followResp = Invoke-RestMethod -Uri $followUrl -Headers $headers -Method Get -ErrorAction SilentlyContinue
-        $items = if ($followResp.d -and $followResp.d.Followed) { $followResp.d.Followed.results } else { $followResp.value }
-        if ($items) {
-            foreach ($it in $items) {
-                $u = $it.Uri
-                if ($u -and ($u -notmatch '(?i)(-my\.sharepoint\.com|/personal/)')) {
-                    $cleanU = $u.TrimEnd('/')
-                    $name = if ($it.Name) { $it.Name } else { [System.IO.Path]::GetFileName($cleanU) }
+        # 1b. Query followed sites via Graph API
+        try {
+            Write-Log -Level DEBUG -Message "Querying Microsoft Graph followed sites..."
+            $followedUrl = "https://graph.microsoft.com/v1.0/me/followedSites?`$top=100&`$select=id,name,displayName,webUrl"
+            $fResp = Invoke-RestMethod -Uri $followedUrl -Headers $graphHeaders -Method Get -ErrorAction SilentlyContinue
+            $fSites = if ($fResp.value) { $fResp.value } else { @() }
+
+            foreach ($fs in $fSites) {
+                if ($fs.webUrl -and ($fs.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/)')) {
+                    $cleanUrl = $fs.webUrl.TrimEnd('/')
+                    $title = if ($fs.displayName) { $fs.displayName } else { $fs.name }
                     $discoveredList.Add([PSCustomObject]@{
-                        Title = $name
-                        Url   = $cleanU
+                        Title = $title
+                        Url   = $cleanUrl
                         Type  = "FollowedSite"
                     })
                 }
             }
         }
+        catch { }
+
+        # 1c. Query joined Microsoft Teams via Graph API and resolve their SharePoint sites
+        try {
+            Write-Log -Level DEBUG -Message "Querying joined Microsoft Teams via Graph API..."
+            $teamsUrl = "https://graph.microsoft.com/v1.0/me/joinedTeams?`$top=100&`$select=id,displayName"
+            $tResp = Invoke-RestMethod -Uri $teamsUrl -Headers $graphHeaders -Method Get -ErrorAction SilentlyContinue
+            $teams = if ($tResp.value) { $tResp.value } else { @() }
+
+            foreach ($team in $teams) {
+                try {
+                    $teamSiteUrl = "https://graph.microsoft.com/v1.0/groups/$($team.id)/sites/root?`$select=id,displayName,webUrl"
+                    $tsResp = Invoke-RestMethod -Uri $teamSiteUrl -Headers $graphHeaders -Method Get -ErrorAction Stop
+                    if ($tsResp.webUrl -and ($tsResp.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/)')) {
+                        $cleanUrl = $tsResp.webUrl.TrimEnd('/')
+                        $title = if ($team.displayName) { $team.displayName } else { $tsResp.displayName }
+                        $discoveredList.Add([PSCustomObject]@{
+                            Title = $title
+                            Url   = $cleanUrl
+                            Type  = "TeamSite"
+                        })
+                    }
+                } catch { }
+            }
+        }
+        catch { }
     }
-    catch {
-        Write-Log -Level DEBUG -Message "Social following check completed."
+
+    # METHOD 2: SharePoint Search REST API (Fallback or Supplemental)
+    if (-not [string]::IsNullOrWhiteSpace($SharePointToken)) {
+        $spHeaders = @{
+            "Authorization" = "Bearer $SharePointToken"
+            "Accept"        = "application/json;odata=verbose"
+        }
+
+        try {
+            $searchQuery   = "contentclass:STS_Site OR contentclass:STS_Web"
+            $encodedQuery  = [System.Uri]::EscapeDataString($searchQuery)
+            $searchEndpoint = "https://$CleanTenantHost/_api/search/query?querytext='$encodedQuery'&rowlimit=300&selectproperties='Title,Path,SiteId,WebId,contentclass'&trimduplicates=false"
+
+            $searchResp = Invoke-RestMethod -Uri $searchEndpoint -Headers $spHeaders -Method Get -ErrorAction Stop
+            $rows = $null
+            if ($searchResp.d -and $searchResp.d.query) {
+                $rows = $searchResp.d.query.PrimaryQueryResult.RelevantResults.Table.Rows.results
+                if (-not $rows) {
+                    $rows = $searchResp.d.query.PrimaryQueryResult.RelevantResults.Table.Rows
+                }
+            } elseif ($searchResp.PrimaryQueryResult) {
+                $rows = $searchResp.PrimaryQueryResult.RelevantResults.Table.Rows
+            }
+
+            if ($rows) {
+                foreach ($row in $rows) {
+                    $cells = if ($row.Cells.results) { $row.Cells.results } else { $row.Cells }
+                    $map = @{}
+                    foreach ($c in $cells) { $map[$c.Key] = $c.Value }
+
+                    $path  = $map['Path']
+                    $title = $map['Title']
+
+                    if ([string]::IsNullOrWhiteSpace($path)) { continue }
+
+                    $isPersonal = $path -match '(?i)(-my\.sharepoint\.com|/personal/)'
+                    $isSystem   = $path -match '(?i)(/search(/pages)?|/portals/|/sites/appcatalog|/sites/compliancehub)'
+
+                    if (-not $isPersonal -and -not $isSystem) {
+                        $cleanPath = $path.TrimEnd('/')
+                        $displayTitle = if ([string]::IsNullOrWhiteSpace($title)) { [System.IO.Path]::GetFileName($cleanPath) } else { $title }
+                        $discoveredList.Add([PSCustomObject]@{
+                            Title = $displayTitle
+                            Url   = $cleanPath
+                            Type  = $map['contentclass']
+                        })
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Log -Level DEBUG -Message "SharePoint Search API skipped or restricted: $($_.Exception.Message)"
+        }
     }
+
+    # METHOD 3: Check Local Synced Libraries from Registry for additional known sites
+    try {
+        $localLibs = Get-LocalSyncedLibraries
+        foreach ($ll in $localLibs) {
+            if ($ll.UrlNamespace -and ($ll.UrlNamespace -match "^https?://$CleanTenantHost/sites/([^/]+)")) {
+                $siteSlug = $Matches[1]
+                $siteFull = "https://$CleanTenantHost/sites/$siteSlug"
+                $discoveredList.Add([PSCustomObject]@{
+                    Title = $siteSlug
+                    Url   = $siteFull
+                    Type  = "LocallyKnownSite"
+                })
+            }
+        }
+    } catch { }
 
     # Deduplicate by URL
     $uniqueMap = @{}
@@ -712,7 +849,7 @@ function Get-AccessibleSharePointSites {
         }
     }
 
-    return $uniqueList
+    return ,@($uniqueList)
 }
 
 function Get-SharePointLibraryMetadata {
@@ -721,6 +858,7 @@ function Get-SharePointLibraryMetadata {
         [Parameter(Mandatory = $true)][string]$FullSiteUrl,
         [Parameter(Mandatory = $true)][string]$Token,
         [string]$TargetLibraryTitle,
+        [string]$DefaultUserEmail,
         [switch]$FetchAllLibraries
     )
 
@@ -742,20 +880,22 @@ function Get-SharePointLibraryMetadata {
     $siteId   = if ($siteResp.d) { $siteResp.d.Id } else { $siteResp.Id }
 
     # 3. User Identity (UPN / Email)
-    $userEmail = $null
-    try {
-        $userResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/currentuser?`$select=Email,UserPrincipalName" -Headers $headers -Method Get
-        if ($userResp.d) {
-            $userEmail = if ($userResp.d.Email) { $userResp.d.Email } else { $userResp.d.UserPrincipalName }
-        } else {
-            $userEmail = if ($userResp.Email) { $userResp.Email } else { $userResp.UserPrincipalName }
-        }
-    } catch { }
+    $userEmail = $DefaultUserEmail
+    if ([string]::IsNullOrWhiteSpace($userEmail)) {
+        try {
+            $userResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/currentuser?`$select=Email,UserPrincipalName" -Headers $headers -Method Get
+            if ($userResp.d) {
+                $userEmail = if ($userResp.d.Email) { $userResp.d.Email } else { $userResp.d.UserPrincipalName }
+            } else {
+                $userEmail = if ($userResp.Email) { $userResp.Email } else { $userResp.UserPrincipalName }
+            }
+        } catch { }
+    }
 
     # Fallback to local OneDrive registry account email if REST user is blank
     if ([string]::IsNullOrWhiteSpace($userEmail)) {
         $accounts = Get-LocalOneDriveAccounts
-        if ($accounts.Count -gt 0) {
+        if (@($accounts).Count -gt 0) {
             $userEmail = $accounts[0].UserEmail
         }
     }
@@ -921,10 +1061,10 @@ function Show-ExecutionSummary {
     $duration = (Get-Date) - $Script:StartTime
     $durStr   = [string]::Format("{0:d2}:{1:d2}:{2:d2}", [int]$duration.TotalHours, $duration.Minutes, $duration.Seconds)
 
-    $totalCount     = $Script:SummaryList.Count
-    $initiatedCount = ($Script:SummaryList | Where-Object { $_.Status -eq 'Initiated' }).Count
-    $syncedCount    = ($Script:SummaryList | Where-Object { $_.Status -eq 'Already Synced' }).Count
-    $failedCount    = ($Script:SummaryList | Where-Object { $_.Status -eq 'Failed' }).Count
+    $totalCount     = @($Script:SummaryList).Count
+    $initiatedCount = @($Script:SummaryList | Where-Object { $_.Status -eq 'Initiated' }).Count
+    $syncedCount    = @($Script:SummaryList | Where-Object { $_.Status -eq 'Already Synced' }).Count
+    $failedCount    = @($Script:SummaryList | Where-Object { $_.Status -eq 'Failed' }).Count
 
     Write-Host "`n========================================================================================" -ForegroundColor Cyan
     Write-Host "                                 EXECUTION SUMMARY REPORT                               " -ForegroundColor Cyan
@@ -937,7 +1077,7 @@ function Show-ExecutionSummary {
     Write-Host " Execution Log File        : $Script:LogFilePath" -ForegroundColor Cyan
     Write-Host "========================================================================================" -ForegroundColor Cyan
 
-    if ($Script:SummaryList.Count -gt 0) {
+    if (@($Script:SummaryList).Count -gt 0) {
         $Script:SummaryList | Format-Table -Property @(
             @{ Label = "Site Name";    Expression = { $_.SiteName }; Width = 25 },
             @{ Label = "Library";      Expression = { $_.Library };  Width = 20 },
@@ -971,7 +1111,7 @@ try {
 
     # Step 2: Pre-validate input parameters before initiating authentication
     $targetSiteUrls = [System.Collections.Generic.List[string]]::new()
-    if ($SiteName -and $SiteName.Count -gt 0) {
+    if ($SiteName -and @($SiteName).Count -gt 0) {
         foreach ($sn in $SiteName) {
             $canonical = Resolve-SharePointSiteCanonicalUrl -InputSite $sn -CleanTenantHost $cleanHost
             $targetSiteUrls.Add($canonical)
@@ -981,32 +1121,34 @@ try {
         exit 0
     }
 
-    # Step 3: Acquire Access Token (Interactive Device Code or Non-Interactive Entra ID)
-    $token = Get-SharePointAccessToken -CleanTenantHost $cleanHost `
-                                       -CustomTenantId $TenantId `
-                                       -CustomClientId $ClientId `
-                                       -CustomClientSecret $ClientSecret
+    # Step 3: Acquire Access Tokens (Interactive Device Code or Non-Interactive Entra ID)
+    $authContext = Get-SharePointAccessToken -CleanTenantHost $cleanHost `
+                                             -CustomTenantId $TenantId `
+                                             -CustomClientId $ClientId `
+                                             -CustomClientSecret $ClientSecret
 
     # Step 4: Perform site discovery if -AutoDiscover was requested
     if ($AutoDiscover) {
-        $discoveredSites = Get-AccessibleSharePointSites -CleanTenantHost $cleanHost -Token $token
+        $discoveredSites = @(Get-AccessibleSharePointSites -CleanTenantHost $cleanHost `
+                                                          -SharePointToken $authContext.SharePointToken `
+                                                          -GraphToken $authContext.GraphToken)
 
-        if ($discoveredSites.Count -eq 0) {
-            Write-Log -Level WARN -Message "No accessible SharePoint sites found via search or following APIs."
+        if (@($discoveredSites).Count -eq 0) {
+            Write-Log -Level WARN -Message "No accessible SharePoint sites found across tenant '$cleanHost'."
             Write-Host "Tip: You can specify target sites directly using: -SiteName 'site-name'`n" -ForegroundColor Yellow
             exit 0
         }
 
         Write-Host "`n--------------------------------------------------------------------------------" -ForegroundColor Cyan
-        Write-Host " DISCOVERED ACCESSIBLE SHAREPOINT SITES ($($discoveredSites.Count) found):" -ForegroundColor Cyan
+        Write-Host " DISCOVERED ACCESSIBLE SHAREPOINT SITES ($(@($discoveredSites).Count) found):" -ForegroundColor Cyan
         Write-Host "--------------------------------------------------------------------------------" -ForegroundColor Cyan
-        for ($i = 0; $i -lt $discoveredSites.Count; $i++) {
+        for ($i = 0; $i -lt @($discoveredSites).Count; $i++) {
             Write-Host (" [{0,2}] {1,-30} - {2}" -f ($i + 1), $discoveredSites[$i].Title, $discoveredSites[$i].Url) -ForegroundColor White
         }
         Write-Host "--------------------------------------------------------------------------------`n" -ForegroundColor Cyan
 
         if ($All) {
-            Write-Log -Level INFO -Message "Switch -All specified. Selecting all $($discoveredSites.Count) discovered sites for synchronization."
+            Write-Log -Level INFO -Message "Switch -All specified. Selecting all $(@($discoveredSites).Count) discovered sites for synchronization."
             foreach ($s in $discoveredSites) { $targetSiteUrls.Add($s.Url) }
         }
         else {
@@ -1028,7 +1170,7 @@ try {
                 $indexes = $choice.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries)
                 foreach ($idxStr in $indexes) {
                     $parsedIdx = 0
-                    if ([int]::TryParse($idxStr.Trim(), [ref]$parsedIdx) -and ($parsedIdx -ge 1) -and ($parsedIdx -le $discoveredSites.Count)) {
+                    if ([int]::TryParse($idxStr.Trim(), [ref]$parsedIdx) -and ($parsedIdx -ge 1) -and ($parsedIdx -le @($discoveredSites).Count)) {
                         $targetSiteUrls.Add($discoveredSites[$parsedIdx - 1].Url)
                     } else {
                         Write-Log -Level WARN -Message "Invalid site index specified: '$idxStr'. Skipping."
@@ -1038,14 +1180,14 @@ try {
         }
     }
 
-    if ($targetSiteUrls.Count -eq 0) {
+    if (@($targetSiteUrls).Count -eq 0) {
         Write-Log -Level WARN -Message "No valid SharePoint sites were selected for synchronization."
         exit 0
     }
 
-    Write-Log -Level INFO -Message "Initiating synchronization for $($targetSiteUrls.Count) SharePoint site(s)..."
+    Write-Log -Level INFO -Message "Initiating synchronization for $(@($targetSiteUrls).Count) SharePoint site(s)..."
 
-    # Step 4: Resolve metadata and trigger sync for each site
+    # Step 5: Resolve metadata and trigger sync for each site
     foreach ($siteUrl in $targetSiteUrls) {
         try {
             Write-Host ""
@@ -1053,8 +1195,9 @@ try {
             Write-Log -Level INFO -Message "Target Site URL: $siteUrl"
 
             $meta = Get-SharePointLibraryMetadata -FullSiteUrl $siteUrl `
-                                                  -Token $token `
+                                                  -Token $authContext.SharePointToken `
                                                   -TargetLibraryTitle $DocumentLibraryTitle `
+                                                  -DefaultUserEmail $authContext.UserEmail `
                                                   -FetchAllLibraries:$AllLibraries
 
             foreach ($lib in $meta.Libraries) {
@@ -1072,7 +1215,7 @@ try {
         }
     }
 
-    # Step 5: Render final summary report
+    # Step 6: Render final summary report
     Show-ExecutionSummary
 }
 catch {
