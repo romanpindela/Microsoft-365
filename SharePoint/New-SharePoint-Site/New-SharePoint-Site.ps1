@@ -1099,13 +1099,29 @@ function Get-SiteSecurityGroups {
 
     # 3. If executing admin identity is passed via parameter, grant SCA to executing admin as well
     if (-not [string]::IsNullOrWhiteSpace($AdminUPN) -and ($AdminUPN.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
-        try {
-            Set-SPOUser -Site $Url -LoginName $AdminUPN -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
-            Write-ScriptLog -Level SUCCESS -Message "Set-SPOUser: Confirmed Site Collection Administrator for executing admin '$AdminUPN'."
-            Add-OperationDetail -Step "10c-SiteAdmin" -Operation "Grant Site Collection Admin (Executing Admin)" -Status "Success" -Details "User: $AdminUPN"
+        $adminCandidates = @($AdminUPN.Trim())
+        # Auto-correct common typo: .onmicrosoft.pl -> .onmicrosoft.com / .pl
+        if ($AdminUPN -like "*.onmicrosoft.pl") {
+            $adminCandidates += ($AdminUPN -replace '\.onmicrosoft\.pl$', '.onmicrosoft.com')
+            $adminCandidates += ($AdminUPN -replace '\.onmicrosoft\.pl$', '.pl')
         }
-        catch {
-            Write-ScriptLog -Level WARN -Message "Notice granting SCA to executing admin '$AdminUPN': $($_.Exception.Message)"
+
+        $adminScaGranted = $false
+        foreach ($adminCandidate in ($adminCandidates | Select-Object -Unique)) {
+            try {
+                Set-SPOUser -Site $Url -LoginName $adminCandidate -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+                Write-ScriptLog -Level SUCCESS -Message "Set-SPOUser: Confirmed Site Collection Administrator for executing admin '$adminCandidate'."
+                Add-OperationDetail -Step "10c-SiteAdmin" -Operation "Grant Site Collection Admin (Executing Admin)" -Status "Success" -Details "User: $adminCandidate"
+                $AdminUPN = $adminCandidate
+                $adminScaGranted = $true
+                break
+            }
+            catch {
+                Write-ScriptLog -Level WARN -Message "Notice granting SCA to executing admin '$adminCandidate': $($_.Exception.Message)"
+            }
+        }
+        if (-not $adminScaGranted) {
+            Add-OperationDetail -Step "10c-SiteAdmin" -Operation "Grant Site Collection Admin (Executing Admin)" -Status "Warning" -Details "Could not resolve $AdminUPN in tenant."
         }
     }
 
@@ -1118,8 +1134,10 @@ function Get-SiteSecurityGroups {
                 $tenantOwners = $tenantSites | Select-Object -ExpandProperty Owner -Unique
                 foreach ($to in $tenantOwners) {
                     if ($to -and ($to -match '@') -and ($to -notlike "*spo-grid*") -and ($to -notlike "*app*") -and ($to.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
-                        Write-ScriptLog -Level DEBUG -Message "Ensuring tenant site owner '$to' has SCA on '$Url'..."
-                        Set-SPOUser -Site $Url -LoginName $to -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
+                        try {
+                            Write-ScriptLog -Level DEBUG -Message "Ensuring tenant site owner '$to' has SCA on '$Url'..."
+                            Set-SPOUser -Site $Url -LoginName $to -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+                        } catch {}
                     }
                 }
             }
@@ -1131,8 +1149,10 @@ function Get-SiteSecurityGroups {
         try {
             $rootSite = Get-SPOSite -Identity $rootSiteUrl -Detailed -ErrorAction SilentlyContinue
             if ($rootSite -and $rootSite.Owner -and ($rootSite.Owner -match '@') -and ($rootSite.Owner.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
-                Write-ScriptLog -Level INFO -Message "Auto-discovered Root Site Owner '$($rootSite.Owner)'. Ensuring SCA on '$Url'..."
-                Set-SPOUser -Site $Url -LoginName $rootSite.Owner -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
+                try {
+                    Write-ScriptLog -Level INFO -Message "Auto-discovered Root Site Owner '$($rootSite.Owner)'. Ensuring SCA on '$Url'..."
+                    Set-SPOUser -Site $Url -LoginName $rootSite.Owner -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+                } catch {}
             }
         }
         catch {}
@@ -1142,8 +1162,10 @@ function Get-SiteSecurityGroups {
             if ($rootAdmins) {
                 foreach ($ra in $rootAdmins) {
                     if ($ra.LoginName -and ($ra.LoginName -match '@') -and ($ra.LoginName -notlike "*spo-grid-all-users*") -and ($ra.LoginName -notlike "*app*") -and ($ra.LoginName.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower())) {
-                        Write-ScriptLog -Level DEBUG -Message "Ensuring Root Site Admin '$($ra.LoginName)' has SCA on '$Url'..."
-                        Set-SPOUser -Site $Url -LoginName $ra.LoginName -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
+                        try {
+                            Write-ScriptLog -Level DEBUG -Message "Ensuring Root Site Admin '$($ra.LoginName)' has SCA on '$Url'..."
+                            Set-SPOUser -Site $Url -LoginName $ra.LoginName -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+                        } catch {}
                     }
                 }
             }
@@ -1152,6 +1174,8 @@ function Get-SiteSecurityGroups {
 
         # C. Common admin candidate heuristics based on tenant domain prefix and current Windows username
         $candidateAdmins = @(
+            "e-admin@${TenantDomainPrefix}.pl",
+            "e-admin@${TenantDomainPrefix}.onmicrosoft.com",
             "admin@${TenantDomainPrefix}.pl",
             "admin@${TenantDomainPrefix}.onmicrosoft.com",
             "administrator@${TenantDomainPrefix}.pl",
@@ -1160,7 +1184,9 @@ function Get-SiteSecurityGroups {
         ) | Select-Object -Unique
         foreach ($ca in $candidateAdmins) {
             if ($ca.Trim().ToLower() -ne $OwnerEmail.Trim().ToLower()) {
-                Set-SPOUser -Site $Url -LoginName $ca -IsSiteCollectionAdmin $true -ErrorAction SilentlyContinue | Out-Null
+                try {
+                    Set-SPOUser -Site $Url -LoginName $ca -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+                } catch {}
             }
         }
     }
