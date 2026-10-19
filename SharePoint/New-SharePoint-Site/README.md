@@ -64,6 +64,20 @@ A professional, enterprise-grade PowerShell automation script for Microsoft 365 
 
 ---
 
+## Screenshots
+
+### 1. Standard Run & Built-in Help (`.\New-SharePoint-Site.ps1`)
+Running the script without parameters or with `-Help` / `-h` displays comprehensive usage instructions, archetype descriptions, parameter options, and execution examples:
+
+![Standard Run](assets/Standard_run.jpg)
+
+### 2. Company-Wide SharePoint Site Provisioning (`-CompanyWide`)
+Execution of modern SharePoint Online site collection provisioning with automatic alias normalization, Site Collection Administrator configuration, security group resolution, company-wide visitor permissions assignment, and the real-time operation audit summary trail:
+
+![Creating New SharePoint Company Site](assets/Creating_new_sharepoint_company_site.jpg)
+
+---
+
 ## Prerequisites
 
 - **Operating System**: Windows 10, Windows 11, or Windows Server (Desktop Experience) with English or Polish locale.
