@@ -110,6 +110,14 @@
     Default: 1045 (Polish). Use 1033 for English (United States).
     Aliases: -Lcid, -Language.
 
+.PARAMETER RestoreDeletedSite
+    Switch parameter. Automatically restores a site collection if found in the SharePoint Online Recycle Bin.
+    Default behavior when -Force is specified.
+
+.PARAMETER PurgeDeletedSite
+    Switch parameter. Permanently deletes (purges) a site collection from the SharePoint Online Recycle Bin
+    using Remove-SPODeletedSite before provisioning a fresh site collection.
+
 .PARAMETER LogDirectory
     Directory where execution logs are written.
     Default: 'C:\Logs' (with fallback to $env:LOCALAPPDATA\Logs).
@@ -154,7 +162,7 @@
     Author        : Roman Pindela
     Email         : roman.pindela@gmail.com
     GitHub        : https://github.com/romanpindela
-    Version       : 1.3.0
+    Version       : 1.4.0
     Created       : 2026-10-19
     Updated       : 2026-10-19
     Standards     : Adheres to CleanCode and PowerShell Script Standards (C:\Dane\rpindela\GitHub\PowerShell Script Standards.txt)
@@ -229,6 +237,13 @@ param(
     [Alias('Lcid', 'Language')]
     [int]$LocaleId = 1045,
 
+    # Recycle Bin Lifecycle Management
+    [Parameter()]
+    [switch]$RestoreDeletedSite,
+
+    [Parameter()]
+    [switch]$PurgeDeletedSite,
+
     # Output and Logging Options
     [Parameter()]
     [string]$LogDirectory = 'C:\Logs',
@@ -259,7 +274,7 @@ if ((Test-Path -Path $userWinPSModules) -and ($env:PSModulePath -notlike "*$user
 # ==============================================================================
 $Script:Metadata = @{
     Title       = "New-SharePoint-Site.ps1"
-    Version     = "1.3.0"
+    Version     = "1.4.0"
     Author      = "Roman Pindela"
     Email       = "roman.pindela@gmail.com"
     GitHub      = "https://github.com/romanpindela"
@@ -463,8 +478,10 @@ function Show-ScriptHelp {
         "    -StorageQuotaMB             Storage quota in MB (default: 1048576 = 1 TB).",
         "    -TimeZoneId                 Time Zone ID (default: 4 = UTC+1 Warsaw / Romance Standard Time).",
         "    -LocaleId, -Lcid            Language LCID (default: 1045 = Polish, 1033 = English).",
+        "    -RestoreDeletedSite         Automatically restores a site collection if found in SharePoint Online Recycle Bin.",
+        "    -PurgeDeletedSite           Permanently purges a recycled site collection via Remove-SPODeletedSite before creating a fresh site.",
         "    -LogDirectory               Directory for execution log files (default: C:\Logs).",
-        "    -Force                      Bypasses interactive [Y/N] / [T/N] confirmation prompts.",
+        "    -Force                      Bypasses interactive [Y/N] / [T/N] confirmation prompts (and auto-restores recycled site if found).",
         "    -PassThru                   Outputs the created site object to the pipeline.",
         "    -Help, -h                   Displays this help documentation and exits.",
         "",
@@ -812,25 +829,95 @@ function Test-SharePointSiteAvailability {
     Write-ScriptLog -Level INFO -Message "Checking if site URL already exists: $SiteUrl"
     Add-OperationDetail -Step "06-PreFlight" -Operation "Site URL Availability Check" -Status "Running" -Details "Querying $SiteUrl"
 
+    $existingSite = $null
     try {
         $existingSite = Get-SPOSite -Identity $SiteUrl -Detailed -ErrorAction SilentlyContinue
-        if ($existingSite) {
-            $Script:CanonicalSiteUrl = $existingSite.Url
-            Write-ScriptLog -Level WARN -Message "Site URL '$SiteUrl' already exists! (Status: $($existingSite.Status), Title: '$($existingSite.Title)')"
-            Write-ScriptLog -Level INFO -Message "Existing site detected at canonical URL: '$($existingSite.Url)'. Script will apply security/permission configuration to the existing site."
-            Add-OperationDetail -Step "06-PreFlight" -Operation "Site URL Availability Check" -Status "Warning" -Details "Site exists with status $($existingSite.Status); configuring existing site."
-            return $true
-        }
-        else {
-            Write-ScriptLog -Level SUCCESS -Message "Site URL '$SiteUrl' is available for provisioning."
-            Add-OperationDetail -Step "06-PreFlight" -Operation "Site URL Availability Check" -Status "Success" -Details "Site URL is available."
-            return $false
-        }
     }
     catch {
-        Write-ScriptLog -Level DEBUG -Message "Site query completed. URL is free."
-        return $false
+        $existingSite = $null
     }
+
+    if ($existingSite) {
+        $Script:CanonicalSiteUrl = $existingSite.Url
+        Write-ScriptLog -Level WARN -Message "Site URL '$SiteUrl' already exists! (Status: $($existingSite.Status), Title: '$($existingSite.Title)')"
+        Write-ScriptLog -Level INFO -Message "Existing site detected at canonical URL: '$($existingSite.Url)'. Script will apply security/permission configuration to the existing site."
+        Add-OperationDetail -Step "06-PreFlight" -Operation "Site URL Availability Check" -Status "Warning" -Details "Site exists with status $($existingSite.Status); configuring existing site."
+        return $true
+    }
+
+    # Site is not among active sites. Check if it exists in the SharePoint Online Recycle Bin.
+    Write-ScriptLog -Level DEBUG -Message "Checking if site URL exists in SharePoint Online Recycle Bin..."
+    $deletedSite = $null
+    try {
+        $deletedSite = Get-SPODeletedSite -Identity $SiteUrl -ErrorAction Stop
+    }
+    catch {
+        $deletedSite = $null
+    }
+
+    if ($deletedSite) {
+        Write-ScriptLog -Level WARN -Message "Site URL '$SiteUrl' was found in the SharePoint Online Recycle Bin! (Days Remaining: $($deletedSite.DaysRemaining), Storage: $($deletedSite.StorageQuota) MB)"
+        
+        if ($PurgeDeletedSite) {
+            Write-ScriptLog -Level INFO -Message "Purging recycled site collection via Remove-SPODeletedSite..."
+            Add-OperationDetail -Step "06-PreFlight" -Operation "Purge Recycled Site" -Status "Running" -Details "Purging $SiteUrl from Recycle Bin"
+            Remove-SPODeletedSite -Identity $deletedSite.Url -NoWait -Confirm:$false -ErrorAction Stop
+            Write-ScriptLog -Level SUCCESS -Message "Recycled site collection '$SiteUrl' purged from Recycle Bin. Note: Microsoft 365 URL release may take several minutes."
+            Add-OperationDetail -Step "06-PreFlight" -Operation "Purge Recycled Site" -Status "Success" -Details "Purged $SiteUrl"
+            return $false
+        }
+        else {
+            $shouldRestore = $Force -or $RestoreDeletedSite
+            if (-not $shouldRestore) {
+                Write-Host "`n" -NoNewline
+                Write-Host "================================================================================" -ForegroundColor Yellow
+                Write-Host " RECYCLED SITE DETECTED: $SiteUrl" -ForegroundColor Yellow
+                Write-Host "================================================================================" -ForegroundColor Yellow
+                Write-Host "  The site collection exists in the SharePoint Online Recycle Bin." -ForegroundColor White
+                Write-Host "  Restoring it is instantaneous and allows applying the requested permissions." -ForegroundColor White
+                Write-Host "--------------------------------------------------------------------------------" -ForegroundColor Yellow
+                Write-Host "Do you want to RESTORE and configure this site? / Czy chcesz PRZYWRÓCIĆ tę witrynę? [Y/N or T/N]: " -NoNewline -ForegroundColor Cyan
+                $ans = Read-Host
+                if ($ans -match '^[ytT1]$') {
+                    $shouldRestore = $true
+                }
+            }
+
+            if ($shouldRestore) {
+                Write-ScriptLog -Level INFO -Message "Restoring site collection '$SiteUrl' from SharePoint Online Recycle Bin..."
+                Add-OperationDetail -Step "06-PreFlight" -Operation "Restore Recycled Site" -Status "Running" -Details "Restoring $SiteUrl from Recycle Bin"
+                Restore-SPODeletedSite -Identity $deletedSite.Url -ErrorAction Stop
+                Write-ScriptLog -Level SUCCESS -Message "Site collection '$SiteUrl' restore request submitted successfully."
+                Add-OperationDetail -Step "06-PreFlight" -Operation "Restore Recycled Site" -Status "Success" -Details "Restored $SiteUrl from Recycle Bin"
+
+                # Poll for restored site to become Active
+                Write-ScriptLog -Level INFO -Message "Waiting for restored site to reach Active status..."
+                $restoreWatch = [System.Diagnostics.Stopwatch]::StartNew()
+                $restoredSiteObj = $null
+                while ($restoreWatch.Elapsed.TotalSeconds -lt 90) {
+                    Start-Sleep -Seconds 5
+                    $restoredSiteObj = try { Get-SPOSite -Identity $deletedSite.Url -Detailed -ErrorAction SilentlyContinue } catch { $null }
+                    if ($restoredSiteObj -and $restoredSiteObj.Status -eq "Active") {
+                        break
+                    }
+                }
+
+                $Script:CanonicalSiteUrl = $deletedSite.Url
+                Write-ScriptLog -Level SUCCESS -Message "Site '$($deletedSite.Url)' is restored and ACTIVE."
+                Add-OperationDetail -Step "06-PreFlight" -Operation "Site URL Availability Check" -Status "Success" -Details "Restored and active."
+                return $true
+            }
+            else {
+                $err = "Site '$SiteUrl' exists in SharePoint Recycle Bin. Specify -RestoreDeletedSite to restore or -PurgeDeletedSite to permanently remove."
+                Write-ScriptLog -Level ERROR -Message $err
+                throw $err
+            }
+        }
+    }
+
+    Write-ScriptLog -Level SUCCESS -Message "Site URL '$SiteUrl' is available for provisioning."
+    Add-OperationDetail -Step "06-PreFlight" -Operation "Site URL Availability Check" -Status "Success" -Details "Site URL is available."
+    return $false
 }
 
 # ==============================================================================
@@ -914,9 +1001,24 @@ function Invoke-CreateSharePointSite {
         Add-OperationDetail -Step "08-Provisioning" -Operation "Submit Site Creation" -Status "Success" -Details "Request accepted by SharePoint Online."
     }
     catch {
-        Write-ScriptLog -Level ERROR -Message "New-SPOSite execution failed: $($_.Exception.Message)"
-        Add-OperationDetail -Step "08-Provisioning" -Operation "Submit Site Creation" -Status "Failed" -Details $_.Exception.Message
-        throw $_
+        if ($_.Exception.Message -match 'Recycle Bin|Restore-SPODeletedSite|Remove-SPODeletedSite') {
+            Write-ScriptLog -Level WARN -Message "Detected site in SharePoint Online Recycle Bin reserving URL '$Url'. Attempting automatic restoration via Restore-SPODeletedSite..."
+            Add-OperationDetail -Step "08-Provisioning" -Operation "Restore Recycled Site" -Status "Running" -Details "Auto-restoring $Url from Recycle Bin"
+            try {
+                Restore-SPODeletedSite -Identity $Url -ErrorAction Stop | Out-Null
+                Write-ScriptLog -Level SUCCESS -Message "Restore request accepted for '$Url'. Proceeding to polling for Active status..."
+                Add-OperationDetail -Step "08-Provisioning" -Operation "Restore Recycled Site" -Status "Success" -Details "Restored from Recycle Bin"
+            }
+            catch {
+                Write-ScriptLog -Level ERROR -Message "Failed to restore site from Recycle Bin: $($_.Exception.Message)"
+                throw $_
+            }
+        }
+        else {
+            Write-ScriptLog -Level ERROR -Message "New-SPOSite execution failed: $($_.Exception.Message)"
+            Add-OperationDetail -Step "08-Provisioning" -Operation "Submit Site Creation" -Status "Failed" -Details $_.Exception.Message
+            throw $_
+        }
     }
 
     # Polling until site status becomes Active

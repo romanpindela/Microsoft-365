@@ -22,8 +22,9 @@ A professional, enterprise-grade PowerShell automation script for Microsoft 365 
     alongside bilingual claims (`Everyone except external users` / `Wszyscy oprócz użytkowników zewnętrznych`) to the site's default Visitors (`Odwiedzający` / `Goście` / `Visitors`) group.
   - Ideal for company-wide portals, corporate announcements, handbooks, and knowledge bases.
 
-- **Existing Site Permission Configuration & Remediation**:
-  - If the target site collection already exists, the script safely detects it during pre-flight checks, skips re-creation, and applies or fixes the security groups and permissions directly on the existing site.
+- **Existing & Recycled Site Remediation (Recycle Bin Auto-Restore)**:
+  - **Active Sites**: If the target site collection already exists, the script safely detects it during pre-flight checks, skips re-creation, and applies or fixes the security groups and permissions directly on the existing site.
+  - **Recycled Sites**: If the site URL is held in the SharePoint Online Recycle Bin (`Get-SPODeletedSite`), standard provisioning (`New-SPOSite`) fails. The script automatically identifies recycled sites, restores them (`Restore-SPODeletedSite` - default or with `-Force` / `-RestoreDeletedSite`), waits for active status, and applies all permissions and owners. Alternatively, `-PurgeDeletedSite` allows permanent removal via `Remove-SPODeletedSite`.
 
 - **Auto-Generated Site Alias**:
   - If `-SiteAlias` is omitted, the script automatically derives a clean, normalized URL slug from `-SiteTitle` (converting Polish diacritics, lowercase, removing special characters).
@@ -219,8 +220,10 @@ $siteInfo | Format-List
 | `-StorageQuotaMB` | `Int64` | No | `1048576` (1 TB) | Maximum storage limit in megabytes (range: 1,024 to 26,214,400 MB). |
 | `-TimeZoneId` | `Int32` | No | `4` | SharePoint Time Zone ID (default: 4 = UTC+1 Romance Standard Time - Warsaw/Brussels). |
 | `-LocaleId` / `-Lcid` | `Int32` | No | `1045` (Polish) | SharePoint Language ID (e.g. `1045` for Polish, `1033` for English). |
+| `-RestoreDeletedSite` | `Switch` | No | `False` | Automatically restores a site collection if found in the SharePoint Online Recycle Bin (default when `-Force` is supplied). |
+| `-PurgeDeletedSite` | `Switch` | No | `False` | Permanently purges a recycled site collection from the SharePoint Recycle Bin via `Remove-SPODeletedSite` before creating a fresh site. |
 | `-LogDirectory` | `String` | No | `C:\Logs` | Destination folder for execution log files (falls back to `$env:LOCALAPPDATA\Logs`). |
-| `-Force` | `Switch` | No | `False` | Bypasses interactive confirmation prompts (`[Y/N]` or `[T/N]`). |
+| `-Force` | `Switch` | No | `False` | Bypasses interactive confirmation prompts (`[Y/N]` or `[T/N]`) and auto-restores recycled site if found. |
 | `-PassThru` | `Switch` | No | `False` | Returns custom PSObject with provisioning details to the pipeline. |
 | `-Help` / `-h` | `Switch` | No | `False` | Displays comprehensive built-in help and exits. |
 
@@ -263,6 +266,6 @@ Logs are stored in `C:\Logs` (or `$env:LOCALAPPDATA\Logs` as fallback) using the
 - **Author**: Roman Pindela
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
-- **Version**: 1.3.0
+- **Version**: 1.4.0
 - **Created**: 2026-10-19
 - **Updated**: 2026-10-19
