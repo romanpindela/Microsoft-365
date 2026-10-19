@@ -947,10 +947,10 @@ function Confirm-SiteCreation {
         Write-Host "  Language/LCID: $LocaleId" -ForegroundColor White
         Write-Host "  Time Zone ID : $TimeZoneId" -ForegroundColor White
     }
-    if ($Members.Count -gt 0) {
+    if (@($Members).Count -gt 0) {
         Write-Host "  Members (Edit): $($Members -join ', ')" -ForegroundColor White
     }
-    if ($Visitors.Count -gt 0) {
+    if (@($Visitors).Count -gt 0) {
         Write-Host "  Visitors (Read): $($Visitors -join ', ')" -ForegroundColor White
     }
     Write-Host "================================================================================" -ForegroundColor Yellow
@@ -1211,8 +1211,8 @@ function Get-SiteSecurityGroups {
         try {
             Write-ScriptLog -Level INFO -Message "Querying site groups via Get-SPOSiteGroup (Attempt $i/$maxRetries)..."
             $siteGroups = Get-SPOSiteGroup -Site $Url -ErrorAction Stop
-            if ($siteGroups -and $siteGroups.Count -gt 0) {
-                Write-ScriptLog -Level SUCCESS -Message "Successfully retrieved $($siteGroups.Count) site security group(s)."
+            if ($siteGroups -and @($siteGroups).Count -gt 0) {
+                Write-ScriptLog -Level SUCCESS -Message "Successfully retrieved $(@($siteGroups).Count) site security group(s)."
                 break
             }
         }
@@ -1267,7 +1267,7 @@ function Get-SiteSecurityGroups {
         }
     }
 
-    if ($siteGroups -and $siteGroups.Count -gt 0) {
+    if ($siteGroups -and @($siteGroups).Count -gt 0) {
         $groupNames = ($siteGroups | Select-Object -ExpandProperty Title) -join "', '"
         Write-ScriptLog -Level INFO -Message "Discovered site security groups: '$groupNames'"
 
@@ -1429,7 +1429,7 @@ function Configure-SharePointPermissions {
     }
 
     # Step 3: Assign Optional Members
-    if ($MemberList -and $MemberList.Count -gt 0) {
+    if ($MemberList -and @($MemberList).Count -gt 0) {
         $targetMemberGroups = @()
         if ($Groups.Members) {
             if (-not [string]::IsNullOrWhiteSpace($Groups.Members.Title)) {
@@ -1444,7 +1444,7 @@ function Configure-SharePointPermissions {
         $targetMemberGroups += "Członkowie witryny $Title"
         $targetMemberGroups = $targetMemberGroups | Select-Object -Unique
 
-        Write-ScriptLog -Level INFO -Message "Assigning $($MemberList.Count) optional member(s) (Edit permissions)..."
+        Write-ScriptLog -Level INFO -Message "Assigning $(@($MemberList).Count) optional member(s) (Edit permissions)..."
         foreach ($member in $MemberList) {
             $memberAdded = $false
             foreach ($mg in $targetMemberGroups) {
@@ -1467,7 +1467,7 @@ function Configure-SharePointPermissions {
     }
 
     # Step 4: Assign Optional Visitors
-    if ($VisitorList -and $VisitorList.Count -gt 0) {
+    if ($VisitorList -and @($VisitorList).Count -gt 0) {
         $targetVisitorGroups = @()
         if ($Groups.Visitors) {
             if (-not [string]::IsNullOrWhiteSpace($Groups.Visitors.Title)) {
@@ -1483,7 +1483,7 @@ function Configure-SharePointPermissions {
         $targetVisitorGroups += "Goście witryny $Title"
         $targetVisitorGroups = $targetVisitorGroups | Select-Object -Unique
 
-        Write-ScriptLog -Level INFO -Message "Assigning $($VisitorList.Count) optional visitor(s) (Read permissions)..."
+        Write-ScriptLog -Level INFO -Message "Assigning $(@($VisitorList).Count) optional visitor(s) (Read permissions)..."
         foreach ($visitor in $VisitorList) {
             $visitorAdded = $false
             foreach ($vg in $targetVisitorGroups) {
@@ -1567,7 +1567,7 @@ try {
     $duration = (Get-Date) - $Script:StartTime
     $durationStr = "{0:D2}m {1:D2}s" -f $duration.Minutes, $duration.Seconds
 
-    $hasFailures = ($Script:OperationDetails | Where-Object { $_.Status -eq 'Failed' }).Count -gt 0
+    $hasFailures = @($Script:OperationDetails | Where-Object { $_.Status -eq 'Failed' }).Count -gt 0
     $bannerColor = if ($hasFailures) { 'Yellow' } else { 'Green' }
     $bannerTitle = if ($hasFailures) { " OPERATION COMPLETED WITH WARNINGS: REVIEW AUDIT TRAIL" } else { " OPERATION COMPLETED SUCCESSFULLY: SHAREPOINT SITE CONFIGURATION" }
 
