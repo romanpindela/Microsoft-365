@@ -356,19 +356,6 @@ if ($Help.IsPresent -or ($PSBoundParameters.Count -eq 0)) {
 # ==============================================================================
 # ENVIRONMENT & PREREQUISITE CHECKS (Standards 9, 11)
 # ==============================================================================
-function Test-EnvironmentPrerequisites {
-    # Verify execution privilege using language-independent SID check
-    $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-    $adminSid  = New-Object Security.Principal.SecurityIdentifier([Security.Principal.WellKnownSidType]::BuiltInAdministratorsSid, $null)
-
-    if ($principal.IsInRole($adminSid)) {
-        Write-Warning "`n[SECURITY / ENVIRONMENT ERROR]: OneDrive sync cannot operate with elevated Administrator privileges."
-        Write-Host "OneDrive desktop sync is bound strictly to standard user desktop sessions." -ForegroundColor Yellow
-        Write-Host "Please relaunch this script in a standard user PowerShell console (without 'Run as Administrator').`n" -ForegroundColor Yellow
-        exit 1
-    }
-
 function Get-OneDriveExecutablePath {
     $candidatePaths = @(
         "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe",
@@ -383,6 +370,19 @@ function Get-OneDriveExecutablePath {
     }
     return $null
 }
+
+function Test-EnvironmentPrerequisites {
+    # Verify execution privilege using language-independent SID check
+    $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    $adminSid  = New-Object Security.Principal.SecurityIdentifier([Security.Principal.WellKnownSidType]::BuiltInAdministratorsSid, $null)
+
+    if ($principal.IsInRole($adminSid)) {
+        Write-Warning "`n[SECURITY / ENVIRONMENT ERROR]: OneDrive sync cannot operate with elevated Administrator privileges."
+        Write-Host "OneDrive desktop sync is bound strictly to standard user desktop sessions." -ForegroundColor Yellow
+        Write-Host "Please relaunch this script in a standard user PowerShell console (without 'Run as Administrator').`n" -ForegroundColor Yellow
+        exit 1
+    }
 
     # Verify OneDrive process and executable availability
     Write-Log -Level INFO -Message "Verifying OneDrive desktop client status..."
