@@ -766,6 +766,57 @@ function Get-AccessibleSharePointSites {
             }
         }
         catch { }
+
+        # 1d. Query Microsoft 365 Groups the user is a member of (/me/memberOf)
+        try {
+            Write-Log -Level DEBUG -Message "Querying user group memberships via Graph API (/me/memberOf)..."
+            $memberOfUrl = "https://graph.microsoft.com/v1.0/me/memberOf?`$top=100&`$select=id,displayName,groupTypes"
+            $mResp = Invoke-RestMethod -Uri $memberOfUrl -Headers $graphHeaders -Method Get -ErrorAction SilentlyContinue
+            $groups = if ($mResp.value) { $mResp.value } else { @() }
+
+            foreach ($grp in $groups) {
+                if ($grp.groupTypes -and ($grp.groupTypes -contains "Unified")) {
+                    try {
+                        $grpSiteUrl = "https://graph.microsoft.com/v1.0/groups/$($grp.id)/sites/root?`$select=id,displayName,webUrl"
+                        $gsResp = Invoke-RestMethod -Uri $grpSiteUrl -Headers $graphHeaders -Method Get -ErrorAction Stop
+                        if ($gsResp.webUrl -and ($gsResp.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/)')) {
+                            $cleanUrl = $gsResp.webUrl.TrimEnd('/')
+                            $title = if ($grp.displayName) { $grp.displayName } else { $gsResp.displayName }
+                            $discoveredList.Add([PSCustomObject]@{
+                                Title = $title
+                                Url   = $cleanUrl
+                                Type  = "UnifiedGroupSite"
+                            })
+                        }
+                    } catch { }
+                }
+            }
+        }
+        catch { }
+
+        # 1e. Query recent/used SharePoint documents/sites via Graph API (/me/insights/used)
+        try {
+            Write-Log -Level DEBUG -Message "Querying user activity insights via Graph API (/me/insights/used)..."
+            $insightsUrl = "https://graph.microsoft.com/v1.0/me/insights/used?`$top=50"
+            $inResp = Invoke-RestMethod -Uri $insightsUrl -Headers $graphHeaders -Method Get -ErrorAction SilentlyContinue
+            $insights = if ($inResp.value) { $inResp.value } else { @() }
+
+            foreach ($item in $insights) {
+                if ($item.resourceReference -and $item.resourceReference.webUrl) {
+                    $u = $item.resourceReference.webUrl
+                    if ($u -match '^(https?://[^/]+/(?:sites|teams)/[^/]+)') {
+                        $siteUrl = $Matches[1].TrimEnd('/')
+                        $siteSlug = [System.IO.Path]::GetFileName($siteUrl)
+                        $discoveredList.Add([PSCustomObject]@{
+                            Title = $siteSlug
+                            Url   = $siteUrl
+                            Type  = "RecentActivitySite"
+                        })
+                    }
+                }
+            }
+        }
+        catch { }
     }
 
     # METHOD 2: SharePoint Search REST API (Fallback or Supplemental)
@@ -849,7 +900,11 @@ function Get-AccessibleSharePointSites {
         }
     }
 
-    return ,@($uniqueList)
+    if ($uniqueList.Count -eq 0) {
+        return @()
+    }
+
+    return $uniqueList.ToArray()
 }
 
 function Get-SharePointLibraryMetadata {
@@ -1134,46 +1189,64 @@ try {
                                                           -GraphToken $authContext.GraphToken)
 
         if (@($discoveredSites).Count -eq 0) {
-            Write-Log -Level WARN -Message "No accessible SharePoint sites found across tenant '$cleanHost'."
-            Write-Host "Tip: You can specify target sites directly using: -SiteName 'site-name'`n" -ForegroundColor Yellow
-            exit 0
-        }
+            Write-Log -Level WARN -Message "No accessible SharePoint sites found automatically across tenant '$cleanHost' (Tenant search/graph APIs may be restricted)."
+            Write-Host "`nTip: Tenant security policies may restrict broad tenant-wide site enumeration." -ForegroundColor Yellow
+            Write-Host "You can enter your target SharePoint site slug directly (e.g. 'automatyka').`n" -ForegroundColor Yellow
 
-        Write-Host "`n--------------------------------------------------------------------------------" -ForegroundColor Cyan
-        Write-Host " DISCOVERED ACCESSIBLE SHAREPOINT SITES ($(@($discoveredSites).Count) found):" -ForegroundColor Cyan
-        Write-Host "--------------------------------------------------------------------------------" -ForegroundColor Cyan
-        for ($i = 0; $i -lt @($discoveredSites).Count; $i++) {
-            Write-Host (" [{0,2}] {1,-30} - {2}" -f ($i + 1), $discoveredSites[$i].Title, $discoveredSites[$i].Url) -ForegroundColor White
-        }
-        Write-Host "--------------------------------------------------------------------------------`n" -ForegroundColor Cyan
-
-        if ($All) {
-            Write-Log -Level INFO -Message "Switch -All specified. Selecting all $(@($discoveredSites).Count) discovered sites for synchronization."
-            foreach ($s in $discoveredSites) { $targetSiteUrls.Add($s.Url) }
-        }
-        else {
-            Write-Host "Select sites to sync:" -ForegroundColor Yellow
-            Write-Host "  - Enter comma-separated numbers (e.g. 1, 3, 5)" -ForegroundColor Gray
-            Write-Host "  - Type 'ALL' to synchronize all discovered sites" -ForegroundColor Gray
-            Write-Host "  - Type 'Q' to quit" -ForegroundColor Gray
-            $choice = Read-Host "`nYour selection"
-
-            if ([string]::IsNullOrWhiteSpace($choice) -or ($choice.Trim().ToUpper() -eq 'Q')) {
-                Write-Log -Level INFO -Message "User aborted site selection. Exiting."
-                exit 0
+            $manualInput = Read-Host "Enter SharePoint site name or slug to sync (or 'Q' to quit)"
+            if (-not [string]::IsNullOrWhiteSpace($manualInput) -and ($manualInput.Trim().ToUpper() -ne 'Q')) {
+                $manualSlugs = $manualInput.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries)
+                foreach ($ms in $manualSlugs) {
+                    $canonical = Resolve-SharePointSiteCanonicalUrl -InputSite $ms.Trim() -CleanTenantHost $cleanHost
+                    $targetSiteUrls.Add($canonical)
+                }
             }
 
-            if ($choice.Trim().ToUpper() -eq 'ALL') {
+            if (@($targetSiteUrls).Count -eq 0) {
+                Write-Log -Level INFO -Message "No sites specified. Exiting."
+                exit 0
+            }
+        }
+        else {
+            Write-Host "`n--------------------------------------------------------------------------------" -ForegroundColor Cyan
+            Write-Host " DISCOVERED ACCESSIBLE SHAREPOINT SITES ($(@($discoveredSites).Count) found):" -ForegroundColor Cyan
+            Write-Host "--------------------------------------------------------------------------------" -ForegroundColor Cyan
+            for ($i = 0; $i -lt @($discoveredSites).Count; $i++) {
+                $sObj   = $discoveredSites[$i]
+                $sTitle = if ($sObj -and $sObj.Title) { $sObj.Title } else { "Site $($i + 1)" }
+                $sUrl   = if ($sObj -and $sObj.Url) { $sObj.Url } else { "" }
+                Write-Host (" [{0,2}] {1,-30} - {2}" -f ($i + 1), $sTitle, $sUrl) -ForegroundColor White
+            }
+            Write-Host "--------------------------------------------------------------------------------`n" -ForegroundColor Cyan
+
+            if ($All) {
+                Write-Log -Level INFO -Message "Switch -All specified. Selecting all $(@($discoveredSites).Count) discovered sites for synchronization."
                 foreach ($s in $discoveredSites) { $targetSiteUrls.Add($s.Url) }
             }
             else {
-                $indexes = $choice.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries)
-                foreach ($idxStr in $indexes) {
-                    $parsedIdx = 0
-                    if ([int]::TryParse($idxStr.Trim(), [ref]$parsedIdx) -and ($parsedIdx -ge 1) -and ($parsedIdx -le @($discoveredSites).Count)) {
-                        $targetSiteUrls.Add($discoveredSites[$parsedIdx - 1].Url)
-                    } else {
-                        Write-Log -Level WARN -Message "Invalid site index specified: '$idxStr'. Skipping."
+                Write-Host "Select sites to sync:" -ForegroundColor Yellow
+                Write-Host "  - Enter comma-separated numbers (e.g. 1, 3, 5)" -ForegroundColor Gray
+                Write-Host "  - Type 'ALL' to synchronize all discovered sites" -ForegroundColor Gray
+                Write-Host "  - Type 'Q' to quit" -ForegroundColor Gray
+                $choice = Read-Host "`nYour selection"
+
+                if ([string]::IsNullOrWhiteSpace($choice) -or ($choice.Trim().ToUpper() -eq 'Q')) {
+                    Write-Log -Level INFO -Message "User aborted site selection. Exiting."
+                    exit 0
+                }
+
+                if ($choice.Trim().ToUpper() -eq 'ALL') {
+                    foreach ($s in $discoveredSites) { $targetSiteUrls.Add($s.Url) }
+                }
+                else {
+                    $indexes = $choice.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries)
+                    foreach ($idxStr in $indexes) {
+                        $parsedIdx = 0
+                        if ([int]::TryParse($idxStr.Trim(), [ref]$parsedIdx) -and ($parsedIdx -ge 1) -and ($parsedIdx -le @($discoveredSites).Count)) {
+                            $targetSiteUrls.Add($discoveredSites[$parsedIdx - 1].Url)
+                        } else {
+                            Write-Log -Level WARN -Message "Invalid site index specified: '$idxStr'. Skipping."
+                        }
                     }
                 }
             }
