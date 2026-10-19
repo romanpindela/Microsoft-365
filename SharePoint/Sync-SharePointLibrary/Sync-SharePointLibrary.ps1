@@ -465,23 +465,30 @@ function Resolve-SharePointSiteCanonicalUrl {
 # LOCAL ONEDRIVE REGISTRY & SYNC STATE RECOGNITION
 # ==============================================================================
 function Get-LocalOneDriveAccounts {
-    $accounts = @()
+    $accounts = [System.Collections.Generic.List[PSObject]]::new()
     $accKey = "HKCU:\Software\Microsoft\OneDrive\Accounts"
     if (Test-Path $accKey) {
         Get-ChildItem -Path $accKey -ErrorAction SilentlyContinue | ForEach-Object {
             $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-            if ($props -and $props.UserEmail) {
-                $accounts += [PSCustomObject]@{
-                    AccountKey  = $_.PSChildName
-                    UserEmail   = $props.UserEmail
-                    DisplayName = $props.DisplayName
-                    UserFolder  = $props.UserFolder
-                    EndpointUri = $props.ServiceEndpointUri
+            if ($props -and ($props.PSObject.Properties['UserEmail'])) {
+                $email = $props.PSObject.Properties['UserEmail'].Value
+                if (-not [string]::IsNullOrWhiteSpace($email)) {
+                    $displayName = if ($props.PSObject.Properties['DisplayName']) { $props.PSObject.Properties['DisplayName'].Value } else { "" }
+                    $userFolder  = if ($props.PSObject.Properties['UserFolder']) { $props.PSObject.Properties['UserFolder'].Value } else { "" }
+                    $endpointUri = if ($props.PSObject.Properties['ServiceEndpointUri']) { $props.PSObject.Properties['ServiceEndpointUri'].Value } else { "" }
+
+                    $accounts.Add([PSCustomObject]@{
+                        AccountKey  = $_.PSChildName
+                        UserEmail   = $email
+                        DisplayName = $displayName
+                        UserFolder  = $userFolder
+                        EndpointUri = $endpointUri
+                    })
                 }
             }
         }
     }
-    return $accounts
+    return $accounts.ToArray()
 }
 
 function Get-LocalSyncedLibraries {
@@ -490,13 +497,20 @@ function Get-LocalSyncedLibraries {
     if (Test-Path $providerKey) {
         Get-ChildItem -Path $providerKey -ErrorAction SilentlyContinue | ForEach-Object {
             $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-            if ($props -and $props.UrlNamespace -and $props.MountPoint) {
-                $synced.Add([PSCustomObject]@{
-                    MountPoint   = $props.MountPoint
-                    UrlNamespace = $props.UrlNamespace.TrimEnd('/')
-                    LibraryType  = $props.LibraryType
-                    WebUrl       = if ($props.WebUrl) { $props.WebUrl.TrimEnd('/') } else { "" }
-                })
+            if ($props) {
+                $urlNs = if ($props.PSObject.Properties['UrlNamespace']) { $props.PSObject.Properties['UrlNamespace'].Value } else { $null }
+                $mount = if ($props.PSObject.Properties['MountPoint']) { $props.PSObject.Properties['MountPoint'].Value } else { $null }
+                $lType = if ($props.PSObject.Properties['LibraryType']) { $props.PSObject.Properties['LibraryType'].Value } else { "" }
+                $wUrl  = if ($props.PSObject.Properties['WebUrl']) { $props.PSObject.Properties['WebUrl'].Value } else { "" }
+
+                if (-not [string]::IsNullOrWhiteSpace($urlNs) -and -not [string]::IsNullOrWhiteSpace($mount)) {
+                    $synced.Add([PSCustomObject]@{
+                        MountPoint   = $mount
+                        UrlNamespace = $urlNs.TrimEnd('/')
+                        LibraryType  = $lType
+                        WebUrl       = if ($wUrl) { $wUrl.TrimEnd('/') } else { "" }
+                    })
+                }
             }
         }
     }
@@ -651,15 +665,38 @@ function Get-SharePointAccessToken {
                     }
                 }
 
-                # Resolve authenticated user email from Graph /me endpoint if available
+                # Resolve authenticated user email from Graph /me endpoint or local accounts
                 if ($graphToken) {
                     try {
                         $meHeaders = @{ "Authorization" = "Bearer $graphToken"; "Accept" = "application/json" }
                         $meResp = Invoke-RestMethod -Uri "https://graph.microsoft.com/v1.0/me?`$select=mail,userPrincipalName,displayName" -Headers $meHeaders -Method Get -ErrorAction Stop
-                        $userEmail = if ($meResp.mail) { $meResp.mail } else { $meResp.userPrincipalName }
-                        Write-Log -Level INFO -Message "Authenticated identity: $userEmail ($($meResp.displayName))"
+                        $mailVal = if ($meResp.PSObject.Properties['mail']) { $meResp.mail } else { $null }
+                        $upnVal  = if ($meResp.PSObject.Properties['userPrincipalName']) { $meResp.userPrincipalName } else { $null }
+                        $userEmail = if (-not [string]::IsNullOrWhiteSpace($mailVal)) { $mailVal } else { $upnVal }
+                        $dispVal = if ($meResp.PSObject.Properties['displayName']) { $meResp.displayName } else { "" }
+                        if ($userEmail) {
+                            Write-Log -Level INFO -Message "Authenticated identity: $userEmail ($dispVal)"
+                        }
                     }
                     catch { }
+                }
+
+                if ([string]::IsNullOrWhiteSpace($userEmail)) {
+                    $localAccs = @(Get-LocalOneDriveAccounts)
+                    if ($localAccs.Count -gt 0) {
+                        $matchedAcc = $localAccs | Where-Object { 
+                            ($_.UserEmail -and $_.UserEmail -like "*elektrimont*") -or
+                            ($_.EndpointUri -and $_.EndpointUri -like "*$CleanTenantHost*")
+                        } | Select-Object -First 1
+
+                        if ($matchedAcc) {
+                            $userEmail = $matchedAcc.UserEmail
+                            Write-Log -Level INFO -Message "Authenticated corporate identity (via OneDrive): $userEmail ($($matchedAcc.DisplayName))"
+                        } else {
+                            $userEmail = $localAccs[0].UserEmail
+                            Write-Log -Level INFO -Message "Authenticated corporate identity (via OneDrive): $userEmail"
+                        }
+                    }
                 }
 
                 return [PSCustomObject]@{
@@ -1002,17 +1039,18 @@ function Get-SharePointLibraryMetadata {
                 if (-not [string]::IsNullOrWhiteSpace($TargetLibraryTitle)) {
                     $matched = $resolvedLibraries | Where-Object { $_.ListTitle -like "*$TargetLibraryTitle*" }
                     if ($matched) {
-                        $resolvedLibraries = [System.Collections.Generic.List[PSObject]]::new(@($matched))
+                        $filtered = [System.Collections.Generic.List[PSObject]]::new()
+                        foreach ($m in $matched) { $filtered.Add($m) }
+                        $resolvedLibraries = $filtered
                     }
                 }
                 else {
                     # Pick default library: prefer 'Dokumenty' or 'Documents' or first drive
                     $fav = $resolvedLibraries | Where-Object { $_.ListTitle -match '(?i)^(Dokumenty|Documents|Shared Documents)' } | Select-Object -First 1
-                    if ($fav) {
-                        $resolvedLibraries = [System.Collections.Generic.List[PSObject]]::new(@($fav))
-                    } else {
-                        $resolvedLibraries = [System.Collections.Generic.List[PSObject]]::new(@($resolvedLibraries[0]))
-                    }
+                    $selected = if ($fav) { $fav } else { $resolvedLibraries[0] }
+                    $filtered = [System.Collections.Generic.List[PSObject]]::new()
+                    $filtered.Add($selected)
+                    $resolvedLibraries = $filtered
                 }
             }
         }
@@ -1044,10 +1082,11 @@ function Get-SharePointLibraryMetadata {
             if ([string]::IsNullOrWhiteSpace($userEmail)) {
                 try {
                     $userResp = Invoke-RestMethod -Uri "$FullSiteUrl/_api/web/currentuser?`$select=Email,UserPrincipalName" -Headers $headers -Method Get -ErrorAction Stop
-                    if ($userResp.d) {
-                        $userEmail = if ($userResp.d.Email) { $userResp.d.Email } else { $userResp.d.UserPrincipalName }
-                    } else {
-                        $userEmail = if ($userResp.Email) { $userResp.Email } else { $userResp.UserPrincipalName }
+                    $userObj = if ($userResp.PSObject.Properties['d']) { $userResp.d } else { $userResp }
+                    if ($userObj) {
+                        $emailVal = if ($userObj.PSObject.Properties['Email']) { $userObj.Email } else { $null }
+                        $upnVal   = if ($userObj.PSObject.Properties['UserPrincipalName']) { $userObj.UserPrincipalName } else { $null }
+                        $userEmail = if (-not [string]::IsNullOrWhiteSpace($emailVal)) { $emailVal } else { $upnVal }
                     }
                 } catch { }
             }
@@ -1109,9 +1148,18 @@ function Get-SharePointLibraryMetadata {
 
     # Fallback to local OneDrive registry account email if still blank
     if ([string]::IsNullOrWhiteSpace($userEmail)) {
-        $accounts = Get-LocalOneDriveAccounts
-        if (@($accounts).Count -gt 0) {
-            $userEmail = $accounts[0].UserEmail
+        $accounts = @(Get-LocalOneDriveAccounts)
+        if ($accounts.Count -gt 0) {
+            $tenantMatched = $accounts | Where-Object {
+                ($_.UserEmail -and $_.UserEmail -like "*elektrimont*") -or
+                ($_.EndpointUri -and $_.EndpointUri -like "*$hostName*")
+            } | Select-Object -First 1
+
+            if ($tenantMatched) {
+                $userEmail = $tenantMatched.UserEmail
+            } else {
+                $userEmail = $accounts[0].UserEmail
+            }
         }
     }
 
