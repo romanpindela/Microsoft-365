@@ -369,25 +369,28 @@ function Test-EnvironmentPrerequisites {
         exit 1
     }
 
+function Get-OneDriveExecutablePath {
+    $candidatePaths = @(
+        "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe",
+        "C:\Program Files\Microsoft OneDrive\OneDrive.exe",
+        "C:\Program Files (x86)\Microsoft OneDrive\OneDrive.exe"
+    )
+
+    foreach ($p in $candidatePaths) {
+        if (Test-Path -Path $p) {
+            return $p
+        }
+    }
+    return $null
+}
+
     # Verify OneDrive process and executable availability
     Write-Log -Level INFO -Message "Verifying OneDrive desktop client status..."
     $proc = Get-Process -Name "OneDrive" -ErrorAction SilentlyContinue
     if (-not $proc) {
         Write-Log -Level WARN -Message "OneDrive process is not currently running. Attempting to launch..."
 
-        $candidatePaths = @(
-            "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe",
-            "C:\Program Files\Microsoft OneDrive\OneDrive.exe",
-            "C:\Program Files (x86)\Microsoft OneDrive\OneDrive.exe"
-        )
-
-        $exeFound = $null
-        foreach ($p in $candidatePaths) {
-            if (Test-Path -Path $p) {
-                $exeFound = $p
-                break
-            }
-        }
+        $exeFound = Get-OneDriveExecutablePath
 
         if ($exeFound) {
             Start-Process -FilePath $exeFound
@@ -492,6 +495,7 @@ function Get-LocalSyncedLibraries {
                     MountPoint   = $props.MountPoint
                     UrlNamespace = $props.UrlNamespace.TrimEnd('/')
                     LibraryType  = $props.LibraryType
+                    WebUrl       = if ($props.WebUrl) { $props.WebUrl.TrimEnd('/') } else { "" }
                 })
             }
         }
@@ -511,7 +515,6 @@ function Get-SharePointAccessToken {
         [string]$CustomClientSecret
     )
 
-    # 1. Non-Interactive Client Credentials Grant (Microsoft Entra ID App)
     # 1. Non-Interactive Client Credentials Grant (Microsoft Entra ID App)
     if (-not [string]::IsNullOrWhiteSpace($CustomClientSecret)) {
         Write-Log -Level INFO -Message "Authenticating non-interactively using Microsoft Entra ID App credentials..."
@@ -705,7 +708,7 @@ function Get-AccessibleSharePointSites {
             $graphSites = if ($graphResp.value) { $graphResp.value } else { @() }
 
             foreach ($gs in $graphSites) {
-                if ($gs.webUrl -and ($gs.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/)')) {
+                if ($gs.webUrl -and ($gs.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/|/contentstorage/)')) {
                     $cleanUrl = $gs.webUrl.TrimEnd('/')
                     $title = if ($gs.displayName) { $gs.displayName } else { $gs.name }
                     $discoveredList.Add([PSCustomObject]@{
@@ -729,7 +732,7 @@ function Get-AccessibleSharePointSites {
             $fSites = if ($fResp.value) { $fResp.value } else { @() }
 
             foreach ($fs in $fSites) {
-                if ($fs.webUrl -and ($fs.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/)')) {
+                if ($fs.webUrl -and ($fs.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/|/contentstorage/)')) {
                     $cleanUrl = $fs.webUrl.TrimEnd('/')
                     $title = if ($fs.displayName) { $fs.displayName } else { $fs.name }
                     $discoveredList.Add([PSCustomObject]@{
@@ -753,7 +756,7 @@ function Get-AccessibleSharePointSites {
                 try {
                     $teamSiteUrl = "https://graph.microsoft.com/v1.0/groups/$($team.id)/sites/root?`$select=id,displayName,webUrl"
                     $tsResp = Invoke-RestMethod -Uri $teamSiteUrl -Headers $graphHeaders -Method Get -ErrorAction Stop
-                    if ($tsResp.webUrl -and ($tsResp.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/)')) {
+                    if ($tsResp.webUrl -and ($tsResp.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/|/contentstorage/)')) {
                         $cleanUrl = $tsResp.webUrl.TrimEnd('/')
                         $title = if ($team.displayName) { $team.displayName } else { $tsResp.displayName }
                         $discoveredList.Add([PSCustomObject]@{
@@ -779,7 +782,7 @@ function Get-AccessibleSharePointSites {
                     try {
                         $grpSiteUrl = "https://graph.microsoft.com/v1.0/groups/$($grp.id)/sites/root?`$select=id,displayName,webUrl"
                         $gsResp = Invoke-RestMethod -Uri $grpSiteUrl -Headers $graphHeaders -Method Get -ErrorAction Stop
-                        if ($gsResp.webUrl -and ($gsResp.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/)')) {
+                        if ($gsResp.webUrl -and ($gsResp.webUrl -notmatch '(?i)(-my\.sharepoint\.com|/personal/|/contentstorage/)')) {
                             $cleanUrl = $gsResp.webUrl.TrimEnd('/')
                             $title = if ($grp.displayName) { $grp.displayName } else { $gsResp.displayName }
                             $discoveredList.Add([PSCustomObject]@{
@@ -853,7 +856,7 @@ function Get-AccessibleSharePointSites {
 
                     if ([string]::IsNullOrWhiteSpace($path)) { continue }
 
-                    $isPersonal = $path -match '(?i)(-my\.sharepoint\.com|/personal/)'
+                    $isPersonal = $path -match '(?i)(-my\.sharepoint\.com|/personal/|/contentstorage/)'
                     $isSystem   = $path -match '(?i)(/search(/pages)?|/portals/|/sites/appcatalog|/sites/compliancehub)'
 
                     if (-not $isPersonal -and -not $isSystem) {
@@ -893,6 +896,7 @@ function Get-AccessibleSharePointSites {
     $uniqueMap = @{}
     $uniqueList = [System.Collections.Generic.List[PSObject]]::new()
     foreach ($item in $discoveredList) {
+        $item.Url = $item.Url.Trim().TrimEnd('/')
         $canonical = $item.Url.ToLower()
         if (-not $uniqueMap.ContainsKey($canonical)) {
             $uniqueMap[$canonical] = $true
@@ -941,7 +945,12 @@ function Get-SharePointLibraryMetadata {
             }
 
             # 1a. Query site object from Graph
-            $graphSiteUrl = "https://graph.microsoft.com/v1.0/sites/$hostName`:$sitePath"
+            $isRoot = [string]::IsNullOrWhiteSpace($sitePath) -or ($sitePath -eq '/')
+            $graphSiteUrl = if ($isRoot) {
+                "https://graph.microsoft.com/v1.0/sites/$hostName"
+            } else {
+                "https://graph.microsoft.com/v1.0/sites/$hostName`:$sitePath"
+            }
             $siteResp = Invoke-RestMethod -Uri $graphSiteUrl -Headers $graphHeaders -Method Get -ErrorAction Stop
 
             $webTitle = if ($siteResp.displayName) { $siteResp.displayName } else { $siteResp.name }
@@ -955,7 +964,8 @@ function Get-SharePointLibraryMetadata {
             }
 
             # 1b. Query document libraries (drives) for this site
-            $drivesUrl = "https://graph.microsoft.com/v1.0/sites/$hostName`:$sitePath/drives?`$select=id,name,webUrl,driveType,sharepointIds"
+            $resolvedSiteId = if ($siteResp.id) { $siteResp.id } else { if ($isRoot) { "root" } else { "$hostName`:$sitePath" } }
+            $drivesUrl = "https://graph.microsoft.com/v1.0/sites/$resolvedSiteId/drives?`$select=id,name,webUrl,driveType,sharepointIds"
             $drivesResp = Invoke-RestMethod -Uri $drivesUrl -Headers $graphHeaders -Method Get -ErrorAction Stop
             $drives = if ($drivesResp.value) { $drivesResp.value } else { @() }
 
@@ -1134,7 +1144,7 @@ function Invoke-OneDriveSyncRegistration {
     $webId     = $SiteMeta.WebId
     $listId    = $Library.ListId.ToString().Trim('{}')
     $userEmail = $SiteMeta.UserEmail
-    $webUrl    = $SiteMeta.WebUrl
+    $webUrl    = $SiteMeta.WebUrl.TrimEnd('/')
     $webTitle  = $SiteMeta.WebTitle
     $listTitle = $Library.ListTitle
 
@@ -1145,11 +1155,33 @@ function Invoke-OneDriveSyncRegistration {
     $alreadySynced = $false
     $matchingPath  = ""
 
+    $cleanWebUrl    = $webUrl.ToLower()
+    $cleanListTitle = $listTitle.Trim().ToLower()
+
     foreach ($sl in $syncedLibs) {
-        if ($sl.UrlNamespace -and ($sl.UrlNamespace -match [regex]::Escape($webUrl) -or $sl.UrlNamespace -match [regex]::Escape($listTitle))) {
-            $alreadySynced = $true
-            $matchingPath  = $sl.MountPoint
-            break
+        # Strictly ignore personal OneDrive / MySite locations
+        if ($sl.LibraryType -in @('mysite', 'personal') -or ($sl.UrlNamespace -and $sl.UrlNamespace -match '(?i)(-my\.sharepoint\.com|/personal/)')) {
+            continue
+        }
+
+        $slNamespace = if ($sl.UrlNamespace) { $sl.UrlNamespace.TrimEnd('/').ToLower() } else { "" }
+        $slWebUrl    = if ($sl.WebUrl) { $sl.WebUrl.TrimEnd('/').ToLower() } else { "" }
+        $slMount     = if ($sl.MountPoint) { $sl.MountPoint.ToLower() } else { "" }
+
+        # Verify that this synced entry matches the current SharePoint site
+        $siteMatch = ($slNamespace -and $slNamespace.StartsWith($cleanWebUrl)) -or ($slWebUrl -and $slWebUrl -eq $cleanWebUrl)
+        if ($siteMatch) {
+            # Now verify if the library matches
+            $libraryMatch = $slNamespace.EndsWith("/$cleanListTitle") -or 
+                            $slMount.Contains($cleanListTitle) -or 
+                            $slNamespace.Contains("/$cleanListTitle/") -or 
+                            [string]::IsNullOrWhiteSpace($cleanListTitle)
+
+            if ($libraryMatch) {
+                $alreadySynced = $true
+                $matchingPath  = $sl.MountPoint
+                break
+            }
         }
     }
 
@@ -1175,7 +1207,12 @@ function Invoke-OneDriveSyncRegistration {
 
     Write-Log -Level INFO -Message "Invoking OneDrive sync protocol handler..."
     try {
-        Start-Process -FilePath "explorer.exe" -ArgumentList "`"$syncUri`""
+        $odExe = Get-OneDriveExecutablePath
+        if ($odExe) {
+            Start-Process -FilePath $odExe -ArgumentList "/url:`"$syncUri`""
+        } else {
+            Start-Process -FilePath $syncUri
+        }
         Write-Log -Level SUCCESS -Message "Sync command successfully delivered to OneDrive client for '$listTitle'!"
         
         $Script:SummaryList.Add([PSCustomObject]@{
