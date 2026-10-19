@@ -177,6 +177,11 @@ All selected document libraries are mounted into Windows File Explorer and regis
 
 ![Execution Summary Report and Synced Libraries](assets/Connecting_a_SharePoint_sites2.jpg)
 
+### 5. Seamless Windows 10/11 File Explorer Integration
+Once synchronized, the corporate SharePoint document libraries appear directly under the organization's name (`Elektrimont Sp. z o.o.`) in Windows File Explorer with live cloud status icons:
+
+![Connected SharePoint sites in Windows File Explorer](assets/Connected_Sharepoint_sites_in_Windows.jpg)
+
 ---
 
 ## Non-Interactive / Microsoft Entra ID Setup Guide
@@ -254,6 +259,18 @@ Podium Park               Documents            Initiated        Handed off to On
 
 Log details have been written to: C:\Logs\20261019_094022-Sync-SharePointLibrary-RPINDELA-PC-rpindela.log
 ```
+
+---
+
+## Documentation & Manuals
+
+In addition to this technical README, a complete step-by-step end-user onboarding manual in Polish is provided in the repository:
+
+* 📘 **[Instrukcja Podłączenia SharePoint Automatyka do Windows 11 v2.0 (PDF)](assets/Instrukcja%20Podlaczenia%20SharePoint%20Automatyka%20do%20Windows%2011%20v2.0.pdf)**
+  - Detailed graphical walk-through for company employees.
+  - Verifying active Microsoft 365 / OneDrive corporate credentials.
+  - Explanation of Windows File Explorer synchronization status badges (Cloud Only, Syncing, Always Available).
+  - Practical tips for opening and co-authoring files in desktop Office applications.
 
 ---
 
