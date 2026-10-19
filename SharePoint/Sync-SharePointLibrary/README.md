@@ -71,7 +71,7 @@ Unblock-File -Path .\Sync-SharePointLibrary.ps1
 ```
 
 > [!TIP]
-> A step-by-step PDF end-user guide (*Instrukcja Podłączenia SharePoint Automatyka do Windows 11*) is available in [`assets/Instrukcja Podlaczenia SharePoint Automatyka do Windows 11 v2.0.pdf`](assets/Instrukcja%20Podlaczenia%20SharePoint%20Automatyka%20do%20Windows%2011%20v2.0.pdf).
+> Comprehensive end-user onboarding and administrator PDF manuals (including *Instrukcja Podłączenia SharePoint Automatyka*, *Udostępnianie Zasobów i Uprawnienia*, and *Wdrożenie SharePoint Online*) are available in the [`assets/`](assets/) directory and detailed in the [Documentation & Manuals](#documentation--manuals) section below.
 
 ---
 
@@ -264,13 +264,25 @@ Log details have been written to: C:\Logs\20261019_094022-Sync-SharePointLibrary
 
 ## Documentation & Manuals
 
-In addition to this technical README, a complete step-by-step end-user onboarding manual in Polish is provided in the repository:
+In addition to this technical README, comprehensive end-user onboarding and administrator reference guides in Polish are provided in the repository [`assets/`](assets/) directory:
 
 * 📘 **[Instrukcja Podłączenia SharePoint Automatyka do Windows 11 v2.0 (PDF)](assets/Instrukcja%20Podlaczenia%20SharePoint%20Automatyka%20do%20Windows%2011%20v2.0.pdf)**
   - Detailed graphical walk-through for company employees.
   - Verifying active Microsoft 365 / OneDrive corporate credentials.
   - Explanation of Windows File Explorer synchronization status badges (Cloud Only, Syncing, Always Available).
   - Practical tips for opening and co-authoring files in desktop Office applications.
+
+* 📑 **[Instrukcja Udostępniania i Uprawnień SharePoint & OneDrive (PDF)](assets/Instrukcja%20Udostepniania%20i%20Uprawnien%20SharePoint%20OneDrive.pdf)**
+  - Standard operating procedure for secure file sharing and collaboration.
+  - Comprehensive comparison: OneDrive for Business (personal workspace) vs SharePoint Online (team/departmental storage).
+  - Guidelines for Site Administrators on configuring permissions and access inheritance.
+  - Replacing unstructured email attachments with controlled, trackable cloud sharing links.
+
+* 📕 **[Instrukcja Wdrożenia SharePoint Online i Zarządzania Dostępem (PDF)](assets/Instrukcja%20Wdrozenia%20SharePoint%20Online%20i%20Zarzadzania%20Dostepem.pdf)**
+  - Complete administrator deployment and access governance manual for Microsoft 365 Business Standard.
+  - Tenant licensing assumptions, storage quotas (1 TB OneDrive per user, 1 TB + 10 GB/license SharePoint pool).
+  - Site hierarchy, security groups architecture, and access governance best practices.
+  - Library layout design, metadata, and lifecycle management aligned with the synchronization engine.
 
 ---
 
@@ -342,6 +354,7 @@ sequenceDiagram
   - Added enterprise logging to `C:\Logs` with automatic fallback.
   - Added bilingual document library resolution (Polish / English).
   - Enhanced OneDrive client detection across all modern 64-bit and 32-bit install paths.
+  - Added comprehensive PDF manuals for SharePoint Online deployment, permissions management, and user onboarding.
 * **v1.4.3 (2026-10-16)**:
   - Added OAuth2 Device Code flow and initial SharePoint REST API GUID resolution.
 * **v1.0.0 (2026-10-15)**:
