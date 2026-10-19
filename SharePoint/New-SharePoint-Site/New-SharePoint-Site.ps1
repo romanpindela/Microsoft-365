@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Automates SharePoint Online site creation: provisions modern Company-Wide preview sites (for all licensed M365 users) or isolated Empty Sites with designated owners and optional users.
 
@@ -15,22 +15,26 @@
     2. Company-Wide Preview Site Creation (-CompanyWide / -SiteType CompanyWide):
        - Provisions a modern communication site (SITEPAGEPUBLISHING#0) or custom template.
        - Assigns the specified user as the Primary Site Collection Administrator and Site Owner.
-       - Automatically grants Read/Preview permissions to all company users with a Microsoft 365 license
-         by adding 'Everyone except external users' (and Polish equivalent 'Wszyscy oprócz użytkowników zewnętrznych'
-         or federated directory claim) to the site's Visitors group.
+       - Automatically resolves tenant GUID and assigns the canonical company-wide claim
+         'c:0-.f|rolemanager|spo-grid-all-users/<TenantId>' and bilingual claims ('Everyone except external users'
+         / 'Wszyscy oprócz użytkowników zewnętrznych') to the site's Visitors / Odwiedzający group.
+       - Supports updating/remediating permissions on an existing site collection.
     3. Isolated Empty Site Creation (-EmptySite / -SiteType EmptySite):
        - Provisions a clean, isolated modern site collection (Communication or Team site without M365 Group).
        - Restricts access strictly to the designated Owner.
        - Supports optional assignment of additional Members (Edit) and Visitors (Read).
-    4. Detailed Operation Auditing:
-       - Verbose, step-by-step console reporting for each provisioning phase.
-       - Displays site provisioning polling, administrator assignment, group resolution, and permission grants.
-    5. Enterprise File Logging:
+    4. Auto-Generated Site Alias:
+       - If -SiteAlias is omitted, automatically generates a clean URL slug from -SiteTitle.
+    5. Detailed Operation Auditing:
+       - Real-time step-by-step console reporting for each provisioning phase.
+       - Polling retry loop with progressive backoff for site hydration and group discovery.
+       - Comprehensive operation audit summary table upon completion.
+    6. Enterprise File Logging:
        - Full execution logs automatically saved to C:\Logs (with fallback to $env:LOCALAPPDATA\Logs).
        - Standardized log naming: yyyyMMdd_HHmmss-New-SharePoint-Site-<ComputerName>-<UserName>.log.
-    6. Safety, Bilingual Support & Standards:
-       - Safe input string validation preventing command injections.
-       - Bilingual prompt support (English Y/N and Polish T/N).
+    7. Safety, Bilingual Support & Standards:
+       - Safe input string validation guarding against command injections.
+       - Bilingual prompt support (English Y/N and Polish T/N) and group names (Visitors / Odwiedzający / Goście).
        - Auto-help display on execution without parameters or with -Help / -h.
 
 .PARAMETER SiteTitle
@@ -40,6 +44,7 @@
 .PARAMETER SiteAlias
     The URL slug, relative path (e.g., 'sites/intranet'), or full site URL
     (e.g., 'https://contoso.sharepoint.com/sites/intranet').
+    If omitted, automatically derived from -SiteTitle.
     Aliases: -Alias, -Url, -SiteUrl.
 
 .PARAMETER Owner
@@ -90,10 +95,6 @@
     Site storage quota limit in megabytes (MB).
     Default: 1048576 MB (1 TB). Maximum: 26214400 MB (25 TB).
 
-.PARAMETER ResourceQuota
-    Server resource quota points allocated to the site collection.
-    Default: 300.
-
 .PARAMETER TimeZoneId
     SharePoint Time Zone ID.
     Default: 4 (UTC+01:00 Romance Standard Time - Brussels, Copenhagen, Madrid, Paris, Warsaw).
@@ -123,32 +124,33 @@
     .\New-SharePoint-Site.ps1 -Help
 
 .EXAMPLE
-    # 2. Create a Company-Wide Preview Site for all licensed M365 users
-    .\New-SharePoint-Site.ps1 -SiteTitle "Firma Intranet" -SiteAlias "intranet" -Owner "admin@contoso.com" -CompanyWide
+    # 2. Create a Company-Wide Preview Site for all licensed M365 users (alias auto-generated from Title)
+    .\New-SharePoint-Site.ps1 -SiteTitle "Sekretariat" -Owner "roman.pindela@elektrimont.pl" -CompanyWide -Force
 
 .EXAMPLE
-    # 3. Create a Company-Wide Preview Site with explicit tenant and automated execution (-Force)
-    .\New-SharePoint-Site.ps1 -SiteTitle "Katalog Produktow" -SiteAlias "katalog" -Owner "jan.kowalski@contoso.com" -TenantName "contoso" -CompanyWide -Force
+    # 3. Create a Company-Wide Preview Site with explicit alias and tenant
+    .\New-SharePoint-Site.ps1 -SiteTitle "Katalog Produktow" -SiteAlias "katalog" -Owner "jan.kowalski@contoso.com" -TenantName "contoso" -CompanyWide
 
 .EXAMPLE
-    # 4. Create an Empty Site restricted strictly to the Owner
+    # 4. Create an Empty Private Site with Owner only
     .\New-SharePoint-Site.ps1 -SiteTitle "Projekt Poufny" -SiteAlias "projekt-poufny" -Owner "kierownik@contoso.com" -EmptySite
 
 .EXAMPLE
-    # 5. Create an Empty Site with designated Owner and optional team members and readers
-    .\New-SharePoint-Site.ps1 -SiteTitle "Rada Nadzorcza" -SiteAlias "rada" -Owner "prezes@contoso.com" -EmptySite -Members "dyrektor@contoso.com", "mecenas@contoso.com" -Visitors "audytor@contoso.com"
+    # 5. Create an Empty Private Site with Owner, specific Members, and Visitors
+    .\New-SharePoint-Site.ps1 -SiteTitle "Zarzad" -Owner "prezes@contoso.com" -EmptySite -Members "dyrektor@contoso.com" -Visitors "audytor@contoso.com"
 
 .EXAMPLE
-    # 6. Create a Modern Team Site (no M365 Group) with custom storage quota and English language
-    .\New-SharePoint-Site.ps1 -SiteTitle "Global Ops" -SiteAlias "global-ops" -Owner "admin@contoso.com" -Template "STS#3" -LocaleId 1033 -StorageQuotaMB 524288 -EmptySite -Force
+    # 6. Create a Modern Team Site (no group) with custom quota (500 GB) and English language
+    .\New-SharePoint-Site.ps1 -SiteTitle "Global Ops" -SiteAlias "global-ops" -Owner "admin@contoso.com" -Template "STS#3" -LocaleId 1033 -StorageQuotaMB 512000 -EmptySite -Force
 
 .NOTES
     Script Name   : New-SharePoint-Site.ps1
     Author        : Roman Pindela
     Email         : roman.pindela@gmail.com
     GitHub        : https://github.com/romanpindela
-    Version       : 1.0.0
+    Version       : 1.1.0
     Created       : 2026-10-19
+    Updated       : 2026-10-19
     Standards     : Adheres to CleanCode and PowerShell Script Standards (C:\Dane\rpindela\GitHub\PowerShell Script Standards.txt)
 #>
 
@@ -161,8 +163,8 @@ param(
     [Alias('Title', 'Name', 'SiteName')]
     [string]$SiteTitle,
 
-    [Parameter(ParameterSetName = 'CompanyWide', Mandatory = $true, Position = 1)]
-    [Parameter(ParameterSetName = 'EmptySite', Mandatory = $true, Position = 1)]
+    [Parameter(ParameterSetName = 'CompanyWide', Mandatory = $false, Position = 1)]
+    [Parameter(ParameterSetName = 'EmptySite', Mandatory = $false, Position = 1)]
     [Parameter(ParameterSetName = 'Default', Mandatory = $false, Position = 1)]
     [Alias('Alias', 'Url', 'SiteUrl')]
     [string]$SiteAlias,
@@ -211,10 +213,6 @@ param(
     [long]$StorageQuotaMB = 1048576,
 
     [Parameter()]
-    [ValidateRange(0, 10000)]
-    [int]$ResourceQuota = 300,
-
-    [Parameter()]
     [int]$TimeZoneId = 4,
 
     [Parameter()]
@@ -240,12 +238,18 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Ensure WindowsPowerShell module path is available in PowerShell 7 for cross-compatibility
+$userWinPSModules = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\WindowsPowerShell\Modules"
+if ((Test-Path -Path $userWinPSModules) -and ($env:PSModulePath -notlike "*$userWinPSModules*")) {
+    $env:PSModulePath = "$env:PSModulePath;$userWinPSModules"
+}
+
 # ==============================================================================
 # SCRIPT METADATA DECLARATION
 # ==============================================================================
 $Script:Metadata = @{
     Title       = "New-SharePoint-Site.ps1"
-    Version     = "1.0.0"
+    Version     = "1.1.0"
     Author      = "Roman Pindela"
     Email       = "roman.pindela@gmail.com"
     GitHub      = "https://github.com/romanpindela"
@@ -400,9 +404,10 @@ function Show-ScriptHelp {
         "",
         "SITE CREATION ARCHETYPES:",
         "    A) Company-Wide Preview Site (-CompanyWide):",
-        "       - Best for company portals, announcements, news, or knowledge bases.",
+        "       - Best for company portals, announcements, news, or departmental sites.",
         "       - Configures Owner as Primary Site Administrator with Full Control.",
-        "       - Grants Read/Preview access to all company users ('Everyone except external users').",
+        "       - Automatically resolves tenant ID and assigns the canonical all-users claim",
+        "         ('c:0-.f|rolemanager|spo-grid-all-users/<TenantId>') to the site Visitors group.",
         "       - Default template: Modern Communication Site (SITEPAGEPUBLISHING#0).",
         "",
         "    B) Isolated Empty Site (-EmptySite):",
@@ -416,24 +421,24 @@ function Show-ScriptHelp {
         "       .\New-SharePoint-Site.ps1",
         "       .\New-SharePoint-Site.ps1 -h",
         "",
-        "    2. Create a Company-Wide Preview Site with Interactive Confirmation:",
-        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Portal Firmowy`" -SiteAlias `"portal`" -Owner `"admin@contoso.com`" -CompanyWide",
+        "    2. Create a Company-Wide Preview Site (alias auto-generated from Title):",
+        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Sekretariat`" -Owner `"roman.pindela@elektrimont.pl`" -CompanyWide -Force",
         "",
-        "    3. Create a Company-Wide Preview Site Silently without Confirmation (-Force):",
-        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Wiadomosci`" -SiteAlias `"wiadomosci`" -Owner `"admin@contoso.com`" -CompanyWide -Force",
+        "    3. Create a Company-Wide Preview Site with explicit alias and tenant:",
+        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Katalog Produktow`" -SiteAlias `"katalog`" -Owner `"jan.kowalski@contoso.com`" -TenantName `"contoso`" -CompanyWide",
         "",
         "    4. Create an Empty Private Site with Owner only:",
         "       .\New-SharePoint-Site.ps1 -SiteTitle `"Projekt X`" -SiteAlias `"projekt-x`" -Owner `"manager@contoso.com`" -EmptySite",
         "",
         "    5. Create an Empty Private Site with Owner, specific Members, and Visitors:",
-        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Zarzad`" -SiteAlias `"zarzad`" -Owner `"prezes@contoso.com`" -EmptySite -Members `"dyrektor@contoso.com`" -Visitors `"audytor@contoso.com`"",
+        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Zarzad`" -Owner `"prezes@contoso.com`" -EmptySite -Members `"dyrektor@contoso.com`" -Visitors `"audytor@contoso.com`"",
         "",
         "    6. Create a Modern Team Site (no group) with custom quota (500 GB) and English language:",
         "       .\New-SharePoint-Site.ps1 -SiteTitle `"Global Finance`" -SiteAlias `"global-finance`" -Owner `"admin@contoso.com`" -Template `"STS#3`" -LocaleId 1033 -StorageQuotaMB 512000 -EmptySite -Force",
         "",
         "PARAMETERS:",
         "    -SiteTitle, -Title, -Name   Display title for the new SharePoint site.",
-        "    -SiteAlias, -Alias, -Url    Relative alias ('sites/alias') or full URL of the site.",
+        "    -SiteAlias, -Alias, -Url    Relative alias ('sites/alias') or full URL (auto-generated if omitted).",
         "    -Owner, -OwnerEmail, -u     UPN or email address of the site owner / primary administrator.",
         "    -CompanyWide                Switch to create a company-wide site (all licensed users get preview access).",
         "    -EmptySite                  Switch to create an isolated empty site (restricted to owner/members).",
@@ -444,7 +449,6 @@ function Show-ScriptHelp {
         "    -TenantName                 Tenant domain name (e.g. 'contoso' or 'contoso.onmicrosoft.com').",
         "    -AdminUrl                   SharePoint Admin Center URL ('https://contoso-admin.sharepoint.com').",
         "    -StorageQuotaMB             Storage quota in MB (default: 1048576 = 1 TB).",
-        "    -ResourceQuota              Server resource quota points (default: 300).",
         "    -TimeZoneId                 Time Zone ID (default: 4 = UTC+1 Warsaw / Romance Standard Time).",
         "    -LocaleId, -Lcid            Language LCID (default: 1045 = Polish, 1033 = English).",
         "    -LogDirectory               Directory for execution log files (default: C:\Logs).",
@@ -519,11 +523,28 @@ function Assert-SafeSiteAlias {
     }
 }
 
+function Convert-ToUrlSlug {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return "site" }
+
+    $clean = $Text.Trim().ToLowerInvariant()
+    $diacritics = @{
+        'ą'='a'; 'ć'='c'; 'ę'='e'; 'ł'='l'; 'ń'='n'; 'ó'='o'; 'ś'='s'; 'ź'='z'; 'ż'='z'
+    }
+    foreach ($char in $diacritics.Keys) {
+        $clean = $clean.Replace($char, $diacritics[$char])
+    }
+    $clean = $clean -replace '[^a-z0-9_-]', '-'
+    $clean = $clean -replace '-+', '-'
+    $clean = $clean.Trim('-')
+    if ([string]::IsNullOrWhiteSpace($clean)) { $clean = "site" }
+    return $clean
+}
+
 # ==============================================================================
 # AUTO-HELP TRIGGER ON EMPTY PARAMETERS (Requirement 1 & Standard 7)
 # ==============================================================================
 $hasExplicitAction = (-not [string]::IsNullOrWhiteSpace($SiteTitle)) -or 
-                     (-not [string]::IsNullOrWhiteSpace($SiteAlias)) -or 
                      (-not [string]::IsNullOrWhiteSpace($Owner)) -or 
                      $CompanyWide -or 
                      $EmptySite
@@ -547,16 +568,19 @@ Write-ScriptLog -Level INFO -Message "Starting $($Script:Metadata.Title) v$($Scr
 Write-ScriptLog -Level INFO -Message "Log file initialized at: $Script:LogFilePath"
 Add-OperationDetail -Step "01-Init" -Operation "Initialize Logging" -Status "Success" -Details "Log file created at $Script:LogFilePath"
 
-# Validate mandatory parameters
+# Validate mandatory parameters and auto-generate SiteAlias if omitted
 try {
     if ([string]::IsNullOrWhiteSpace($SiteTitle)) {
         throw "Missing parameter: -SiteTitle is required. Run with -h for help."
     }
-    if ([string]::IsNullOrWhiteSpace($SiteAlias)) {
-        throw "Missing parameter: -SiteAlias is required. Run with -h for help."
-    }
     if ([string]::IsNullOrWhiteSpace($Owner)) {
         throw "Missing parameter: -Owner is required. Run with -h for help."
+    }
+
+    # Auto-generate SiteAlias from SiteTitle if omitted
+    if ([string]::IsNullOrWhiteSpace($SiteAlias)) {
+        $SiteAlias = Convert-ToUrlSlug -Text $SiteTitle
+        Write-ScriptLog -Level INFO -Message "SiteAlias not specified. Automatically derived from SiteTitle: '$SiteAlias'"
     }
 
     Assert-SafeInputString -InputText $SiteTitle -ParamName "SiteTitle" -MaxLength 128
@@ -638,6 +662,42 @@ Write-ScriptLog -Level INFO -Message "Storage Quota: $StorageQuotaMB MB ($([math
 Add-OperationDetail -Step "03-UrlResolution" -Operation "URL and Tenant Resolution" -Status "Success" -Details "Target site URL resolved to $targetSiteUrl (Admin: $AdminUrl)"
 
 # ==============================================================================
+# RESOLVE TENANT ID (FOR CANONICAL SPO CLAIM)
+# ==============================================================================
+function Get-SharePointTenantId {
+    param([string]$DomainOrPrefix, [string]$OwnerEmail)
+
+    $domainsToTry = @()
+    if ($OwnerEmail -match '@([a-zA-Z0-9.-]+)$') {
+        $domainsToTry += $Matches[1]
+    }
+    if (-not [string]::IsNullOrWhiteSpace($DomainOrPrefix)) {
+        $domainsToTry += "${DomainOrPrefix}.onmicrosoft.com"
+        $domainsToTry += $DomainOrPrefix
+    }
+
+    foreach ($dom in ($domainsToTry | Select-Object -Unique)) {
+        try {
+            Write-ScriptLog -Level DEBUG -Message "Querying Microsoft Entra ID OpenID endpoint for domain '$dom'..."
+            $oidcUrl = "https://login.microsoftonline.com/$dom/v2.0/.well-known/openid-configuration"
+            $response = Invoke-RestMethod -Uri $oidcUrl -TimeoutSec 6 -ErrorAction Stop
+            if ($response.token_endpoint -match "https://login\.microsoftonline\.com/([a-fA-F0-9-]+)/") {
+                $tenantGuid = $Matches[1]
+                Write-ScriptLog -Level SUCCESS -Message "Resolved Microsoft Entra Tenant ID: $tenantGuid"
+                return $tenantGuid
+            }
+        }
+        catch {
+            Write-ScriptLog -Level DEBUG -Message "OpenID query failed for '$dom': $($_.Exception.Message)"
+        }
+    }
+
+    return $null
+}
+
+$Script:TenantId = Get-SharePointTenantId -DomainOrPrefix $tenantPrefix -OwnerEmail $Owner
+
+# ==============================================================================
 # PREREQUISITES & MODULE VERIFICATION
 # ==============================================================================
 function Assert-SharePointModule {
@@ -689,11 +749,19 @@ function Connect-SharePointAdminSession {
     $isConnected = $false
 
     try {
-        # Test connection by querying tenant settings or sites
-        $null = Get-SPOTenant -ErrorAction Stop
+        # Test connection by querying tenant settings
+        $tenantSettings = Get-SPOTenant -ErrorAction Stop
         $isConnected = $true
         Write-ScriptLog -Level SUCCESS -Message "Active SharePoint Online session detected."
         Add-OperationDetail -Step "05-Authentication" -Operation "Session Verification" -Status "Success" -Details "Reused active SharePoint Online admin session."
+
+        # Ensure EveryoneExceptExternalUsersClaim is enabled on tenant if CompanyWide mode
+        if ($SiteType -eq 'CompanyWide' -and $tenantSettings) {
+            try {
+                Set-SPOTenant -ShowEveryoneExceptExternalUsersClaim $true -ErrorAction SilentlyContinue | Out-Null
+                Write-ScriptLog -Level DEBUG -Message "Verified ShowEveryoneExceptExternalUsersClaim is enabled on tenant."
+            } catch {}
+        }
     }
     catch {
         Write-ScriptLog -Level INFO -Message "No active session detected. Initiating Office 365 Administrator login to: $Url"
@@ -702,6 +770,11 @@ function Connect-SharePointAdminSession {
             Connect-SPOService -Url $Url -ErrorAction Stop
             Write-ScriptLog -Level SUCCESS -Message "Successfully connected to SharePoint Online Admin Center."
             Add-OperationDetail -Step "05-Authentication" -Operation "Session Authentication" -Status "Success" -Details "Connected to $Url"
+            
+            # Ensure claim setting is active on tenant
+            try {
+                Set-SPOTenant -ShowEveryoneExceptExternalUsersClaim $true -ErrorAction SilentlyContinue | Out-Null
+            } catch {}
         }
         catch {
             Write-ScriptLog -Level ERROR -Message "Failed to authenticate to SharePoint Online: $($_.Exception.Message)"
@@ -723,20 +796,20 @@ function Test-SharePointSiteAvailability {
     try {
         $existingSite = Get-SPOSite -Identity $SiteUrl -Detailed -ErrorAction SilentlyContinue
         if ($existingSite) {
-            Write-ScriptLog -Level ERROR -Message "Site URL '$SiteUrl' already exists! (Status: $($existingSite.Status), Title: '$($existingSite.Title)')"
-            Add-OperationDetail -Step "06-PreFlight" -Operation "Site URL Availability Check" -Status "Failed" -Details "Site already exists with status: $($existingSite.Status)"
-            throw "Site URL '$SiteUrl' already exists. Choose a different SiteAlias or remove the existing site."
+            Write-ScriptLog -Level WARN -Message "Site URL '$SiteUrl' already exists! (Status: $($existingSite.Status), Title: '$($existingSite.Title)')"
+            Write-ScriptLog -Level INFO -Message "Existing site detected. Script will apply security/permission configuration to the existing site."
+            Add-OperationDetail -Step "06-PreFlight" -Operation "Site URL Availability Check" -Status "Warning" -Details "Site exists with status $($existingSite.Status); configuring existing site."
+            return $true
         }
         else {
             Write-ScriptLog -Level SUCCESS -Message "Site URL '$SiteUrl' is available for provisioning."
             Add-OperationDetail -Step "06-PreFlight" -Operation "Site URL Availability Check" -Status "Success" -Details "Site URL is available."
+            return $false
         }
     }
     catch {
-        if ($_.Exception.Message -match "already exists") {
-            throw $_
-        }
         Write-ScriptLog -Level DEBUG -Message "Site query completed. URL is free."
+        return $false
     }
 }
 
@@ -744,23 +817,29 @@ function Test-SharePointSiteAvailability {
 # INTERACTIVE CONFIRMATION (Bilingual: EN Y/N, PL T/N)
 # ==============================================================================
 function Confirm-SiteCreation {
+    param([bool]$IsExistingSite = $false)
+
     if ($Force) {
         Write-ScriptLog -Level INFO -Message "Bypassing confirmation prompt due to -Force switch."
         return $true
     }
 
+    $actionVerb = if ($IsExistingSite) { "UPDATE PERMISSIONS ON EXISTING SITE" } else { "NEW SHAREPOINT SITE PROVISIONING" }
+
     Write-Host "`n" -NoNewline
     Write-Host "================================================================================" -ForegroundColor Yellow
-    Write-Host " CONFIRMATION: NEW SHAREPOINT SITE PROVISIONING" -ForegroundColor Yellow
+    Write-Host " CONFIRMATION: $actionVerb" -ForegroundColor Yellow
     Write-Host "================================================================================" -ForegroundColor Yellow
     Write-Host "  Title        : $SiteTitle" -ForegroundColor White
     Write-Host "  URL          : $targetSiteUrl" -ForegroundColor White
     Write-Host "  Archetype    : $SiteType" -ForegroundColor $(if ($SiteType -eq 'CompanyWide') { 'Green' } else { 'Magenta' })
     Write-Host "  Owner        : $Owner" -ForegroundColor White
-    Write-Host "  Template     : $Template" -ForegroundColor White
-    Write-Host "  Storage Quota: $StorageQuotaMB MB ($([math]::Round($StorageQuotaMB / 1024, 2)) GB)" -ForegroundColor White
-    Write-Host "  Language/LCID: $LocaleId" -ForegroundColor White
-    Write-Host "  Time Zone ID : $TimeZoneId" -ForegroundColor White
+    if (-not $IsExistingSite) {
+        Write-Host "  Template     : $Template" -ForegroundColor White
+        Write-Host "  Storage Quota: $StorageQuotaMB MB ($([math]::Round($StorageQuotaMB / 1024, 2)) GB)" -ForegroundColor White
+        Write-Host "  Language/LCID: $LocaleId" -ForegroundColor White
+        Write-Host "  Time Zone ID : $TimeZoneId" -ForegroundColor White
+    }
     if ($Members.Count -gt 0) {
         Write-Host "  Members (Edit): $($Members -join ', ')" -ForegroundColor White
     }
@@ -774,11 +853,11 @@ function Confirm-SiteCreation {
     if ($response -notmatch '^[ytT1]$') {
         Write-ScriptLog -Level WARN -Message "Operation cancelled by user response: '$response'."
         Add-OperationDetail -Step "07-Confirmation" -Operation "User Confirmation" -Status "Skipped" -Details "User declined confirmation prompt."
-        Write-Host "[!] Site creation cancelled." -ForegroundColor Yellow
+        Write-Host "[!] Operation cancelled." -ForegroundColor Yellow
         exit 0
     }
-    Write-ScriptLog -Level INFO -Message "User confirmed site creation."
-    Add-OperationDetail -Step "07-Confirmation" -Operation "User Confirmation" -Status "Success" -Details "User confirmed provisioning."
+    Write-ScriptLog -Level INFO -Message "User confirmed operation."
+    Add-OperationDetail -Step "07-Confirmation" -Operation "User Confirmation" -Status "Success" -Details "User confirmed provisioning/configuration."
     return $true
 }
 
@@ -792,7 +871,6 @@ function Invoke-CreateSharePointSite {
         [string]$OwnerEmail,
         [string]$TemplateCode,
         [long]$StorageLimitMB,
-        [int]$ResourceLimit,
         [int]$TzId,
         [int]$Lcid
     )
@@ -807,7 +885,6 @@ function Invoke-CreateSharePointSite {
                     -Owner $OwnerEmail `
                     -Template $TemplateCode `
                     -StorageQuota $StorageLimitMB `
-                    -ResourceQuota $ResourceLimit `
                     -TimeZoneId $TzId `
                     -LocaleId $Lcid `
                     -CompatibilityLevel 15 `
@@ -862,33 +939,63 @@ function Invoke-CreateSharePointSite {
 }
 
 # ==============================================================================
-# PERMISSION & GROUP RESOLUTION (Bilingual: EN / PL)
+# PERMISSION & GROUP RESOLUTION (Bilingual: EN / PL with Progressive Retries)
 # ==============================================================================
 function Get-SiteSecurityGroups {
-    param([string]$Url, [string]$Title)
+    param([string]$Url, [string]$Title, [string]$OwnerEmail)
 
-    Write-ScriptLog -Level INFO -Message "Resolving default SharePoint security groups for site..."
+    Write-ScriptLog -Level INFO -Message "Resolving SharePoint security groups for site '$Url'..."
     $groups = @{
         Visitors = $null
         Members  = $null
         Owners   = $null
     }
 
+    # Pre-emptively ensure Owner is Primary Administrator using tenant admin cmdlets
     try {
-        $siteGroups = Get-SPOSiteGroup -Site $Url -ErrorAction Stop
-        
+        Set-SPOSite -Identity $Url -Owner $OwnerEmail -ErrorAction SilentlyContinue | Out-Null
+    } catch {}
+
+    # Progressive retry loop allowing SharePoint Online to complete internal permission & group hydration
+    $maxRetries = 6
+    $retryDelay = 10
+    $siteGroups = $null
+
+    for ($i = 1; $i -le $maxRetries; $i++) {
+        try {
+            Write-ScriptLog -Level INFO -Message "Querying site groups via Get-SPOSiteGroup (Attempt $i/$maxRetries)..."
+            $siteGroups = Get-SPOSiteGroup -Site $Url -ErrorAction Stop
+            if ($siteGroups -and $siteGroups.Count -gt 0) {
+                Write-ScriptLog -Level SUCCESS -Message "Successfully retrieved $($siteGroups.Count) site security group(s)."
+                break
+            }
+        }
+        catch {
+            Write-ScriptLog -Level DEBUG -Message "Attempt $i encountered error: $($_.Exception.Message)"
+            if ($i -lt $maxRetries) {
+                Write-ScriptLog -Level WARN -Message "Site groups are still initializing in SharePoint Online (hydration latency). Retrying in ${retryDelay}s..."
+                # Try setting site admin via Set-SPOUser
+                try {
+                    Set-SPOUser -Site $Url -LoginName $OwnerEmail -IsSiteAdmin $true -ErrorAction SilentlyContinue | Out-Null
+                } catch {}
+                Start-Sleep -Seconds $retryDelay
+            }
+        }
+    }
+
+    if ($siteGroups -and $siteGroups.Count -gt 0) {
+        $groupNames = ($siteGroups | Select-Object -ExpandProperty Title) -join "', '"
+        Write-ScriptLog -Level INFO -Message "Discovered site security groups: '$groupNames'"
+
         # 1. Resolve Visitors Group (Read / Odczyt)
         $groups.Visitors = $siteGroups | Where-Object { 
             ($_.Roles -contains "Read") -or 
             ($_.Roles -contains "Odczyt") -or 
             ($_.Title -like "*Visitor*") -or 
+            ($_.Title -like "*Odwiedzając*") -or 
             ($_.Title -like "*Goście*") -or 
             ($_.Title -like "*Czytelnicy*") 
         } | Select-Object -First 1
-
-        if (-not $groups.Visitors) {
-            $groups.Visitors = $siteGroups | Where-Object { $_.Title -eq "$Title Visitors" -or $_.Title -eq "$Title Goście" } | Select-Object -First 1
-        }
 
         # 2. Resolve Members Group (Contribute / Edit / Edycja)
         $groups.Members = $siteGroups | Where-Object { 
@@ -896,13 +1003,10 @@ function Get-SiteSecurityGroups {
             ($_.Roles -contains "Edit") -or 
             ($_.Roles -contains "Edycja") -or 
             ($_.Roles -contains "Współtworzenie") -or 
+            ($_.Roles -contains "Współtwórcy") -or 
             ($_.Title -like "*Member*") -or 
             ($_.Title -like "*Członkowie*") 
         } | Select-Object -First 1
-
-        if (-not $groups.Members) {
-            $groups.Members = $siteGroups | Where-Object { $_.Title -eq "$Title Members" -or $_.Title -eq "$Title Członkowie" } | Select-Object -First 1
-        }
 
         # 3. Resolve Owners Group (Full Control / Pełna kontrola)
         $groups.Owners = $siteGroups | Where-Object { 
@@ -912,19 +1016,16 @@ function Get-SiteSecurityGroups {
             ($_.Title -like "*Właściciele*") 
         } | Select-Object -First 1
 
-        if (-not $groups.Owners) {
-            $groups.Owners = $siteGroups | Where-Object { $_.Title -eq "$Title Owners" -or $_.Title -eq "$Title Właściciele" } | Select-Object -First 1
-        }
+        $visTitle = if ($groups.Visitors) { $groups.Visitors.Title } else { "Not Found" }
+        $memTitle = if ($groups.Members) { $groups.Members.Title } else { "Not Found" }
+        $ownTitle = if ($groups.Owners) { $groups.Owners.Title } else { "Not Found" }
 
-        Write-ScriptLog -Level SUCCESS -Message "Resolved groups -> Owners: '$($groups.Owners.Title)', Members: '$($groups.Members.Title)', Visitors: '$($groups.Visitors.Title)'"
-        Add-OperationDetail -Step "10-GroupResolution" -Operation "Security Group Discovery" -Status "Success" -Details "Owners: $($groups.Owners.Title) | Members: $($groups.Members.Title) | Visitors: $($groups.Visitors.Title)"
+        Write-ScriptLog -Level SUCCESS -Message "Resolved groups -> Owners: '$ownTitle', Members: '$memTitle', Visitors: '$visTitle'"
+        Add-OperationDetail -Step "10-GroupResolution" -Operation "Security Group Discovery" -Status "Success" -Details "Owners: $ownTitle | Members: $memTitle | Visitors: $visTitle"
     }
-    catch {
-        Write-ScriptLog -Level WARN -Message "Unable to retrieve site groups via Get-SPOSiteGroup: $($_.Exception.Message). Defaulting to standard title conventions."
-        Add-OperationDetail -Step "10-GroupResolution" -Operation "Security Group Discovery" -Status "Warning" -Details $_.Exception.Message
-        $groups.Visitors = [PSCustomObject]@{ Title = "$Title Visitors" }
-        $groups.Members  = [PSCustomObject]@{ Title = "$Title Members" }
-        $groups.Owners   = [PSCustomObject]@{ Title = "$Title Owners" }
+    else {
+        Write-ScriptLog -Level WARN -Message "Unable to query site groups via Get-SPOSiteGroup. Utilizing localized fallback candidates."
+        Add-OperationDetail -Step "10-GroupResolution" -Operation "Security Group Discovery" -Status "Warning" -Details "Get-SPOSiteGroup access delayed. Using localized fallback candidates."
     }
 
     return $groups
@@ -937,6 +1038,7 @@ function Configure-SharePointPermissions {
         [string]$SiteTypeMode,
         [string]$OwnerEmail,
         [hashtable]$Groups,
+        [string]$TenantId,
         [string[]]$MemberList,
         [string[]]$VisitorList
     )
@@ -944,47 +1046,67 @@ function Configure-SharePointPermissions {
     Write-ScriptLog -Level INFO -Message "Configuring permissions for mode '$SiteTypeMode'..."
     Add-OperationDetail -Step "11-Permissions" -Operation "Permission Configuration" -Status "Running" -Details "Applying rules for $SiteTypeMode"
 
-    # Step 1: Ensure Owner is in Owners group and Site Collection Administrator
+    # Step 1: Ensure Owner is configured as Primary Administrator and Site Admin
     try {
-        Write-ScriptLog -Level INFO -Message "Verifying Primary Site Collection Administrator ($OwnerEmail)..."
-        Set-SPOUser -Site $Url -LoginName $OwnerEmail -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+        Write-ScriptLog -Level INFO -Message "Confirming Primary Site Collection Administrator ($OwnerEmail)..."
+        Set-SPOSite -Identity $Url -Owner $OwnerEmail -ErrorAction SilentlyContinue | Out-Null
+        Set-SPOUser -Site $Url -LoginName $OwnerEmail -IsSiteAdmin $true -ErrorAction SilentlyContinue | Out-Null
         Write-ScriptLog -Level SUCCESS -Message "Owner '$OwnerEmail' confirmed as Site Collection Administrator."
     }
     catch {
-        Write-ScriptLog -Level WARN -Message "Could not set SiteCollectionAdmin via Set-SPOUser: $($_.Exception.Message)"
+        Write-ScriptLog -Level WARN -Message "Setting Site Admin via Set-SPOUser logged notice: $($_.Exception.Message)"
     }
 
     # Step 2: Handle CompanyWide Preview Access
     if ($SiteTypeMode -eq 'CompanyWide') {
         Write-ScriptLog -Level INFO -Message "Configuring Company-Wide Preview access (Read/Visitor permissions for all licensed M365 users)..."
         
-        $visitorGroupName = if ($Groups.Visitors) { $Groups.Visitors.Title } else { "$Title Visitors" }
+        # Build candidate target groups (starting with resolved, then localized candidates)
+        $targetVisitorGroups = @()
+        if ($Groups.Visitors -and (-not [string]::IsNullOrWhiteSpace($Groups.Visitors.Title))) {
+            $targetVisitorGroups += $Groups.Visitors.Title
+        }
+        $targetVisitorGroups += "$Title Odwiedzający"
+        $targetVisitorGroups += "$Title Goście"
+        $targetVisitorGroups += "$Title Visitors"
+        $targetVisitorGroups += "Goście witryny $Title"
+        $targetVisitorGroups += "Odwiedzający witrynę $Title"
+        $targetVisitorGroups = $targetVisitorGroups | Select-Object -Unique
+
+        # Build candidate claim identifiers for 'Everyone except external users'
+        $candidatePrincipals = @()
+        if (-not [string]::IsNullOrWhiteSpace($TenantId)) {
+            # Canonical claim used by SharePoint Online for Everyone Except External Users
+            $candidatePrincipals += "c:0-.f|rolemanager|spo-grid-all-users/$TenantId"
+            $candidatePrincipals += "c:0-.t|federated-directory-claim-provider|$TenantId"
+        }
+        $candidatePrincipals += "Everyone except external users"
+        $candidatePrincipals += "Wszyscy oprócz użytkowników zewnętrznych"
+        $candidatePrincipals += "c:0(.s|true"
+
         $companyWideAdded = $false
 
-        # Candidate identifiers for 'Everyone except external users'
-        $candidatePrincipals = @(
-            "Everyone except external users",
-            "Wszyscy oprócz użytkowników zewnętrznych",
-            "c:0(.s|true"
-        )
-
-        foreach ($principal in $candidatePrincipals) {
-            try {
-                Write-ScriptLog -Level INFO -Message "Attempting to grant Visitors access to principal: '$principal' in group '$visitorGroupName'..."
-                Add-SPOUser -Site $Url -LoginName $principal -Group $visitorGroupName -ErrorAction Stop | Out-Null
-                Write-ScriptLog -Level SUCCESS -Message "Successfully granted Company-Wide Preview access to '$principal' in group '$visitorGroupName'!"
-                $companyWideAdded = $true
-                Add-OperationDetail -Step "12-CompanyAccess" -Operation "Grant Company-Wide Preview" -Status "Success" -Details "Assigned '$principal' to '$visitorGroupName'"
-                break
+        foreach ($groupName in $targetVisitorGroups) {
+            foreach ($principal in $candidatePrincipals) {
+                try {
+                    Write-ScriptLog -Level INFO -Message "Attempting to grant Visitors access to '$principal' in group '$groupName'..."
+                    Add-SPOUser -Site $Url -LoginName $principal -Group $groupName -ErrorAction Stop | Out-Null
+                    Write-ScriptLog -Level SUCCESS -Message "Successfully granted Company-Wide Preview access to '$principal' in group '$groupName'!"
+                    $companyWideAdded = $true
+                    Add-OperationDetail -Step "12-CompanyAccess" -Operation "Grant Company-Wide Preview" -Status "Success" -Details "Assigned '$principal' to '$groupName'"
+                    break
+                }
+                catch {
+                    Write-ScriptLog -Level DEBUG -Message "Principal '$principal' into group '$groupName' failed: $($_.Exception.Message)"
+                }
             }
-            catch {
-                Write-ScriptLog -Level DEBUG -Message "Principal '$principal' not accepted: $($_.Exception.Message)"
-            }
+            if ($companyWideAdded) { break }
         }
 
         if (-not $companyWideAdded) {
-            Write-ScriptLog -Level WARN -Message "Could not automatically resolve 'Everyone except external users'. You may manually add the all-users security group in SharePoint Site Settings."
-            Add-OperationDetail -Step "12-CompanyAccess" -Operation "Grant Company-Wide Preview" -Status "Warning" -Details "Automatic resolution for 'Everyone except external users' did not succeed; assign manually if needed."
+            Write-ScriptLog -Level WARN -Message "Could not automatically resolve 'Everyone except external users'. Tenant permissions may restrict script claim assignment."
+            Write-ScriptLog -Level WARN -Message "You can assign 'Everyone except external users' manually in Site Permissions or check Set-SPOTenant -ShowEveryoneExceptExternalUsersClaim `$true."
+            Add-OperationDetail -Step "12-CompanyAccess" -Operation "Grant Company-Wide Preview" -Status "Warning" -Details "Automatic claim assignment did not succeed; verify tenant claim settings."
         }
     }
     else {
@@ -994,34 +1116,67 @@ function Configure-SharePointPermissions {
 
     # Step 3: Assign Optional Members
     if ($MemberList -and $MemberList.Count -gt 0) {
-        $memberGroupName = if ($Groups.Members) { $Groups.Members.Title } else { "$Title Members" }
-        Write-ScriptLog -Level INFO -Message "Assigning $($MemberList.Count) optional member(s) to '$memberGroupName' (Edit permissions)..."
+        $targetMemberGroups = @()
+        if ($Groups.Members -and (-not [string]::IsNullOrWhiteSpace($Groups.Members.Title))) {
+            $targetMemberGroups += $Groups.Members.Title
+        }
+        $targetMemberGroups += "$Title Członkowie"
+        $targetMemberGroups += "$Title Members"
+        $targetMemberGroups += "Członkowie witryny $Title"
+        $targetMemberGroups = $targetMemberGroups | Select-Object -Unique
+
+        Write-ScriptLog -Level INFO -Message "Assigning $($MemberList.Count) optional member(s) (Edit permissions)..."
         foreach ($member in $MemberList) {
-            try {
-                Add-SPOUser -Site $Url -LoginName $member -Group $memberGroupName -ErrorAction Stop | Out-Null
-                Write-ScriptLog -Level SUCCESS -Message "Added Member: $member to '$memberGroupName'"
-                Add-OperationDetail -Step "13-AddMembers" -Operation "Add Member ($member)" -Status "Success" -Details "Assigned to $memberGroupName"
+            $memberAdded = $false
+            foreach ($mg in $targetMemberGroups) {
+                try {
+                    Add-SPOUser -Site $Url -LoginName $member -Group $mg -ErrorAction Stop | Out-Null
+                    Write-ScriptLog -Level SUCCESS -Message "Added Member: $member to '$mg'"
+                    Add-OperationDetail -Step "13-AddMembers" -Operation "Add Member ($member)" -Status "Success" -Details "Assigned to $mg"
+                    $memberAdded = $true
+                    break
+                }
+                catch {
+                    Write-ScriptLog -Level DEBUG -Message "Member '$member' into group '$mg' failed: $($_.Exception.Message)"
+                }
             }
-            catch {
-                Write-ScriptLog -Level WARN -Message "Failed to add Member '$member': $($_.Exception.Message)"
-                Add-OperationDetail -Step "13-AddMembers" -Operation "Add Member ($member)" -Status "Warning" -Details $_.Exception.Message
+            if (-not $memberAdded) {
+                Write-ScriptLog -Level WARN -Message "Failed to add Member '$member' to any target group."
+                Add-OperationDetail -Step "13-AddMembers" -Operation "Add Member ($member)" -Status "Warning" -Details "Could not add to member groups"
             }
         }
     }
 
     # Step 4: Assign Optional Visitors
     if ($VisitorList -and $VisitorList.Count -gt 0) {
-        $visitorGroupName = if ($Groups.Visitors) { $Groups.Visitors.Title } else { "$Title Visitors" }
-        Write-ScriptLog -Level INFO -Message "Assigning $($VisitorList.Count) optional visitor(s) to '$visitorGroupName' (Read permissions)..."
+        $targetVisitorGroups = @()
+        if ($Groups.Visitors -and (-not [string]::IsNullOrWhiteSpace($Groups.Visitors.Title))) {
+            $targetVisitorGroups += $Groups.Visitors.Title
+        }
+        $targetVisitorGroups += "$Title Odwiedzający"
+        $targetVisitorGroups += "$Title Goście"
+        $targetVisitorGroups += "$Title Visitors"
+        $targetVisitorGroups += "Goście witryny $Title"
+        $targetVisitorGroups = $targetVisitorGroups | Select-Object -Unique
+
+        Write-ScriptLog -Level INFO -Message "Assigning $($VisitorList.Count) optional visitor(s) (Read permissions)..."
         foreach ($visitor in $VisitorList) {
-            try {
-                Add-SPOUser -Site $Url -LoginName $visitor -Group $visitorGroupName -ErrorAction Stop | Out-Null
-                Write-ScriptLog -Level SUCCESS -Message "Added Visitor: $visitor to '$visitorGroupName'"
-                Add-OperationDetail -Step "14-AddVisitors" -Operation "Add Visitor ($visitor)" -Status "Success" -Details "Assigned to $visitorGroupName"
+            $visitorAdded = $false
+            foreach ($vg in $targetVisitorGroups) {
+                try {
+                    Add-SPOUser -Site $Url -LoginName $visitor -Group $vg -ErrorAction Stop | Out-Null
+                    Write-ScriptLog -Level SUCCESS -Message "Added Visitor: $visitor to '$vg'"
+                    Add-OperationDetail -Step "14-AddVisitors" -Operation "Add Visitor ($visitor)" -Status "Success" -Details "Assigned to $vg"
+                    $visitorAdded = $true
+                    break
+                }
+                catch {
+                    Write-ScriptLog -Level DEBUG -Message "Visitor '$visitor' into group '$vg' failed: $($_.Exception.Message)"
+                }
             }
-            catch {
-                Write-ScriptLog -Level WARN -Message "Failed to add Visitor '$visitor': $($_.Exception.Message)"
-                Add-OperationDetail -Step "14-AddVisitors" -Operation "Add Visitor ($visitor)" -Status "Warning" -Details $_.Exception.Message
+            if (-not $visitorAdded) {
+                Write-ScriptLog -Level WARN -Message "Failed to add Visitor '$visitor' to any target group."
+                Add-OperationDetail -Step "14-AddVisitors" -Operation "Add Visitor ($visitor)" -Status "Warning" -Details "Could not add to visitor groups"
             }
         }
     }
@@ -1037,29 +1192,35 @@ try {
     # 2. Authenticate to SharePoint Online Admin Center
     Connect-SharePointAdminSession -Url $AdminUrl
 
-    # 3. Pre-Flight Availability Check
-    Test-SharePointSiteAvailability -SiteUrl $targetSiteUrl
+    # 3. Pre-Flight Availability Check (detects if site already exists)
+    $siteExists = Test-SharePointSiteAvailability -SiteUrl $targetSiteUrl
 
     # 4. User Confirmation
-    Confirm-SiteCreation
+    Confirm-SiteCreation -IsExistingSite $siteExists
 
-    # 5. Provision Site
-    $createdSite = Invoke-CreateSharePointSite -Url $targetSiteUrl `
-                                               -Title $SiteTitle `
-                                               -OwnerEmail $Owner `
-                                               -TemplateCode $Template `
-                                               -StorageLimitMB $StorageQuotaMB `
-                                               -ResourceLimit $ResourceQuota `
-                                               -TzId $TimeZoneId `
-                                               -Lcid $LocaleId
+    # 5. Provision Site (if not already existing)
+    if (-not $siteExists) {
+        $createdSite = Invoke-CreateSharePointSite -Url $targetSiteUrl `
+                                                   -Title $SiteTitle `
+                                                   -OwnerEmail $Owner `
+                                                   -TemplateCode $Template `
+                                                   -StorageLimitMB $StorageQuotaMB `
+                                                   -TzId $TimeZoneId `
+                                                   -Lcid $LocaleId
+    }
+    else {
+        Write-ScriptLog -Level INFO -Message "Skipping site collection creation because site '$targetSiteUrl' already exists."
+        Add-OperationDetail -Step "08-Provisioning" -Operation "Submit Site Creation" -Status "Skipped" -Details "Site collection already exists."
+    }
 
     # 6. Group Discovery & Permission Configuration
-    $secGroups = Get-SiteSecurityGroups -Url $targetSiteUrl -Title $SiteTitle
+    $secGroups = Get-SiteSecurityGroups -Url $targetSiteUrl -Title $SiteTitle -OwnerEmail $Owner
     Configure-SharePointPermissions -Url $targetSiteUrl `
                                     -Title $SiteTitle `
                                     -SiteTypeMode $SiteType `
                                     -OwnerEmail $Owner `
                                     -Groups $secGroups `
+                                    -TenantId $Script:TenantId `
                                     -MemberList $Members `
                                     -VisitorList $Visitors
 
@@ -1069,13 +1230,13 @@ try {
 
     Write-Host "`n"
     Write-Host "================================================================================" -ForegroundColor Green
-    Write-Host " OPERATION COMPLETED SUCCESSFULLY: NEW SHAREPOINT SITE" -ForegroundColor Green
+    Write-Host " OPERATION COMPLETED SUCCESSFULLY: SHAREPOINT SITE CONFIGURATION" -ForegroundColor Green
     Write-Host "================================================================================" -ForegroundColor Green
     Write-Host "  Title         : $SiteTitle" -ForegroundColor White
     Write-Host "  URL           : $targetSiteUrl" -ForegroundColor Cyan
     Write-Host "  Archetype     : $SiteType" -ForegroundColor $(if ($SiteType -eq 'CompanyWide') { 'Green' } else { 'Magenta' })
     Write-Host "  Primary Owner : $Owner" -ForegroundColor White
-    Write-Host "  Template      : $Template" -ForegroundColor White
+    Write-Host "  Tenant ID     : $(if ($Script:TenantId) { $Script:TenantId } else { 'Auto-derived' })" -ForegroundColor White
     Write-Host "  Storage Limit : $StorageQuotaMB MB ($([math]::Round($StorageQuotaMB / 1024, 2)) GB)" -ForegroundColor White
     Write-Host "  Total Runtime : $durationStr" -ForegroundColor White
     Write-Host "  Log File Path : $Script:LogFilePath" -ForegroundColor Yellow
@@ -1093,6 +1254,7 @@ try {
             Owner            = $Owner
             SiteType         = $SiteType
             Template         = $Template
+            TenantId         = $Script:TenantId
             StorageQuotaMB   = $StorageQuotaMB
             LogFilePath      = $Script:LogFilePath
             OperationDetails = $Script:OperationDetails
