@@ -432,20 +432,4 @@ Target Dir       : C:\Logs
 
 ---
 
-## Git Commit Message (Standard 12)
-
-```text
-feat(sharepoint): add Manage-SharePoint-Site automation script and documentation
-
-- Implemented Manage-SharePoint-Site.ps1 for comprehensive SharePoint Online site governance:
-  * Tenant-wide site collection inventory listing with keyword search and CSV export
-  * Categorized site permissions auditing across Owners, Editors (Members), and Viewers (Visitors)
-  * Modifiers synchronization (-SetModifiers) to control content modification access
-  * Role transition and demotion (-ChangeRole) from Edit to View or promotion to Owner
-  * Safe user removal (-RemoveUser) with primary administrator protection guardrails
-  * Adding new users (-AddUser) with granular role assignment (Owner, Edit, View)
-- Built interactive modern M365 administrator authentication and documented Entra ID non-interactive app access
-- Integrated real-time operation audit trail ledger and centralized C:\Logs file logging
-- Added strict input defense against command injections and regex validation for emails and site URLs
-- Included professional README.md documentation with Mermaid architecture diagram, parameter matrix, and examples
 ```
