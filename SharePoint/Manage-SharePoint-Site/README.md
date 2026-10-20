@@ -81,6 +81,22 @@ An enterprise-grade, clean-code PowerShell automation utility designed for Micro
 
 ---
 
+## Screenshots
+
+### 1. Built-in Help & Guidance (`.\Manage-SharePoint-Site.ps1`)
+Running the script without parameters or with `-Help` / `-h` displays comprehensive usage instructions, scenario descriptions, Entra ID non-interactive configuration guide, parameter options, and practical examples:
+
+![Built-in Help and Guidance](assets/StandardRun.jpg)
+
+---
+
+### 2. User Permission Assignment & Interactive Audit Trail (`-AddUser -Role View`)
+Adding a user to the site with automatic security group resolution (e.g., resolving bilingual Polish groups such as `Właściciele witryny`, `Członkowie witryny`, `Odwiedzający witrynę`), interactive confirmation prompt, and detailed real-time operation audit logging:
+
+![User Permission Assignment and Audit Trail](assets/addingUserToMembers.jpg)
+
+---
+
 ## Prerequisites
 
 - **Operating System**: Windows 10, Windows 11, or Windows Server 2016/2019/2022/2025.
