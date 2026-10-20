@@ -32,7 +32,7 @@ A professional, enterprise-grade PowerShell automation script for Microsoft 365 
 - **Isolated Empty Site Provisioning (`-EmptySite`)**:
   - Provisions a clean, private modern site collection without company-wide exposure.
   - Grants Full Control strictly to the designated **Owner**.
-  - Supports optional assignment of additional **Members** (Edit/Contribute permissions via `-Members`) and **Visitors** (Read permissions via `-Visitors`).
+  - Supports optional assignment of additional **Members** (Edit / Read-Write permissions via `-Members`) and **Visitors** (Read / Read-Only permissions via `-Visitors`).
   - Ideal for confidential projects, executive management, legal, HR, or isolated departmental workgroups.
 
 - **Step-by-Step Operation Auditing & Hydration Retry Loop**:
@@ -66,15 +66,34 @@ A professional, enterprise-grade PowerShell automation script for Microsoft 365 
 
 ## Screenshots
 
-### 1. Standard Run & Built-in Help (`.\New-SharePoint-Site.ps1`)
-Running the script without parameters or with `-Help` / `-h` displays comprehensive usage instructions, archetype descriptions, parameter options, and execution examples:
+### 1. Built-in Help & Guidance (`.\New-SharePoint-Site.ps1`)
+Running the script without parameters or with `-Help` / `-h` displays comprehensive usage instructions, archetype descriptions, parameter options, explicit permission level explanations, and multi-user syntax examples:
 
-![Standard Run](assets/Standard_run.jpg)
+#### Part 1: Archetypes, Architecture, and Permission Levels
+![Built-in Help Part 1](assets/Standard_run.jpg)
+
+#### Part 2: Multi-User Passing Syntax, Examples & Parameter Reference
+![Built-in Help Part 2](assets/Standard_run2.jpg)
+
+---
 
 ### 2. Company-Wide SharePoint Site Provisioning (`-CompanyWide`)
-Execution of modern SharePoint Online site collection provisioning with automatic alias normalization, Site Collection Administrator configuration, security group resolution, company-wide visitor permissions assignment, and the real-time operation audit summary trail:
+End-to-end execution of modern SharePoint Online site collection provisioning with automatic alias normalization, Site Collection Administrator configuration, security group resolution, multi-member/visitor assignment, and operation auditing:
 
-![Creating New SharePoint Company Site](assets/Creating_new_sharepoint_company_site.jpg)
+#### Pre-Flight Checks & Interactive Confirmation Prompt
+Displays tenant resolution, claim discovery, and parameter confirmation highlighting `Members (Read/Write - Edit)` and `Visitors (Read-Only - Read)`:
+![Pre-Flight Checks and Confirmation Prompt](assets/Creating_new_sharepoint_company_site.jpg)
+
+#### Group Discovery, Permission Assignment & Audit Trail
+Displays group propagation, adding multiple members and visitors to their respective security groups, and the formatted real-time audit summary table:
+![Provisioning Execution and Audit Trail](assets/Creating_new_sharepoint_company_site2.jpg)
+
+---
+
+### 3. Verification in SharePoint Online Admin Center
+Verification of the newly provisioned modern site collection in the SharePoint Online Admin Center (`Active sites`), confirming site properties and assigned user memberships under the Membership panel:
+
+![Active Sites and Membership in SharePoint Admin Center](assets/NewSiteInSharePointAdminCenter.jpg)
 
 ---
 
@@ -127,8 +146,141 @@ The script connects to the SharePoint Online Admin Center (`https://<tenant>-adm
 | **Owner Access** | Full Control (Site Collection Administrator) | Full Control (Site Collection Administrator) |
 | **All Company Users** | **Read / Preview Access** (Visitors group) | **None** (Access denied) |
 | **Claim Assigned** | `c:0-.f\|rolemanager\|spo-grid-all-users/<TenantId>` | None |
-| **Optional Members** | Supported (`-Members` -> Edit) | Supported (`-Members` -> Edit) |
-| **Optional Visitors** | Supported (`-Visitors` -> Read) | Supported (`-Visitors` -> Read) |
+| **Optional Members** | Supported (`-Members` -> **Edit / Read-Write**) | Supported (`-Members` -> **Edit / Read-Write**) |
+| **Optional Visitors** | Supported (`-Visitors` -> **Read / Read-Only**) | Supported (`-Visitors` -> **Read / Read-Only**) |
+
+---
+
+## Permission Levels & Access Rights: Members vs. Visitors
+
+A critical security and governance question when provisioning SharePoint Online sites is understanding the exact access permissions granted to each parameter.
+
+### Does adding a user to `-Members` grant Read/Write permissions?
+> **YES, unequivocally.**
+> In SharePoint Online modern sites, adding a user to `-Members` assigns that account directly to the site's default **Members** group (`<SiteTitle> Members` / `<SiteTitle> Członkowie`), which is bound to the standard SharePoint **Edit** permission level.
+> 
+> - **What Members CAN do (Read/Write Access)**:
+>   - **Create & Upload**: Upload documents, create new files, create folders, author new site pages, and create lists.
+>   - **Modify & Edit**: Edit Microsoft Office documents (Word, Excel, PowerPoint) in the browser or desktop apps, update list items, rename files, and publish page updates.
+>   - **Delete**: Delete documents, folders, list items, and pages.
+>   - **Read & View**: Browse all libraries, view all lists, view site assets, and download files.
+> - **What Members CANNOT do (Administrative Boundary)**:
+>   - Cannot change site permissions or grant access to other users outside approved sharing links.
+>   - Cannot modify site collection administrators or add other owners.
+>   - Cannot alter site architecture (navigation, regional settings, hub association, or delete the site collection).
+
+### Does adding a user to `-Visitors` grant Read-Only permissions?
+> **YES, unequivocally.**
+> Adding a user to `-Visitors` assigns that account directly to the site's default **Visitors** group (`<SiteTitle> Visitors` / `<SiteTitle> Odwiedzający` / `Goście`), which is bound to the standard SharePoint **Read** permission level.
+> 
+> - **What Visitors CAN do (Read-Only Access)**:
+>   - **Browse & View**: Browse site pages, read published news and announcements, navigate document libraries, and view list items.
+>   - **Read & Download**: Open and read documents in Office Online, download copies of documents, and view version history.
+> - **What Visitors CANNOT do (Zero Write/Edit Privileges)**:
+>   - Cannot upload files, create folders, or add documents.
+>   - Cannot edit, update, rename, or overwrite existing documents.
+>   - Cannot create, modify, or delete list items.
+>   - Cannot delete any content from the site.
+
+### Permission Comparison Matrix
+
+| Role / Parameter | SharePoint Group | Permission Level | Effective Rights | Content Creation & Editing | Content Deletion | Permissions Management | Site Deletion |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Site Owner** (`-Owner`) | `<Title> Owners` / `Właściciele` | **Full Control** | **Full Admin** | :white_check_mark: Yes | :white_check_mark: Yes | :white_check_mark: Yes | :white_check_mark: Yes |
+| **Site Member** (`-Members`) | `<Title> Members` / `Członkowie` | **Edit** | **Read / Write** | :white_check_mark: Yes | :white_check_mark: Yes | :x: No | :x: No |
+| **Site Visitor** (`-Visitors`) | `<Title> Visitors` / `Odwiedzający` | **Read** | **Read-Only** | :x: No | :x: No | :x: No | :x: No |
+
+---
+
+## How to Supply Multiple Users for `-Members` and `-Visitors`
+
+The script accepts an array of strings (`[string[]]`) for both `-Members` and `-Visitors`. You can supply **2, 3, or more email addresses / UPNs** using any of the following standard PowerShell techniques:
+
+### 1. Comma-Separated Inline Syntax (Recommended for Manual CLI Execution)
+Pass multiple quoted email strings separated by commas directly on the command line:
+
+```powershell
+.\New-SharePoint-Site.ps1 `
+    -SiteTitle "Marketing Campaign" `
+    -SiteAlias "marketing-campaign" `
+    -Owner "lead@contoso.com" `
+    -EmptySite `
+    -Members "anna.nowak@contoso.com", "piotr.zielinski@contoso.com", "ewa.wisniewska@contoso.com" `
+    -Visitors "audytor.wewnetrzny@contoso.com", "prawnik@contoso.com" `
+    -Force
+```
+
+### 2. Explicit PowerShell Array Literal (`@(...)`)
+Use explicit PowerShell array syntax `@(...)` for structured readability:
+
+```powershell
+.\New-SharePoint-Site.ps1 `
+    -SiteTitle "Engineering Specs" `
+    -SiteAlias "engineering-specs" `
+    -Owner "techlead@contoso.com" `
+    -EmptySite `
+    -Members @("dev1@contoso.com", "dev2@contoso.com", "dev3@contoso.com") `
+    -Visitors @("tester1@contoso.com", "security.auditor@contoso.com") `
+    -Force
+```
+
+### 3. Pre-Defined PowerShell Array Variables (Best for Automation & Reusable Scripts)
+Define your user lists in variables before invoking the script. This keeps production scripts clean and maintainable:
+
+```powershell
+# Define Read/Write content editors (Members)
+$projectMembers = @(
+    "anna.nowak@contoso.com",
+    "piotr.zielinski@contoso.com",
+    "ewa.wisniewska@contoso.com"
+)
+
+# Define Read-Only stakeholders (Visitors)
+$projectAuditors = @(
+    "klient.sponsor@contoso.com",
+    "audytor.jakosci@contoso.com"
+)
+
+# Provision site collection
+.\New-SharePoint-Site.ps1 `
+    -SiteTitle "Wdrozenie ERP" `
+    -SiteAlias "wdrozenie-erp" `
+    -Owner "pm@contoso.com" `
+    -EmptySite `
+    -Members $projectMembers `
+    -Visitors $projectAuditors `
+    -Force
+```
+
+### 4. Semicolon or Comma Delimited String within Quotes (Auto-Sanitized)
+If copying a list of addresses from Microsoft Outlook, Microsoft Teams, or an email client, the script automatically parses, splits, trims, and deduplicates semicolon- or comma-delimited strings:
+
+```powershell
+.\New-SharePoint-Site.ps1 `
+    -SiteTitle "Operacje Finansowe" `
+    -Owner "dyrektor@contoso.com" `
+    -EmptySite `
+    -Members "anna.nowak@contoso.com; piotr.zielinski@contoso.com; ewa.wisniewska@contoso.com" `
+    -Visitors "audytor1@contoso.com; audytor2@contoso.com" `
+    -Force
+```
+
+### 5. Importing User Lists from a Plain Text File or CSV
+For automated batch onboarding, load user lists directly from external files:
+
+```powershell
+# Read from a plain text file (one UPN / email per line)
+$membersList = Get-Content -Path "C:\Data\finance-members.txt" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+$visitorsList = Get-Content -Path "C:\Data\finance-auditors.txt" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+.\New-SharePoint-Site.ps1 `
+    -SiteTitle "Archiwum Finansowe" `
+    -Owner "finance.admin@contoso.com" `
+    -EmptySite `
+    -Members $membersList `
+    -Visitors $visitorsList `
+    -Force
+```
 
 ---
 
@@ -172,8 +324,8 @@ Provisions a private, empty site collection where access is strictly confined to
 
 ---
 
-### 5. Create an Empty Site with Designated Members and Readers
-Provisions a private site with explicit member and visitor assignments:
+### 5. Create an Empty Private Site with 3 Members (Read/Write) and 2 Visitors (Read-Only)
+Provisions a private site with explicit member and visitor assignments using inline comma-separated lists:
 
 ```powershell
 .\New-SharePoint-Site.ps1 `
@@ -181,13 +333,47 @@ Provisions a private site with explicit member and visitor assignments:
     -SiteAlias "zarzad" `
     -Owner "prezes@contoso.com" `
     -EmptySite `
-    -Members "wiceprezes@contoso.com", "dyrektor.finansowy@contoso.com" `
-    -Visitors "audytor@contoso.com", "prawnik@contoso.com"
+    -Members "wiceprezes@contoso.com", "dyrektor.finansowy@contoso.com", "dyrektor.operacyjny@contoso.com" `
+    -Visitors "audytor.wewnetrzny@contoso.com", "prawnik@contoso.com" `
+    -Force
 ```
 
 ---
 
-### 6. Create a Modern Team Site (No M365 Group) with Custom Quota & English Locale
+### 6. Create an Empty Private Site with Variables for User Lists
+Provisions an isolated team site using pre-defined array variables for 3 editors and 2 reviewers:
+
+```powershell
+$editors = @("anna.nowak@contoso.com", "piotr.zielinski@contoso.com", "ewa.wisniewska@contoso.com")
+$auditors = @("audytor1@contoso.com", "audytor2@contoso.com")
+
+.\New-SharePoint-Site.ps1 `
+    -SiteTitle "Wdrozenie ERP" `
+    -SiteAlias "wdrozenie-erp" `
+    -Owner "pm@contoso.com" `
+    -EmptySite `
+    -Members $editors `
+    -Visitors $auditors `
+    -Force
+```
+
+---
+
+### 7. Create a Company-Wide Preview Site with Designated Content Editors
+Provisions a company-wide site where all employees get read-only preview access, while 3 designated users get Read/Write edit rights to create documents and publish articles:
+
+```powershell
+.\New-SharePoint-Site.ps1 `
+    -SiteTitle "Baza Wiedzy HR" `
+    -Owner "hr.lead@contoso.com" `
+    -CompanyWide `
+    -Members "redaktor1@contoso.com", "redaktor2@contoso.com", "redaktor3@contoso.com" `
+    -Force
+```
+
+---
+
+### 8. Create a Modern Team Site (No M365 Group) with Custom Quota & English Locale
 Provisions a site collection using modern Team Site template (`STS#3`) with a 500 GB storage limit, English language (`1033`), and explicit tenant specification:
 
 ```powershell
@@ -205,7 +391,7 @@ Provisions a site collection using modern Team Site template (`STS#3`) with a 50
 
 ---
 
-### 7. Pipeline Integration (`-PassThru`)
+### 9. Pipeline Integration (`-PassThru`)
 Outputs the created site object into the PowerShell pipeline for downstream scripts:
 
 ```powershell
@@ -226,8 +412,8 @@ $siteInfo | Format-List
 | `-EmptySite` | `Switch` | No | `False` | Switch to provision an isolated Empty Site restricted to designated users. |
 | `-SiteType` | `String` | No | `CompanyWide` | Explicit archetype selection: `CompanyWide` or `EmptySite`. |
 | `-Template` | `String` | No | `SITEPAGEPUBLISHING#0` | SharePoint Online template code (e.g. `SITEPAGEPUBLISHING#0` for Communication, `STS#3` for Team Site). |
-| `-Members` / `-MemberList` | `String[]` | No | `@()` | Optional user email(s)/UPN(s) assigned Edit/Contribute permissions. |
-| `-Visitors` / `-VisitorList` | `String[]` | No | `@()` | Optional user email(s)/UPN(s) assigned Read permissions. |
+| `-Members` / `-MemberList` | `String[]` | No | `@()` | Optional user email(s)/UPN(s) assigned **Edit permissions (Read/Write)**. Supports arrays, comma/semicolon delimited strings, and files. |
+| `-Visitors` / `-VisitorList` | `String[]` | No | `@()` | Optional user email(s)/UPN(s) assigned **Read permissions (Read-Only)**. Supports arrays, comma/semicolon delimited strings, and files. |
 | `-TenantName` / `-Tenant` | `String` | No | *Auto-detected* | Microsoft 365 tenant domain prefix (e.g. `contoso`). |
 | `-AdminUrl` | `String` | No | *Auto-derived* | SharePoint Online Admin Center URL (`https://<tenant>-admin.sharepoint.com`). |
 | `-AdminUserPrincipalName` / `-AdminUPN` | `String` | No | *Auto-discovered* | UPN/Email of the administrator running the script, if different from `-Owner`. Ensures executing admin receives Site Collection Admin rights on the site. |
@@ -280,6 +466,6 @@ Logs are stored in `C:\Logs` (or `$env:LOCALAPPDATA\Logs` as fallback) using the
 - **Author**: Roman Pindela
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
-- **Version**: 1.5.0
+- **Version**: 1.6.0
 - **Created**: 2026-10-19
-- **Updated**: 2026-10-19
+- **Updated**: 2026-10-20

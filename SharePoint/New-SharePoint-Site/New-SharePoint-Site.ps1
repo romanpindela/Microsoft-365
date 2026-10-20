@@ -22,7 +22,7 @@
     3. Isolated Empty Site Creation (-EmptySite / -SiteType EmptySite):
        - Provisions a clean, isolated modern site collection (Communication or Team site without M365 Group).
        - Restricts access strictly to the designated Owner.
-       - Supports optional assignment of additional Members (Edit) and Visitors (Read).
+       - Supports optional assignment of additional Members (Edit - Read/Write) and Visitors (Read - Read-Only).
     4. Auto-Generated Site Alias:
        - If -SiteAlias is omitted, automatically generates a clean URL slug from -SiteTitle.
     5. Detailed Operation Auditing:
@@ -75,12 +75,43 @@
     Default: 'SITEPAGEPUBLISHING#0'.
 
 .PARAMETER Members
-    Optional array of user UPNs or email addresses to assign to the site Members group (Edit permissions).
+    Optional array of user UPNs or email addresses to assign to the site Members group.
+
+    PERMISSIONS GRANTED: Read/Write (Edit).
+    Adding a user to -Members unequivocally assigns the built-in SharePoint 'Edit' permission level.
+    Members have full read and write access to site content: they can create, view, upload, edit,
+    modify, and delete documents, files, folders, list items, and site pages.
+    Members CANNOT alter site permissions, manage site collection administrators, or delete the site collection.
+
+    SUPPLYING MULTIPLE USERS (2-3 or more):
+    You can provide multiple email addresses using any of the following standard approaches:
+      - Comma-separated: -Members "user1@contoso.com", "user2@contoso.com", "user3@contoso.com"
+      - Array literal  : -Members @("user1@contoso.com", "user2@contoso.com", "user3@contoso.com")
+      - Variable array : $team = @("user1@contoso.com", "user2@contoso.com"); -Members $team
+      - Delimited text : -Members "user1@contoso.com; user2@contoso.com; user3@contoso.com"
+      - File import    : -Members (Get-Content -Path "C:\Data\members.txt")
+
     Applicable to both EmptySite and CompanyWide modes.
     Aliases: -MemberList, -AddMembers.
 
 .PARAMETER Visitors
-    Optional array of user UPNs or email addresses to assign to the site Visitors group (Read permissions).
+    Optional array of user UPNs or email addresses to assign to the site Visitors group.
+
+    PERMISSIONS GRANTED: Read-Only (Read).
+    Adding a user to -Visitors unequivocally assigns the built-in SharePoint 'Read' permission level.
+    Visitors have strictly read-only access: they can browse the site, view pages, read list items,
+    and view/download documents and files.
+    Visitors CANNOT create, upload, edit, modify, rename, or delete any documents, items, or site contents.
+
+    SUPPLYING MULTIPLE USERS (2-3 or more):
+    You can provide multiple email addresses using any of the following standard approaches:
+      - Comma-separated: -Visitors "visitor1@contoso.com", "visitor2@contoso.com", "visitor3@contoso.com"
+      - Array literal  : -Visitors @("visitor1@contoso.com", "visitor2@contoso.com", "visitor3@contoso.com")
+      - Variable array : $auditors = @("auditor1@contoso.com", "auditor2@contoso.com"); -Visitors $auditors
+      - Delimited text : -Visitors "visitor1@contoso.com; visitor2@contoso.com"
+      - File import    : -Visitors (Get-Content -Path "C:\Data\visitors.txt")
+
+    Applicable to both EmptySite and CompanyWide modes.
     Aliases: -VisitorList, -AddVisitors.
 
 .PARAMETER TenantName
@@ -150,11 +181,35 @@
     .\New-SharePoint-Site.ps1 -SiteTitle "Projekt Poufny" -SiteAlias "projekt-poufny" -Owner "kierownik@contoso.com" -EmptySite
 
 .EXAMPLE
-    # 5. Create an Empty Private Site with Owner, specific Members, and Visitors
-    .\New-SharePoint-Site.ps1 -SiteTitle "Zarzad" -Owner "prezes@contoso.com" -EmptySite -Members "dyrektor@contoso.com" -Visitors "audytor@contoso.com"
+    # 5. Create an Empty Private Site with multiple Members (Read/Write) and Visitors (Read-Only) inline
+    # Demonstrates adding 3 Members (Edit permissions) and 2 Visitors (Read permissions) via comma-separated list
+    .\New-SharePoint-Site.ps1 -SiteTitle "Zarzad Spolki" -SiteAlias "zarzad" -Owner "prezes@contoso.com" -EmptySite `
+        -Members "wiceprezes@contoso.com", "dyrektor.finansowy@contoso.com", "dyrektor.operacyjny@contoso.com" `
+        -Visitors "audytor.wewnetrzny@contoso.com", "prawnik@contoso.com" -Force
 
 .EXAMPLE
-    # 6. Create a Modern Team Site (no group) with custom quota (500 GB) and English language
+    # 6. Create an Empty Private Site with user lists defined in PowerShell array variables
+    $projectMembers = @(
+        "anna.nowak@contoso.com",
+        "piotr.zielinski@contoso.com",
+        "ewa.wisniewska@contoso.com"
+    )
+    $projectAuditors = @(
+        "audytor1@contoso.com",
+        "audytor2@contoso.com"
+    )
+    .\New-SharePoint-Site.ps1 -SiteTitle "Projekt Wdrozeniowy" -Owner "pm@contoso.com" -EmptySite `
+        -Members $projectMembers `
+        -Visitors $projectAuditors -Force
+
+.EXAMPLE
+    # 7. Create a Company-Wide Site with designated editors (-Members)
+    # All employees get Visitor (Read-Only) preview access, while 3 designated users get Read/Write edit rights
+    .\New-SharePoint-Site.ps1 -SiteTitle "Baza Wiedzy HR" -Owner "hr.lead@contoso.com" -CompanyWide `
+        -Members "redaktor1@contoso.com", "redaktor2@contoso.com", "redaktor3@contoso.com" -Force
+
+.EXAMPLE
+    # 8. Create a Modern Team Site (no group) with custom quota (500 GB) and English language
     .\New-SharePoint-Site.ps1 -SiteTitle "Global Ops" -SiteAlias "global-ops" -Owner "admin@contoso.com" -Template "STS#3" -LocaleId 1033 -StorageQuotaMB 512000 -EmptySite -Force
 
 .NOTES
@@ -162,9 +217,9 @@
     Author        : Roman Pindela
     Email         : roman.pindela@gmail.com
     GitHub        : https://github.com/romanpindela
-    Version       : 1.5.0
+    Version       : 1.6.0
     Created       : 2026-10-19
-    Updated       : 2026-10-19
+    Updated       : 2026-10-20
     Standards     : Adheres to CleanCode and PowerShell Script Standards (C:\Dane\rpindela\GitHub\PowerShell Script Standards.txt)
 #>
 
@@ -274,11 +329,11 @@ if ((Test-Path -Path $userWinPSModules) -and ($env:PSModulePath -notlike "*$user
 # ==============================================================================
 $Script:Metadata = @{
     Title       = "New-SharePoint-Site.ps1"
-    Version     = "1.5.0"
+    Version     = "1.6.0"
     Author      = "Roman Pindela"
     Email       = "roman.pindela@gmail.com"
     GitHub      = "https://github.com/romanpindela"
-    Date        = "2026-10-19"
+    Date        = "2026-10-20"
     ModuleReq   = "Microsoft.Online.SharePoint.PowerShell"
 }
 
@@ -442,6 +497,56 @@ function Show-ScriptHelp {
         "       - Optional members (-Members) and visitors (-Visitors) can be explicitly invited.",
         "       - No company-wide access is granted.",
         "",
+        "================================================================================",
+        "PERMISSIONS & ACCESS LEVELS (MEMBERS VS. VISITORS):",
+        "================================================================================",
+        "    1. Site Members (-Members / -MemberList / -AddMembers):",
+        "       - Assigned Group  : '<SiteTitle> Members' / '<SiteTitle> Członkowie'",
+        "       - Permission Level: Edit (Read/Write)",
+        "       - Explicit Rights : Unambiguously grants READ and WRITE permissions.",
+        "                           Members can create, view, upload, edit, modify, and delete",
+        "                           documents, files, folders, list items, and site pages.",
+        "       - Boundary        : Members CANNOT alter site permissions, manage site collection",
+        "                           administrators, or delete the site collection.",
+        "",
+        "    2. Site Visitors (-Visitors / -VisitorList / -AddVisitors):",
+        "       - Assigned Group  : '<SiteTitle> Visitors' / '<SiteTitle> Odwiedzający' / 'Goście'",
+        "       - Permission Level: Read (Read-Only)",
+        "       - Explicit Rights : Unambiguously grants strictly READ-ONLY permissions.",
+        "                           Visitors can view, browse, and download documents and list items.",
+        "       - Boundary        : Visitors have ZERO write/edit/delete privileges (cannot upload,",
+        "                           modify, edit, or delete any content).",
+        "",
+        "    3. Site Owner (-Owner):",
+        "       - Assigned Group  : '<SiteTitle> Owners' / '<SiteTitle> Właściciele'",
+        "       - Permission Level: Full Control (Site Collection Administrator)",
+        "       - Explicit Rights : Complete architectural, permissions, and lifecycle control.",
+        "",
+        "================================================================================",
+        "HOW TO PASS MULTIPLE USERS (-Members & -Visitors):",
+        "================================================================================",
+        "    You can pass 2-3 (or more) email addresses using any of the following formats:",
+        "",
+        "    A) Comma-separated list of strings:",
+        "       -Members `"user1@contoso.com`", `"user2@contoso.com`", `"user3@contoso.com`"",
+        "       -Visitors `"auditor1@contoso.com`", `"auditor2@contoso.com`"",
+        "",
+        "    B) Explicit PowerShell array literal @(...):",
+        "       -Members @(`"user1@contoso.com`", `"user2@contoso.com`", `"user3@contoso.com`")",
+        "       -Visitors @(`"auditor1@contoso.com`", `"auditor2@contoso.com`")",
+        "",
+        "    C) PowerShell array variables:",
+        "       `$members = @(`"user1@contoso.com`", `"user2@contoso.com`", `"user3@contoso.com`")",
+        "       `$visitors = @(`"auditor1@contoso.com`", `"auditor2@contoso.com`")",
+        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Projekt`" -Owner `"pm@contoso.com`" -EmptySite -Members `$members -Visitors `$visitors",
+        "",
+        "    D) Delimited string within quotes (auto-split on commas or semicolons):",
+        "       -Members `"user1@contoso.com; user2@contoso.com; user3@contoso.com`"",
+        "",
+        "    E) Imported from file (one email per line):",
+        "       `$list = Get-Content -Path .\users.txt",
+        "       -Members `$list",
+        "",
         "USAGE EXAMPLES:",
         "    1. Display Built-In Help & Examples (default on run without parameters):",
         "       .\New-SharePoint-Site.ps1",
@@ -456,22 +561,34 @@ function Show-ScriptHelp {
         "    4. Create an Empty Private Site with Owner only:",
         "       .\New-SharePoint-Site.ps1 -SiteTitle `"Projekt X`" -SiteAlias `"projekt-x`" -Owner `"manager@contoso.com`" -EmptySite",
         "",
-        "    5. Create an Empty Private Site with Owner, specific Members, and Visitors:",
-        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Zarzad`" -Owner `"prezes@contoso.com`" -EmptySite -Members `"dyrektor@contoso.com`" -Visitors `"audytor@contoso.com`"",
+        "    5. Create an Empty Private Site with 3 Members (Read/Write) and 2 Visitors (Read-Only) inline:",
+        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Zarzad Spolki`" -SiteAlias `"zarzad`" -Owner `"prezes@contoso.com`" -EmptySite ``",
+        "           -Members `"wiceprezes@contoso.com`", `"dyrektor.finansowy@contoso.com`", `"dyrektor.operacyjny@contoso.com`" ``",
+        "           -Visitors `"audytor.wewnetrzny@contoso.com`", `"prawnik@contoso.com`" -Force",
         "",
-        "    6. Create a Modern Team Site (no group) with custom quota (500 GB) and English language:",
-        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Global Finance`" -SiteAlias `"global-finance`" -Owner `"admin@contoso.com`" -Template `"STS#3`" -LocaleId 1033 -StorageQuotaMB 512000 -EmptySite -Force",
+        "    6. Create an Empty Private Site using PowerShell array variables for 3 Members and 2 Visitors:",
+        "       `$projectMembers = @(`"anna.nowak@contoso.com`", `"piotr.zielinski@contoso.com`", `"ewa.wisniewska@contoso.com`")",
+        "       `$projectAuditors = @(`"audytor1@contoso.com`", `"audytor2@contoso.com`")",
+        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Wdrozenie ERP`" -Owner `"pm@contoso.com`" -EmptySite ``",
+        "           -Members `$projectMembers -Visitors `$projectAuditors -Force",
+        "",
+        "    7. Create a Company-Wide Preview Site with 3 designated content editors (-Members):",
+        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Portal Pracowniczy`" -Owner `"hr.lead@contoso.com`" -CompanyWide ``",
+        "           -Members `"redaktor1@contoso.com`", `"redaktor2@contoso.com`", `"redaktor3@contoso.com`" -Force",
+        "",
+        "    8. Create a Modern Team Site (no group) with custom quota (500 GB) and English language:",
+        "       .\New-SharePoint-Site.ps1 -SiteTitle `"Global Ops`" -SiteAlias `"global-ops`" -Owner `"admin@contoso.com`" -Template `"STS#3`" -LocaleId 1033 -StorageQuotaMB 512000 -EmptySite -Force",
         "",
         "PARAMETERS:",
         "    -SiteTitle, -Title, -Name   Display title for the new SharePoint site.",
         "    -SiteAlias, -Alias, -Url    Relative alias ('sites/alias') or full URL (auto-generated if omitted).",
-        "    -Owner, -OwnerEmail, -u     UPN or email address of the site owner / primary administrator.",
+        "    -Owner, -OwnerEmail, -u     UPN or email address of the site owner / primary administrator (Full Control).",
         "    -CompanyWide                Switch to create a company-wide site (all licensed users get preview access).",
         "    -EmptySite                  Switch to create an isolated empty site (restricted to owner/members).",
         "    -SiteType                   Explicit site mode: 'CompanyWide' (default) or 'EmptySite'.",
         "    -Template                   SharePoint template code (default: SITEPAGEPUBLISHING#0 for communication site).",
-        "    -Members                    Optional array of user UPNs granted Edit/Contribute permissions.",
-        "    -Visitors                   Optional array of user UPNs granted Read permissions.",
+        "    -Members                    Optional array of user UPNs granted Read/Write (Edit) permissions.",
+        "    -Visitors                   Optional array of user UPNs granted Read-Only (Read) permissions.",
         "    -TenantName                 Tenant domain name (e.g. 'contoso' or 'contoso.onmicrosoft.com').",
         "    -AdminUrl                   SharePoint Admin Center URL ('https://contoso-admin.sharepoint.com').",
         "    -AdminUserPrincipalName     (Optional) UPN of executing admin if different from Owner.",
@@ -558,7 +675,15 @@ function Convert-ToUrlSlug {
 
     $clean = $Text.Trim().ToLowerInvariant()
     $diacritics = @{
-        'ą'='a'; 'ć'='c'; 'ę'='e'; 'ł'='l'; 'ń'='n'; 'ó'='o'; 'ś'='s'; 'ź'='z'; 'ż'='z'
+        ([string][char]0x0105) = 'a' # a with ogonek (a)
+        ([string][char]0x0107) = 'c' # c with acute (c)
+        ([string][char]0x0119) = 'e' # e with ogonek (e)
+        ([string][char]0x0142) = 'l' # l with stroke (l)
+        ([string][char]0x0144) = 'n' # n with acute (n)
+        ([string][char]0x00F3) = 'o' # o with acute (o)
+        ([string][char]0x015B) = 's' # s with acute (s)
+        ([string][char]0x017A) = 'z' # z with acute (z)
+        ([string][char]0x017C) = 'z' # z with dot (z)
     }
     foreach ($char in $diacritics.Keys) {
         $clean = $clean.Replace($char, $diacritics[$char])
@@ -627,12 +752,44 @@ try {
         }
     }
 
+    # Normalize and sanitize Members array (support comma/semicolon-separated entries, trim whitespace, deduplicate)
+    $normalizedMembers = [System.Collections.Generic.List[string]]::new()
+    if ($Members) {
+        foreach ($item in $Members) {
+            if (-not [string]::IsNullOrWhiteSpace($item)) {
+                $splitItems = $item -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                foreach ($sub in $splitItems) {
+                    if (-not $normalizedMembers.Contains($sub)) {
+                        $normalizedMembers.Add($sub)
+                    }
+                }
+            }
+        }
+    }
+    $Members = [string[]]$normalizedMembers.ToArray()
+
     foreach ($m in $Members) {
         Assert-SafeInputString -InputText $m -ParamName "Members" -MaxLength 256
         if (-not (Test-ValidEmailAddress -Email $m)) {
             throw "Member identity '$m' is not a valid email address."
         }
     }
+
+    # Normalize and sanitize Visitors array (support comma/semicolon-separated entries, trim whitespace, deduplicate)
+    $normalizedVisitors = [System.Collections.Generic.List[string]]::new()
+    if ($Visitors) {
+        foreach ($item in $Visitors) {
+            if (-not [string]::IsNullOrWhiteSpace($item)) {
+                $splitItems = $item -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                foreach ($sub in $splitItems) {
+                    if (-not $normalizedVisitors.Contains($sub)) {
+                        $normalizedVisitors.Add($sub)
+                    }
+                }
+            }
+        }
+    }
+    $Visitors = [string[]]$normalizedVisitors.ToArray()
 
     foreach ($v in $Visitors) {
         Assert-SafeInputString -InputText $v -ParamName "Visitors" -MaxLength 256
@@ -948,10 +1105,10 @@ function Confirm-SiteCreation {
         Write-Host "  Time Zone ID : $TimeZoneId" -ForegroundColor White
     }
     if (@($Members).Count -gt 0) {
-        Write-Host "  Members (Edit): $($Members -join ', ')" -ForegroundColor White
+        Write-Host "  Members (Read/Write - Edit): $($Members -join ', ')" -ForegroundColor White
     }
     if (@($Visitors).Count -gt 0) {
-        Write-Host "  Visitors (Read): $($Visitors -join ', ')" -ForegroundColor White
+        Write-Host "  Visitors (Read-Only - Read): $($Visitors -join ', ')" -ForegroundColor White
     }
     Write-Host "================================================================================" -ForegroundColor Yellow
     Write-Host "Are you sure you want to proceed? / Czy na pewno chcesz kontynuować? [Y/N or T/N]: " -NoNewline -ForegroundColor Cyan
@@ -1444,7 +1601,7 @@ function Configure-SharePointPermissions {
         $targetMemberGroups += "Członkowie witryny $Title"
         $targetMemberGroups = $targetMemberGroups | Select-Object -Unique
 
-        Write-ScriptLog -Level INFO -Message "Assigning $(@($MemberList).Count) optional member(s) (Edit permissions)..."
+        Write-ScriptLog -Level INFO -Message "Assigning $(@($MemberList).Count) optional member(s) (Read/Write - Edit permissions)..."
         foreach ($member in $MemberList) {
             $memberAdded = $false
             foreach ($mg in $targetMemberGroups) {
@@ -1483,7 +1640,7 @@ function Configure-SharePointPermissions {
         $targetVisitorGroups += "Goście witryny $Title"
         $targetVisitorGroups = $targetVisitorGroups | Select-Object -Unique
 
-        Write-ScriptLog -Level INFO -Message "Assigning $(@($VisitorList).Count) optional visitor(s) (Read permissions)..."
+        Write-ScriptLog -Level INFO -Message "Assigning $(@($VisitorList).Count) optional visitor(s) (Read-Only - Read permissions)..."
         foreach ($visitor in $VisitorList) {
             $visitorAdded = $false
             foreach ($vg in $targetVisitorGroups) {
