@@ -514,22 +514,25 @@ function Find-InstalledGraphCertificate {
     }
 
     # 3. Auto-discover non-expired certificates with relevant subjects
-    $candidateSubjects = @("M365-Graph-EmailSender", "M365-Graph", "Send-M365Mail", "Graph")
+    # 3. Auto-discover non-expired certificates with relevant subjects
+    $candidatePatterns = @("*M365-Graph-EmailSender*", "*M365-Graph*", "*Send-M365Mail*", "*Graph*")
     foreach ($store in @("Cert:\CurrentUser\My", "Cert:\LocalMachine\My")) {
         if (Test-Path -Path $store) {
-            $certs = Get-ChildItem -Path $store | Where-Object {
-                $_.HasPrivateKey -and
-                $_.NotAfter -gt (Get-Date) -and
-                ($candidateSubjects | ForEach-Object { $sub = $_; $_certSub = $args[0].Subject; $_certSub -like "*$sub*" } -ArgumentList $_)
-            }
-            if ($certs -and $certs.Count -gt 0) {
-                $selected = $certs[0]
-                Write-LogMessage -Level Info -Message "Auto-discovered valid M365 certificate in $($store): $($selected.Subject) [$($selected.Thumbprint)]" -Component "Auth"
-                return $selected
+            $storeCerts = Get-ChildItem -Path $store -ErrorAction SilentlyContinue
+            if ($storeCerts) {
+                foreach ($c in $storeCerts) {
+                    if ($c.HasPrivateKey -and ($c.NotAfter -gt (Get-Date))) {
+                        foreach ($pat in $candidatePatterns) {
+                            if ($c.Subject -like $pat) {
+                                Write-LogMessage -Level Info -Message "Auto-discovered valid M365 certificate in $($store): $($c.Subject) [$($c.Thumbprint)]" -Component "Auth"
+                                return $c
+                            }
+                        }
+                    }
+                }
             }
         }
     }
-
     return $null
 }
 
