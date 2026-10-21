@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Sends emails via Microsoft 365 (Office 365) using Microsoft Graph API with support for interactive sign-in or non-interactive certificate-based authentication, attachments, and comprehensive enterprise logging.
 
@@ -200,6 +200,9 @@ param(
 
     [switch]$Interactive,
 
+    [Alias('DeviceCode')]
+    [switch]$UseDeviceAuthentication,
+
     # Client Configuration & Setup
     [Parameter(ParameterSetName = 'Configure', Mandatory = $true)]
     [switch]$ConfigureClient,
@@ -220,6 +223,23 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# ==============================================================================
+# ENVIRONMENT & MODULE PATH BOOTSTRAP
+# ==============================================================================
+# Ensure %LOCALAPPDATA%\WindowsPowerShell\Modules is always in $env:PSModulePath
+# (bypasses Windows Defender Controlled Folder Access block on Documents)
+$localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+$global:LocalAppDataModules = $null
+if (-not [string]::IsNullOrWhiteSpace($localAppData)) {
+    $global:LocalAppDataModules = Join-Path -Path $localAppData -ChildPath "WindowsPowerShell\Modules"
+    if (-not (Test-Path -Path $global:LocalAppDataModules)) {
+        try { New-Item -Path $global:LocalAppDataModules -ItemType Directory -Force | Out-Null } catch {}
+    }
+    if ($env:PSModulePath -notlike "*$global:LocalAppDataModules*") {
+        $env:PSModulePath = "$global:LocalAppDataModules;$env:PSModulePath"
+    }
+}
 
 # ==============================================================================
 # GLOBAL CONSTANTS & SCRIPT METADATA
@@ -947,3 +967,4 @@ INSTRUCTIONS TO RESOLVE:
     }
     exit 1
 }
+
