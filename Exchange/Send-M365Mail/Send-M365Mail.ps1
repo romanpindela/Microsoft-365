@@ -775,9 +775,9 @@ function Send-GraphEmailMessage {
     Write-LogMessage -Level Info -Message "Transmitting email via Microsoft Graph API ($targetUri)..." -Component "EmailEngine"
 
     try {
-        Invoke-MgGraphRequest -Method POST -Uri $targetUri -Body $requestBody -ContentType "application/json" -ErrorAction Stop
+        $null = Invoke-MgGraphRequest -Method POST -Uri $targetUri -Body $requestBody -ContentType "application/json" -ErrorAction Stop
         Write-LogMessage -Level Success -Message "Email successfully submitted to Microsoft 365! (HTTP 202 Accepted)" -Component "EmailEngine"
-        return @{
+        return [PSCustomObject]@{
             Success         = $true
             Endpoint        = $targetUri
             AttachmentCount = $processedAttachments.Count
@@ -908,7 +908,20 @@ try {
     # 7. Comprehensive Execution Summary
     Write-LogMessage -Level Success -Message "Email pipeline completed successfully in $formattedDuration!" -Component "Core"
 
-    $attSummary = if ($AttachmentPath) { "$($dispatchResult.AttachmentCount) file(s) ($([math]::Round($dispatchResult.AttachmentBytes / 1KB, 1)) KB)" } else { "None" }
+        $attCount = if ($AttachmentPath) { @($AttachmentPath).Count } else { 0 }
+    $attSummary = if ($attCount -gt 0) {
+        $bytes = 0
+        if ($dispatchResult -is [System.Array]) {
+            $lastObj = $dispatchResult[-1]
+            if ($lastObj -and $lastObj.PSObject.Properties['AttachmentBytes']) { $bytes = $lastObj.AttachmentBytes }
+        } elseif ($dispatchResult -and $dispatchResult.PSObject.Properties['AttachmentBytes']) {
+            $bytes = $dispatchResult.AttachmentBytes
+        }
+        $sizeStr = if ($bytes -gt 0) { " ($([math]::Round($bytes / 1KB, 1)) KB)" } else { "" }
+        "$attCount file(s)$sizeStr"
+    } else {
+        "None"
+    }
 
     $summaryCard = @"
 
@@ -970,5 +983,6 @@ INSTRUCTIONS TO RESOLVE:
     }
     exit 1
 }
+
 
 
