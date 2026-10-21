@@ -75,6 +75,8 @@ flowchart TD
 ```
 
 ### Architecture Diagram Asset
+![Technical Architecture](assets/schemat_technical_architecture_how_it_works.jpg)
+
 The repository also includes the reference diagram in [`assets/schemat_technical_architecture_how_it_works.jpg`](assets/schemat_technical_architecture_how_it_works.jpg).
 
 ---
@@ -205,6 +207,26 @@ Ideal for scheduled tasks, batch scripts, and server notifications:
 ```powershell
 .\Send-M365Mail.ps1 -GenerateCertificate
 ```
+
+
+---
+
+## 📸 Visual Walkthrough & Screenshots
+
+### 1. Standard Run & Interactive Help (`.\Send-M365Mail.ps1`)
+Running without parameters or using `-Help` / `-h` immediately displays the syntax, options, and Entra ID configuration guide:
+
+![Standard Run](assets/Standard_run.jpg)
+
+### 2. Interactive Microsoft 365 Authorization & Consent
+When running interactively, the browser prompts modern authentication and requests the necessary `Mail.Send` permission:
+
+![Authorization and Sign-In](assets/authorization_and_login.jpg)
+
+### 3. Successful Email Transmission & Execution Confirmation
+The email with attachment is submitted to Microsoft 365 cloud transport (HTTP 202 Accepted) with full execution summary and persistent log file:
+
+![Sent Message Confirmation](assets/Sent_message.jpg)
 
 ---
 
