@@ -74,11 +74,6 @@ flowchart TD
     CheckResponse -- "No / Error" --> SummaryFail["Display Red Error Card<br>Suggest Remediation & Exit 1"] --> EndFail(["Failed"])
 ```
 
-### Architecture Diagram Asset
-![Technical Architecture](assets/schemat_technical_architecture_how_it_works.jpg)
-
-The repository also includes the reference diagram in [`assets/schemat_technical_architecture_how_it_works.jpg`](assets/schemat_technical_architecture_how_it_works.jpg).
-
 ---
 
 ## 🔐 How to Configure Microsoft Entra ID for Non-Interactive Authentication
