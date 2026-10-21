@@ -1,4 +1,4 @@
-# Microsoft 365 Exchange Online Automation Toolkit
+﻿# Microsoft 365 Exchange Online Automation Toolkit
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-blue.svg)](https://microsoft.com/powershell)
 [![Exchange Online](https://img.shields.io/badge/Exchange%20Online-v3.0%2B-0078D4.svg)](https://learn.microsoft.com/powershell/exchange/)
@@ -53,6 +53,7 @@ A centralized, enterprise-grade PowerShell automation repository engineered for 
 | [**set-Mailbox1YearArchivePolicy**](set-Mailbox1YearArchivePolicy/) | Retention & Compliance | Creates and enforces a 1-year archive retention policy (`MoveToArchive`) and schedules migration of older messages. |
 | [**Get-M365MessageTrace**](Get-M365MessageTrace/) | Diagnostics & Delivery Tracking | Queries historical message traces, tracks delivery status, inspects quarantine states, and troubleshoots spam verdicts. |
 | [**Manage-AutomaticRepliesMailbox**](Manage-AutomaticRepliesMailbox/) | Mailbox Availability | Audits, schedules, configures, and disables Out-Of-Office (OOF) automatic replies and internal/external message bodies. |
+| [**Send-M365Mail**](Send-M365Mail/) | Mail Dispatch & Automation | Automated Microsoft 365 email dispatcher via Microsoft Graph with certificate (App-Only) and interactive (MFA) authentication, attachments, and logging. |
 
 ---
 
@@ -65,6 +66,8 @@ A centralized, enterprise-grade PowerShell automation repository engineered for 
   Provides comprehensive lifecycle management for tenant transport rules. Allows administrators to inspect rule priorities, enable/disable rules safely, create new routing rules, and back up rule configurations to CSV.
 - **[Get-M365MessageTrace](Get-M365MessageTrace/Get-M365MessageTrace.ps1)**:
   Automates message delivery forensics. Tracks delivered, failed, quarantined, and filtered emails over specified time windows, eliminating manual queries in the Security & Compliance center.
+- **[Send-M365Mail](Send-M365Mail/Send-M365Mail.ps1)**:
+  Modern email dispatcher via Microsoft Graph API. Supports automated X.509 certificate authentication (App-Only daemon) or interactive sign-in with MFA, client configuration deployment, Base64 MIME attachment encoding, rich HTML bodies, and mandatory execution logging to C:\Logs.
 
 ### 2. User & Identity Administration
 - **[Get-M365Users](Get-M365Users/Get-M365Users.ps1)**:
@@ -150,3 +153,4 @@ To further enhance this toolkit, the following architectural additions are recom
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
 - **Repository**: [https://github.com/romanpindela/Microsoft-365](https://github.com/romanpindela/Microsoft-365)
+

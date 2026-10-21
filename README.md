@@ -56,6 +56,7 @@ Microsoft 365/
 * [**Enable-OnlineArchive**](Exchange/Enable-OnlineArchive/README.md) — Provisions Exchange Online Archive mailboxes and triggers Managed Folder Assistant.
 * [**set-Mailbox1YearArchivePolicy**](Exchange/set-Mailbox1YearArchivePolicy/README.md) — Enforces retention policies for 1-year archive migration.
 * [**Get-M365MessageTrace**](Exchange/Get-M365MessageTrace/README.md) — Queries message delivery traces, spam verdicts, and quarantine statuses.
+* [**Send-M365Mail**](Exchange/Send-M365Mail/README.md) — Enterprise email dispatcher for Microsoft 365 / Exchange Online via Microsoft Graph API. Supports automated X.509 certificate authentication (App-Only daemon) or interactive sign-in with MFA, client configuration deployment, Base64 MIME attachment encoding, rich HTML bodies, and mandatory execution logging to `C:\Logs`.
 
 ### 3. Microsoft Entra ID (/EntraID)
 * [**Manage-M365UserAccount**](EntraID/Manage-M365UserAccount/README.md) — Password resets, sign-in blocking/unblocking, active session revocation, alias management, and user auditing via Microsoft Graph.
@@ -135,3 +136,4 @@ Unblock-File -Path .\OneDrive\Sync-OneDriveFolderAndNotify\Sync-OneDriveFolderAn
 - **Email**: [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
 - **GitHub**: [https://github.com/romanpindela](https://github.com/romanpindela)
 - **License**: MIT
+
