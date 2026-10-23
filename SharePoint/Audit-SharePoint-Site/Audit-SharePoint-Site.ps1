@@ -19,6 +19,8 @@
     - Renders an interactive formatted console summary with color-coded severity tracking.
     - Exports audit datasets to standardized CSV or JSON formats.
     - Maintains enterprise-grade audit logging in C:\Logs\ with timestamped telemetry.
+    - Features automatic host elevation: seamlessly relaunches in PowerShell 7+ (pwsh.exe) if invoked
+      from Windows PowerShell 5.1.
 
 .PARAMETER SiteUrl
     The absolute URL of the target SharePoint Online site collection (e.g. 'https://contoso.sharepoint.com/sites/finance').
@@ -53,6 +55,9 @@
       - 'CSV'  (Comma-Separated Values, UTF-8 encoded)
       - 'JSON' (JavaScript Object Notation, indented, UTF-8 encoded)
     Default: 'CSV'.
+
+.PARAMETER Force
+    Switch parameter. Bypasses interactive confirmation prompts (such as module installation) for automated execution.
 
 .PARAMETER Help
     Displays the built-in help documentation, parameter guidance, and usage examples, then terminates execution.
@@ -97,45 +102,38 @@
     Standards: Adheres to CleanCode and PowerShell Script Standards (PowerShell Script Standards.txt)
 #>
 
-[CmdletBinding(DefaultParameterSetName = 'Default', SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
-    [Parameter(ParameterSetName = 'Audit', Mandatory = $true, ValueFromPipeline = $true, Position = 0)]
-    [Parameter(ParameterSetName = 'Default', Mandatory = $false, ValueFromPipeline = $true, Position = 0)]
+    [Parameter(Mandatory = $false, ValueFromPipeline = $true, Position = 0)]
     [ValidateNotNullOrEmpty()]
     [string]$SiteUrl,
 
-    [Parameter(ParameterSetName = 'Audit', Mandatory = $false)]
-    [Parameter(ParameterSetName = 'Default', Mandatory = $false)]
+    [Parameter(Mandatory = $false)]
     [string]$ClientId,
 
-    [Parameter(ParameterSetName = 'Audit', Mandatory = $false)]
-    [Parameter(ParameterSetName = 'Default', Mandatory = $false)]
+    [Parameter(Mandatory = $false)]
     [string]$Tenant,
 
-    [Parameter(ParameterSetName = 'Audit', Mandatory = $false)]
-    [Parameter(ParameterSetName = 'Default', Mandatory = $false)]
+    [Parameter(Mandatory = $false)]
     [string]$CertificateThumbprint,
 
-    [Parameter(ParameterSetName = 'Audit', Mandatory = $false)]
-    [Parameter(ParameterSetName = 'Default', Mandatory = $false)]
+    [Parameter(Mandatory = $false)]
     [switch]$Interactive,
 
-    [Parameter(ParameterSetName = 'Audit', Mandatory = $false)]
-    [Parameter(ParameterSetName = 'Default', Mandatory = $false)]
+    [Parameter(Mandatory = $false)]
     [switch]$IncludeInherited,
 
-    [Parameter(ParameterSetName = 'Audit', Mandatory = $false)]
-    [Parameter(ParameterSetName = 'Default', Mandatory = $false)]
+    [Parameter(Mandatory = $false)]
     [string]$ExportPath,
 
-    [Parameter(ParameterSetName = 'Audit', Mandatory = $false)]
-    [Parameter(ParameterSetName = 'Default', Mandatory = $false)]
+    [Parameter(Mandatory = $false)]
     [ValidateSet('CSV', 'JSON')]
     [string]$ExportFormat = 'CSV',
 
-    [Parameter(ParameterSetName = 'Help', Mandatory = $false)]
-    [Parameter(ParameterSetName = 'Default', Mandatory = $false)]
-    [Parameter(ParameterSetName = 'Audit', Mandatory = $false)]
+    [Parameter(Mandatory = $false)]
+    [switch]$Force,
+
+    [Parameter(Mandatory = $false)]
     [Alias('h')]
     [switch]$Help
 )
@@ -160,6 +158,75 @@ begin {
     $Script:StartTime        = Get-Date
     $Script:LogFilePath      = $null
     $Script:ActiveConnection = $null
+    $Script:ScriptFilePath   = if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
+        $PSCommandPath
+    }
+    elseif ($MyInvocation.MyCommand -and -not [string]::IsNullOrWhiteSpace($MyInvocation.MyCommand.Path)) {
+        $MyInvocation.MyCommand.Path
+    }
+    else {
+        $null
+    }
+
+    # ==============================================================================
+    # POWERSHELL VERSION CHECK & AUTOMATIC RELAUNCH IN PWSH (PowerShell 7+)
+    # ==============================================================================
+    function Assert-PowerShellVersion {
+        [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        param(
+            [Parameter(Mandatory = $false)]
+            [System.Collections.IDictionary]$BoundParameters
+        )
+
+        if ($PSVersionTable.PSVersion.Major -lt 7) {
+            $pwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+            if ($pwsh -and (-not [string]::IsNullOrWhiteSpace($Script:ScriptFilePath))) {
+                Write-Host "[*] PnP.PowerShell requires PowerShell 7+ (Core). Current host: Windows PowerShell $($PSVersionTable.PSVersion)" -ForegroundColor Cyan
+                Write-Host "[*] Automatically relaunching script in PowerShell 7 (pwsh.exe)...`n" -ForegroundColor Yellow
+
+                $forwardArgs = [System.Collections.Generic.List[string]]::new()
+                $escapedScriptPath = $Script:ScriptFilePath.Replace('"', '`"')
+                $forwardArgs.Add("& `"$escapedScriptPath`"")
+
+                if ($BoundParameters) {
+                    foreach ($key in $BoundParameters.Keys) {
+                        $val = $BoundParameters[$key]
+                        if ($val -is [switch] -or $val -is [System.Management.Automation.SwitchParameter]) {
+                            if ($val.IsPresent) {
+                                $forwardArgs.Add("-$key")
+                            }
+                        }
+                        elseif ($val -is [bool]) {
+                            $forwardArgs.Add("-$key")
+                            $forwardArgs.Add("`$$val")
+                        }
+                        else {
+                            $forwardArgs.Add("-$key")
+                            $escapedVal = $val.ToString().Replace('"', '`"')
+                            $forwardArgs.Add("`"$escapedVal`"")
+                        }
+                    }
+                }
+
+                $cmdBlock = $forwardArgs -join " "
+                $bytes = [System.Text.Encoding]::Unicode.GetBytes($cmdBlock)
+                $encoded = [System.Convert]::ToBase64String($bytes)
+                $process = Start-Process -FilePath $pwsh.Source -ArgumentList "-NoProfile -EncodedCommand $encoded" -Wait -PassThru -NoNewWindow
+                exit $process.ExitCode
+            }
+            elseif (-not $pwsh) {
+                $ps7Msg = @"
+PnP.PowerShell requires PowerShell 7.4.0+ (pwsh.exe).
+Current environment is Windows PowerShell $($PSVersionTable.PSVersion).
+Please install PowerShell 7 from https://aka.ms/powershell or via:
+    winget install --id Microsoft.PowerShell --source winget
+"@
+                Write-Host "[-] $ps7Msg" -ForegroundColor Red
+                throw $ps7Msg
+            }
+        }
+    }
 
     # ==============================================================================
     # LOGGING SYSTEM (CleanCode & Enterprise Standard)
@@ -294,7 +361,7 @@ Target Directory      : $resolvedDir
             "             -CertificateThumbprint '<Thumbprint>' -ExportPath 'C:\Reports\Audit.csv'",
             "",
             "PREREQUISITES & ENVIRONMENT:",
-            "    - Required Module : 'PnP.PowerShell' (Version 2.x+ or 1.12+)",
+            "    - Required Module : 'PnP.PowerShell' (Version 2.x+ or 3.x+ in PowerShell 7+)",
             "    - Execution Policy: Unblock-File -Path .\Audit-SharePoint-Site.ps1",
             "    - Log Directory   : C:\Logs (fallback to $env:LOCALAPPDATA\Logs)",
             "",
@@ -307,6 +374,7 @@ Target Directory      : $resolvedDir
             "    -IncludeInherited       [Switch]  Audits inherited lists/items in addition to broken inheritance.",
             "    -ExportPath             [String]  File path to export results (.csv or .json).",
             "    -ExportFormat           [String]  Export format: 'CSV' (default) or 'JSON'.",
+            "    -Force                  [Switch]  Bypasses confirmation prompts (auto-installs missing modules).",
             "    -Help, -h               [Switch]  Displays this comprehensive help document.",
             "",
             "USAGE EXAMPLES:",
@@ -358,23 +426,54 @@ Target Directory      : $resolvedDir
     }
 
     # ==============================================================================
-    # PREREQUISITE & MODULE VERIFICATION
+    # PREREQUISITE & MODULE VERIFICATION (WITH AUTO-INSTALLATION SUPPORT)
     # ==============================================================================
     function Assert-Prerequisite {
         [CmdletBinding()]
-        param()
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        param(
+            [switch]$ForceInstall
+        )
 
         Write-Log -Level INFO -Message "Validating prerequisites and required module: $($Script:Metadata.RequiredMod)"
 
         $moduleInstalled = Get-Module -ListAvailable -Name $Script:Metadata.RequiredMod
         if (-not $moduleInstalled) {
-            $errorMessage = @"
+            Write-Log -Level WARN -Message "Required PowerShell module '$($Script:Metadata.RequiredMod)' is not installed."
+
+            $shouldInstall = $false
+            if ($ForceInstall) {
+                $shouldInstall = $true
+            }
+            elseif ([Environment]::UserInteractive) {
+                Write-Host "Would you like to install '$($Script:Metadata.RequiredMod)' from PSGallery now? (Y/N) [T/N]: " -NoNewline -ForegroundColor Yellow
+                $response = Read-Host
+                if ($response -match '^[ytT1]$') {
+                    $shouldInstall = $true
+                }
+            }
+
+            if ($shouldInstall) {
+                Write-Log -Level INFO -Message "Installing '$($Script:Metadata.RequiredMod)' from PSGallery for CurrentUser..."
+                try {
+                    Install-Module -Name $Script:Metadata.RequiredMod -Scope CurrentUser -Repository PSGallery -Force -AllowClobber -ErrorAction Stop
+                    Write-Log -Level SUCCESS -Message "Module '$($Script:Metadata.RequiredMod)' installed successfully."
+                }
+                catch {
+                    $installErr = "Automatic installation of '$($Script:Metadata.RequiredMod)' failed: $($_.Exception.Message)"
+                    Write-Log -Level ERROR -Message $installErr
+                    throw $installErr
+                }
+            }
+            else {
+                $errorMessage = @"
 Required PowerShell module '$($Script:Metadata.RequiredMod)' is not installed.
 Please install it by executing:
-    Install-Module -Name $($Script:Metadata.RequiredMod) -Scope CurrentUser -Repository PSGallery -Force
+    Install-Module -Name $($Script:Metadata.RequiredMod) -Scope CurrentUser -Repository PSGallery -Force -AllowClobber
 "@
-            Write-Log -Level ERROR -Message $errorMessage
-            throw $errorMessage
+                Write-Log -Level ERROR -Message $errorMessage
+                throw $errorMessage
+            }
         }
 
         $loaded = Get-Module -Name $Script:Metadata.RequiredMod
@@ -428,18 +527,32 @@ Please install it by executing:
                 return $conn
             }
 
-            # Scenario B: Explicit Interactive Authentication
-            if ($InteractiveAuth) {
-                Write-Log -Level INFO -Message "Initiating modern interactive browser authentication..."
-                $conn = Connect-PnPOnline -Url $TargetSiteUrl -Interactive -ReturnConnection -ErrorAction Stop
-                Write-Log -Level SUCCESS -Message "Connected successfully via interactive session."
-                return $conn
+            # Scenario B & C: Modern Interactive Authentication (Explicit or Default)
+            # In PnP.PowerShell 2.x and 3.x, -Interactive requires a ClientId for Entra ID app registration.
+            # If not explicitly specified via -ClientId, fall back to the well-known PnP Management Shell AppId.
+            $effectiveClientId = if (-not [string]::IsNullOrWhiteSpace($AppId)) {
+                $AppId
+            }
+            else {
+                "31359c7f-bd7e-475c-86db-f1e93e6075b9"
             }
 
-            # Scenario C: Default to Interactive if no app-only parameters provided
-            Write-Log -Level INFO -Message "Defaulting to modern interactive authentication..."
-            $conn = Connect-PnPOnline -Url $TargetSiteUrl -Interactive -ReturnConnection -ErrorAction Stop
-            Write-Log -Level SUCCESS -Message "Connected successfully to $TargetSiteUrl."
+            $interactiveParams = @{
+                Url              = $TargetSiteUrl
+                Interactive      = $true
+                ClientId         = $effectiveClientId
+                ReturnConnection = $true
+                ErrorAction      = 'Stop'
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($TenantDomain)) {
+                $interactiveParams['Tenant'] = $TenantDomain
+            }
+
+            $authLabel = if ($InteractiveAuth) { "Interactive browser" } else { "Default interactive" }
+            Write-Log -Level INFO -Message "Initiating $authLabel authentication (ClientId: $effectiveClientId)..."
+            $conn = Connect-PnPOnline @interactiveParams
+            Write-Log -Level SUCCESS -Message "Connected successfully to $TargetSiteUrl via interactive session."
             return $conn
         }
         catch {
@@ -545,17 +658,14 @@ Please install it by executing:
 
         # Audit Web Role Assignments
         try {
-            $webRoles = if ($null -ne $Connection) {
-                Get-PnPRoleAssignment -Connection $Connection
-            } else {
-                Get-PnPRoleAssignment
-            }
-
-            if ($webRoles) {
-                foreach ($assignment in $webRoles) {
+            $null = Get-PnPProperty -ClientObject $web -Property RoleAssignments
+            if ($web.RoleAssignments) {
+                foreach ($assignment in $web.RoleAssignments) {
+                    $null = Get-PnPProperty -ClientObject $assignment -Property Member, RoleDefinitionBindings
                     $member = $assignment.Member
                     $roleNames = ($assignment.RoleDefinitionBindings | ForEach-Object { $_.Name }) -join ", "
-                    $isGroup = ($member.PrincipalType -eq 'SharePointGroup')
+                    $pType = $member.PrincipalType.ToString()
+                    $isGroup = ($pType -eq 'SharePointGroup')
 
                     if ($isGroup) {
                         # Group-level entry
@@ -582,9 +692,9 @@ Please install it by executing:
                         # Expand members within the SharePoint Group
                         try {
                             $groupUsers = if ($null -ne $Connection) {
-                                Get-PnPGroupMember -Identity $member.Id -Connection $Connection -ErrorAction SilentlyContinue
+                                Get-PnPGroupMember -Group $member.Id -Connection $Connection -ErrorAction SilentlyContinue
                             } else {
-                                Get-PnPGroupMember -Identity $member.Id -ErrorAction SilentlyContinue
+                                Get-PnPGroupMember -Group $member.Id -ErrorAction SilentlyContinue
                             }
 
                             if ($groupUsers) {
@@ -618,7 +728,6 @@ Please install it by executing:
                     }
                     else {
                         # Direct User or Security Group Assignment
-                        $pType = $member.PrincipalType.ToString()
                         $assignType = if ($pType -eq 'User') { "Direct Assignment" } else { "Security Group Assignment" }
                         $upn = if (-not [string]::IsNullOrWhiteSpace($member.Email)) { $member.Email } else { $member.LoginName }
 
@@ -686,14 +795,10 @@ Please install it by executing:
                 }
 
                 try {
-                    $listRoles = if ($null -ne $Connection) {
-                        Get-PnPRoleAssignment -List $list -Connection $Connection -ErrorAction SilentlyContinue
-                    } else {
-                        Get-PnPRoleAssignment -List $list -ErrorAction SilentlyContinue
-                    }
-
-                    if ($listRoles) {
-                        foreach ($lAssignment in $listRoles) {
+                    $null = Get-PnPProperty -ClientObject $list -Property RoleAssignments -ErrorAction SilentlyContinue
+                    if ($list.RoleAssignments) {
+                        foreach ($lAssignment in $list.RoleAssignments) {
+                            $null = Get-PnPProperty -ClientObject $lAssignment -Property Member, RoleDefinitionBindings
                             $lMember = $lAssignment.Member
                             $lRoleNames = ($lAssignment.RoleDefinitionBindings | ForEach-Object { $_.Name }) -join ", "
                             $pType = $lMember.PrincipalType.ToString()
@@ -756,19 +861,17 @@ Please install it by executing:
                         $itemInheritStatus = if ($itemUnique) { "Broken (Unique)" } else { "Inherited" }
 
                         try {
-                            $itemRoles = if ($null -ne $Connection) {
-                                Get-PnPRoleAssignment -List $list -Identity $item.Id -Connection $Connection -ErrorAction SilentlyContinue
+                            $itemPerms = if ($null -ne $Connection) {
+                                Get-PnPListItemPermission -List $list -Identity $item.Id -Connection $Connection -ErrorAction SilentlyContinue
                             } else {
-                                Get-PnPRoleAssignment -List $list -Identity $item.Id -ErrorAction SilentlyContinue
+                                Get-PnPListItemPermission -List $list -Identity $item.Id -ErrorAction SilentlyContinue
                             }
 
-                            if ($itemRoles) {
-                                foreach ($iAssignment in $itemRoles) {
-                                    $iMember = $iAssignment.Member
-                                    $iRoleNames = ($iAssignment.RoleDefinitionBindings | ForEach-Object { $_.Name }) -join ", "
-                                    $pType = $iMember.PrincipalType.ToString()
+                            if ($itemPerms) {
+                                foreach ($perm in $itemPerms) {
+                                    $pType = if ($perm.PrincipalType) { $perm.PrincipalType.ToString() } else { "User" }
+                                    $iRoleNames = ($perm.PermissionLevels | ForEach-Object { $_.Name }) -join ", "
                                     $assignType = if ($pType -eq 'SharePointGroup') { "Group Assignment" } elseif ($pType -eq 'User') { "Direct Assignment" } else { "Security Group Assignment" }
-                                    $upn = if (-not [string]::IsNullOrWhiteSpace($iMember.Email)) { $iMember.Email } else { $iMember.LoginName }
 
                                     $itemRecord = [PSCustomObject]@{
                                         Timestamp             = $scanTimestamp
@@ -779,13 +882,13 @@ Please install it by executing:
                                         ResourceUrl           = $itemRef
                                         HasUniquePermissions = $itemUnique
                                         InheritanceStatus     = $itemInheritStatus
-                                        PrincipalTitle        = $iMember.Title
+                                        PrincipalTitle        = $perm.PrincipalName
                                         PrincipalType         = $pType
-                                        PrincipalLoginName    = $iMember.LoginName
+                                        PrincipalLoginName    = $perm.PrincipalName
                                         AssignmentType        = $assignType
-                                        GroupName             = if ($pType -eq 'SharePointGroup') { $iMember.Title } else { "N/A" }
-                                        UserDisplayName       = $iMember.Title
-                                        UserPrincipalName     = $upn
+                                        GroupName             = if ($pType -eq 'SharePointGroup') { $perm.PrincipalName } else { "N/A" }
+                                        UserDisplayName       = $perm.PrincipalName
+                                        UserPrincipalName     = $perm.PrincipalName
                                         PermissionLevels      = $iRoleNames
                                     }
                                     $results.Add($itemRecord)
@@ -887,16 +990,19 @@ Please install it by executing:
     # SCRIPT INITIALIZATION CHECKS & HELP ROUTING
     # --------------------------------------------------------------------------
     $isPiped = $MyInvocation.ExpectingInput
-    if ($Help -or ($PSCmdlet.ParameterSetName -eq 'Help') -or (($PSBoundParameters.Count -eq 0) -and -not $isPiped)) {
+    if ($Help -or (($PSBoundParameters.Count -eq 0) -and -not $isPiped)) {
         Show-ScriptHelp
         exit 0
     }
+
+    # Auto-elevate to PowerShell 7+ if running under legacy Windows PowerShell 5.1
+    Assert-PowerShellVersion -BoundParameters $PSBoundParameters
 
     Initialize-AuditLogging
     Write-Log -Level INFO -Message "Starting $($Script:Metadata.Title) v$($Script:Metadata.Version)"
     Write-Log -Level INFO -Message "Log initialized at: $Script:LogFilePath"
 
-    Assert-Prerequisite
+    Assert-Prerequisite -ForceInstall:$Force
 }
 
 process {

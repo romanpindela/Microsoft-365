@@ -179,6 +179,10 @@ Perform an interactive scan of the Human Resources site collection, displaying f
 .\Audit-SharePoint-Site.ps1 -SiteUrl "https://contoso.sharepoint.com/sites/human-resources" -Interactive | Out-GridView
 ```
 
+### Visual Execution Example
+
+![Standard Execution Run](assets/Standard_run.jpg)
+
 ### Example 2: Non-Interactive App-Only Audit with CSV Export
 Execute an unattended security audit using an Entra ID App Registration with certificate authentication, capturing all broken permissions and exporting to a CSV report:
 
