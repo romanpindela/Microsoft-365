@@ -181,7 +181,9 @@ Simply run `Audit-SharePoint-Site.ps1` with `-Interactive`. If no Client ID is d
 - If an app named `SharePoint-Audit` already exists in your tenant, the script automatically proposes a unique timestamped name (e.g. `SharePoint-Audit-20261023-2140`), accepts an alternative custom name, or allows you to paste the existing Application ID (GUID).
 - The acquired Client ID is automatically cached locally in `%LOCALAPPDATA%\SharePoint-Audit\<tenant>_client_id.txt` so subsequent runs require zero configuration.
 
-![Automated Entra ID App Registration](assets/Registering_audit_script.jpg)
+![Automated Entra ID App Registration - CLI Flow](assets/Registering_audit_script.jpg)
+
+![Microsoft Entra ID Admin Consent Dialog](assets/Registering_audit_script2.jpg)
 
 **Option B: Manual Registration via PnP.PowerShell**
 Execute the following command in PowerShell 7 (replacing `yourtenant.onmicrosoft.com` with your tenant domain):
@@ -232,9 +234,22 @@ Perform an interactive scan of the Human Resources site collection, displaying f
 .\Audit-SharePoint-Site.ps1 -SiteUrl "https://contoso.sharepoint.com/sites/human-resources" -Interactive | Out-GridView
 ```
 
-### Visual Execution Example
+### 📸 Visual Execution & Results Walkthrough
 
-![Standard Execution Run](assets/Standard_run.jpg)
+#### 1. Interactive Execution & Discovery Progress
+The script verifies prerequisites, connects to SharePoint Online via PnP.PowerShell, and initiates real-time discovery of site administrators, document libraries, lists, and unique permissions:
+
+![Interactive Execution Run](assets/Standard_run.jpg)
+
+#### 2. Console Summary & Group Membership Overview (Table 1 & Table 2)
+Upon scan completion, the script displays an executive metric block and structured tables showing site-level access levels and parent SharePoint group assignments:
+
+![Audit Results Summary and Tables](assets/audit_results.jpg)
+
+#### 3. Deep Entra ID & Microsoft 365 Group Member Resolution
+The script recursively resolves modern Microsoft 365 Groups and Entra ID Security Groups into individual human user accounts (UPNs and display names) inside Table 2:
+
+![Deep Entra ID Group Member Resolution](assets/audit_results2.jpg)
 
 ### Example 2: Non-Interactive App-Only Audit with CSV Export
 Execute an unattended security audit using an Entra ID App Registration with certificate authentication, capturing all broken permissions and exporting to a CSV report:
