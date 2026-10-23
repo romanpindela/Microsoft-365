@@ -351,12 +351,12 @@ Target Directory      : $resolvedDir
             "    permission inheritance (HasUniqueRoleAssignments).",
             "",
             "AUTHENTICATION MODES & PERMISSION REQUIREMENTS:",
-            "    1. Interactive Modern Authentication (ZALECANE):",
-            "       - WAŻNE: Użytkownik uruchamiający skrypt MUSI być Administratorem Witryny (Site Admin /",
-            "         Site Collection Administrator) lub Właścicielem audytowanej witryny SharePoint!",
-            "       - W usłudze SharePoint Online nawet Administrator Globalny (Global Admin) M365 nie ma",
-            "         automatycznego dostępu do prywatnych witryn zespołów, dopóki nie przypisze siebie",
-            "         jako Site Admin w SharePoint Admin Center (Aktywne witryny > Członkostwo > Administratorzy).",
+            "    1. Interactive Modern Authentication (RECOMMENDED):",
+            "       - IMPORTANT: The user running this script MUST be a Site Collection Administrator (Site Admin)",
+            "         or Site Owner of the target SharePoint site!",
+            "       - In SharePoint Online, even Microsoft 365 Global Administrators do not possess automatic read/audit",
+            "         access to private team sites until explicitly assigned as Site Admin in SharePoint Admin Center",
+            "         (Active sites > select site > Membership tab > Site admins).",
             "       - Uses web browser interactive sign-in with full MFA support:",
             "         .\Audit-SharePoint-Site.ps1 -SiteUrl 'https://contoso.sharepoint.com/sites/hr' -Interactive",
             "",
@@ -585,23 +585,23 @@ Please install it by executing:
             }
             catch {
                 $errMsg = $_.Exception.Message
-                Write-Log -Level WARN -Message "Blad podczas rejestracji aplikacji Entra ID: $errMsg"
+                Write-Log -Level WARN -Message "Error during Microsoft Entra ID app registration: $errMsg"
 
                 if ([Environment]::UserInteractive) {
                     $suggestedName = "SharePoint-Audit-" + (Get-Date).ToString("yyyyMMdd-HHmm")
-                    Write-Host "`n[!] Rejestracja aplikacji '$targetAppName' nie powiodla sie: $errMsg" -ForegroundColor Yellow
-                    Write-Host "[*] Proponowana nowa unikalna nazwa: $suggestedName" -ForegroundColor Cyan
-                    Write-Host "[?] Wcisnij ENTER aby sprobowac [$suggestedName], wpisz inna nazwe, lub wklej istniejacy Application ID (GUID): " -NoNewline -ForegroundColor Yellow
+                    Write-Host "`n[!] Application registration for '$targetAppName' failed: $errMsg" -ForegroundColor Yellow
+                    Write-Host "[*] Suggested unique application name: $suggestedName" -ForegroundColor Cyan
+                    Write-Host "[?] Press ENTER to try [$suggestedName], enter a different name, or paste an existing Application ID (GUID): " -NoNewline -ForegroundColor Yellow
                     $inputVal = Read-Host
 
                     if ([string]::IsNullOrWhiteSpace($inputVal)) {
                         $targetAppName = $suggestedName
-                        Write-Log -Level INFO -Message "Ponawianie rejestracji z proponowana nazwa: $targetAppName"
+                        Write-Log -Level INFO -Message "Retrying registration with suggested name: $targetAppName"
                         continue
                     }
                     elseif ($inputVal.Trim() -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
                         $pastedId = $inputVal.Trim()
-                        Write-Log -Level SUCCESS -Message "Uzyto podanego istniejacego Application ID: $pastedId"
+                        Write-Log -Level SUCCESS -Message "Using provided existing Application ID: $pastedId"
                         try {
                             $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
                             if (-not (Test-Path -Path $cacheDir)) {
@@ -609,16 +609,16 @@ Please install it by executing:
                             }
                             $cacheFile = Join-Path -Path $cacheDir -ChildPath "${Tenant}_client_id.txt"
                             [System.IO.File]::WriteAllText($cacheFile, $pastedId)
-                            Write-Log -Level SUCCESS -Message "Application ID zapisany w pamieci podrecznej: $cacheFile"
+                            Write-Log -Level SUCCESS -Message "Application ID cached locally at: $cacheFile"
                         }
                         catch {
-                            Write-Log -Level WARN -Message "Nie mozna zapisac ClientId w cache: $($_.Exception.Message)"
+                            Write-Log -Level WARN -Message "Unable to persist ClientId to cache: $($_.Exception.Message)"
                         }
                         return $pastedId
                     }
                     else {
                         $targetAppName = $inputVal.Trim()
-                        Write-Log -Level INFO -Message "Ponawianie rejestracji z nowa nazwa: $targetAppName"
+                        Write-Log -Level INFO -Message "Retrying registration with new name: $targetAppName"
                         continue
                     }
                 }
@@ -634,7 +634,7 @@ Please install it by executing:
             }
         }
 
-        throw "Przekroczono maksymalna liczbe prob rejestracji aplikacji Entra ID."
+        throw "Exceeded maximum attempts for Microsoft Entra ID application registration."
     }
 
     # ==============================================================================
@@ -734,9 +734,9 @@ Please install it by executing:
                 $shouldRegister = $false
                 if ([Environment]::UserInteractive) {
                     Write-Host "`n[?] Microsoft Entra ID requires an App Registration Client ID (retired legacy app on Sept 9, 2024)." -ForegroundColor Yellow
-                    Write-Host "[?] Would you like to automatically register and configure an Entra ID App in '$effectiveTenant' now? (Y/N) [T/N]: " -NoNewline -ForegroundColor Yellow
+                    Write-Host "[?] Would you like to automatically register and configure an Entra ID App in '$effectiveTenant' now? (Y/N): " -NoNewline -ForegroundColor Yellow
                     $answer = Read-Host
-                    if ($answer -match '^[ytT1]$') {
+                    if ($answer -match '^[yY1tT]$') {
                         $shouldRegister = $true
                     }
                 }
@@ -791,9 +791,9 @@ Tip: You can also set an environment variable to avoid entering -ClientId repeat
 
                     if ([Environment]::UserInteractive) {
                         Write-Host "`n[!] Application ID '$effectiveClientId' was not found in directory '$effectiveTenant' (AADSTS700016)." -ForegroundColor Yellow
-                        Write-Host "[?] Would you like to register a new Entra ID App in '$effectiveTenant' now? (Y/N) [T/N]: " -NoNewline -ForegroundColor Yellow
+                        Write-Host "[?] Would you like to register a new Entra ID App in '$effectiveTenant' now? (Y/N): " -NoNewline -ForegroundColor Yellow
                         $reAns = Read-Host
-                        if ($reAns -match '^[ytT1]$') {
+                        if ($reAns -match '^[yY1tT]$') {
                             $newId = Invoke-EntraIDAppRegistration -Tenant $effectiveTenant
                             $interactiveParams['ClientId'] = $newId
                             Write-Log -Level INFO -Message "Retrying connection with new Application ID: $newId..."
@@ -872,33 +872,33 @@ Tip: You can also set an environment variable to avoid entering -ClientId repeat
             $err = $_.Exception.Message
             if ($err -match 'unauthorized' -or $err -match 'Access denied') {
                 $appId = if ($Script:ActiveClientId) { $Script:ActiveClientId } else { "<ClientId>" }
-                $tenantName = if ($Script:ActiveTenant) { $Script:ActiveTenant } else { "twoj-tenant.onmicrosoft.com" }
+                $tenantName = if ($Script:ActiveTenant) { $Script:ActiveTenant } else { "your-tenant.onmicrosoft.com" }
                 $tenantPrefix = $tenantName.Split('.')[0]
                 $consentUrl = "https://login.microsoftonline.com/$tenantName/adminconsent?client_id=$appId"
 
                 $unauthHelp = @"
 
 ================================================================================
-BRAK UPRAWNIEN DO AUDYTU WITRYNY SHAREPOINT: $TargetSiteUrl
-Komunikat: $err
+UNAUTHORIZED / INSUFFICIENT PERMISSIONS TO AUDIT SHAREPOINT SITE: $TargetSiteUrl
+Message: $err
 ================================================================================
-Aby audyt mogl odczytac uprawnienia (HasUniqueRoleAssignments, RoleAssignments),
-musza byc spelnione ponizsze 2 warunki:
+To audit SharePoint site permissions (HasUniqueRoleAssignments, RoleAssignments),
+the following two prerequisites must be satisfied:
 
-1. ZGODA ADMINISTRATORA (ADMIN CONSENT) DLA APLIKACJI W MICROSOFT ENTRA ID:
-   Uprawnienie SharePoint 'AllSites.FullControl' wymaga zgody administratora tenanta.
-   --> Otworz ponizszy link w przegladarce (zalogowany jako Administrator tenanta):
+1. TENANT ADMINISTRATOR CONSENT FOR ENTRA ID APP:
+   The SharePoint permission 'AllSites.FullControl' requires tenant admin consent.
+   --> Open the following URL in your browser (signed in as Tenant Administrator):
        $consentUrl
-   --> Kliknij 'Akceptuj' (Accept).
-   (Alternatywnie: https://entra.microsoft.com -> App registrations -> Aplikacja ID: $appId -> API permissions -> 'Grant admin consent')
+   --> Click 'Accept'.
+   (Alternatively: https://entra.microsoft.com -> App registrations -> App ID: $appId -> API permissions -> 'Grant admin consent')
 
-2. PRZYPISANIE KONTA JAKO SITE COLLECTION ADMIN DO WITRYNY '$TargetSiteUrl':
-   W SharePoint Online administratorzy M365 nie maja automatycznego dostepu do prywatnych witryn.
-   Konto, ktorym sie logujesz, musi byc dodane jako Administrator Witryny:
-   --> Wejdz do Centrum SharePoint Admin: https://${tenantPrefix}-admin.sharepoint.com
-   --> Aktywne witryny (Active sites) -> Kliknij '$TargetSiteUrl'
-   --> Zakladka 'Czlonkowstwo' (Membership) -> 'Administratorzy witryny' (Site admins)
-   --> Kliknij 'Dodaj administratora witryny' i dodaj swoje konto.
+2. SITE COLLECTION ADMINISTRATOR ASSIGNMENT FOR '$TargetSiteUrl':
+   In SharePoint Online, Microsoft 365 administrators do NOT automatically have access to private site collections.
+   The user account you sign in with must be explicitly assigned as a Site Collection Administrator:
+   --> Go to SharePoint Admin Center: https://${tenantPrefix}-admin.sharepoint.com
+   --> Active sites -> Select '$TargetSiteUrl'
+   --> Open the 'Membership' tab -> 'Site admins'
+   --> Click 'Add site admin' and add your user account.
 ================================================================================
 "@
                 Write-Log -Level ERROR -Message $unauthHelp
@@ -1237,149 +1237,149 @@ musza byc spelnione ponizsze 2 warunki:
         $groupAssign  = @($AuditRecords | Where-Object { $_.AssignmentType -like "*Group*" }).Count
 
         Write-Host "`n================================================================================" -ForegroundColor Cyan
-        Write-Host " PODSUMOWANIE AUDYTU UPRAWNIEN SHAREPOINT ONLINE" -ForegroundColor Cyan
+        Write-Host " SHAREPOINT ONLINE PERMISSION AUDIT SUMMARY" -ForegroundColor Cyan
         Write-Host "================================================================================" -ForegroundColor Cyan
-        Write-Host " Wszystkie zarejestrowane wpisy uprawnien : $totalRecords" -ForegroundColor White
-        Write-Host " Administratorzy zbioru witryn (Root)    : $siteAdmins" -ForegroundColor $(if ($siteAdmins -gt 0) { 'Green' } else { 'Yellow' })
-        Write-Host " Uprawnienia na poziomie witryny         : $uniqueSites" -ForegroundColor White
-        Write-Host " Listy / biblioteki z wlasnymi prawami   : $uniqueLists" -ForegroundColor $(if ($uniqueLists -gt 0) { 'Yellow' } else { 'White' })
-        Write-Host " Foldery / pliki z wlasnymi prawami      : $uniqueUnique" -ForegroundColor $(if ($uniqueUnique -gt 0) { 'Yellow' } else { 'White' })
-        Write-Host " Bezposrednie uprawnienia uzytkownikow   : $directAssign" -ForegroundColor $(if ($directAssign -gt 0) { 'Yellow' } else { 'White' })
-        Write-Host " Przypisania oparte na grupach           : $groupAssign" -ForegroundColor White
+        Write-Host " Total Permission Entries Extracted   : $totalRecords" -ForegroundColor White
+        Write-Host " Site Collection Administrators (Root): $siteAdmins" -ForegroundColor $(if ($siteAdmins -gt 0) { 'Green' } else { 'Yellow' })
+        Write-Host " Site-Level Entitlements Evaluated    : $uniqueSites" -ForegroundColor White
+        Write-Host " Lists/Libraries with Unique Perms    : $uniqueLists" -ForegroundColor $(if ($uniqueLists -gt 0) { 'Yellow' } else { 'White' })
+        Write-Host " Folders/Items with Unique Perms      : $uniqueUnique" -ForegroundColor $(if ($uniqueUnique -gt 0) { 'Yellow' } else { 'White' })
+        Write-Host " Direct User Assignments (High Risk)  : $directAssign" -ForegroundColor $(if ($directAssign -gt 0) { 'Yellow' } else { 'White' })
+        Write-Host " Group-Based Access Assignments       : $groupAssign" -ForegroundColor White
         Write-Host "================================================================================`n" -ForegroundColor Cyan
 
-        # Helper: priorytet sortowania poziomow uprawnien
+        # Helper: permission level sorting priority
         $getPermRank = {
             param([string]$perm)
             if ([string]::IsNullOrWhiteSpace($perm)) { return 99 }
-            if ($perm -like "*Administrator*" -or $perm -like "*Pełna kontrola*" -or $perm -like "*Full Control*") { return 1 }
-            if ($perm -like "*Projektowanie*" -or $perm -like "*Design*") { return 2 }
-            if ($perm -like "*Edycja*" -or $perm -like "*Edit*" -or $perm -like "*Współtworzenie*" -or $perm -like "*Contribute*") { return 3 }
-            if ($perm -like "*Odczyt*" -or $perm -like "*Read*" -or $perm -like "*Wyświetlanie*") { return 4 }
-            if ($perm -like "*Dostęp ograniczony*" -or $perm -like "*Limited Access*") { return 5 }
+            if ($perm -like "*Administrator*" -or $perm -like "*Full Control*" -or $perm -like "*Pełna kontrola*") { return 1 }
+            if ($perm -like "*Design*" -or $perm -like "*Projektowanie*") { return 2 }
+            if ($perm -like "*Edit*" -or $perm -like "*Contribute*" -or $perm -like "*Edycja*" -or $perm -like "*Współtworzenie*") { return 3 }
+            if ($perm -like "*Read*" -or $perm -like "*View*" -or $perm -like "*Odczyt*" -or $perm -like "*Wyświetlanie*") { return 4 }
+            if ($perm -like "*Limited Access*" -or $perm -like "*Dostęp ograniczony*") { return 5 }
             return 6
         }
 
-        # Helper: czytelny typ podmiotu
+        # Helper: human-readable principal type
         $formatType = {
             param([string]$type, [string]$login)
-            if ($type -eq "SharePointGroup") { return "Grupa SharePoint" }
+            if ($type -eq "SharePointGroup") { return "SharePoint Group" }
             if ($type -eq "SecurityGroup") {
-                if ($login -like "*federateddirectoryclaimprovider*") { return "Grupa M365 (Entra ID)" }
-                return "Grupa zabezpieczen Entra"
+                if ($login -like "*federateddirectoryclaimprovider*") { return "Microsoft 365 Group (Entra ID)" }
+                return "Security Group (Entra ID)"
             }
-            if ($type -eq "User") { return "Uzytkownik" }
+            if ($type -eq "User") { return "User" }
             return $type
         }
 
-        # Helper: czytelne konto / identyfikator
+        # Helper: human-readable account or identifier
         $formatAccount = {
             param([string]$upn, [string]$login, [string]$type)
             if (-not [string]::IsNullOrWhiteSpace($upn) -and $upn -ne "N/A") { return $upn }
-            if ($login -like "c:0o.c|federateddirectoryclaimprovider|*") { return "Grupa M365 w Entra ID" }
+            if ($login -like "c:0o.c|federateddirectoryclaimprovider|*") { return "M365 Group in Entra ID" }
             if ($type -eq "SharePointGroup") { return "-" }
             return $login
         }
 
         # ----------------------------------------------------------------------
-        # TABELA 1: ZESTAWIENIE UPRAWNIEN WITRYNY WG POZIOMU DOSTEPU
+        # TABLE 1: SITE-LEVEL PERMISSIONS BY ACCESS LEVEL
         # ----------------------------------------------------------------------
         $sitePrincipals = @($AuditRecords | Where-Object { $_.Scope -eq "Site" -and $_.AssignmentType -ne "Group Membership" })
         if ($sitePrincipals.Count -gt 0) {
             Write-Host "================================================================================" -ForegroundColor Yellow
-            Write-Host " TABELA 1: UPRAWNIENIA WITRYNY WG POZIOMU DOSTEPU (KTO CO MOZE W WITRYNIE)" -ForegroundColor Yellow
+            Write-Host " TABLE 1: SITE PERMISSIONS BY ACCESS LEVEL (WHO HAS ACCESS TO THE SITE)" -ForegroundColor Yellow
             Write-Host "================================================================================" -ForegroundColor Yellow
 
             $table1Rows = foreach ($sp in $sitePrincipals) {
                 $membersCount = @($AuditRecords | Where-Object { $_.AssignmentType -eq "Group Membership" -and $_.GroupName -eq $sp.PrincipalTitle }).Count
                 $memberNote = if ($sp.PrincipalType -eq "SharePointGroup") {
-                    if ($membersCount -gt 0) { "$membersCount czlonek(ow) -> Zobacz Tabele 2" } else { "Brak czlonkow (pusta grupa)" }
+                    if ($membersCount -gt 0) { "$membersCount member(s) -> See Table 2" } else { "Empty group (0 members)" }
                 } else {
-                    "Dostep bezposredni (osobisty)"
+                    "Direct assignment (Individual)"
                 }
 
                 $cleanTitle = if ($sp.PrincipalTitle -like "Limited Access System Group*") {
-                    "Dostep ograniczony (Udostepnienia bezposrednie)"
+                    "Limited Access (Direct Item Sharing)"
                 } else {
                     $sp.PrincipalTitle
                 }
 
                 [PSCustomObject]@{
-                    "Poziom Uprawnien"       = $sp.PermissionLevels
-                    "Podmiot (Grupa / Osoba)" = $cleanTitle
-                    "Typ podmiotu"           = & $formatType $sp.PrincipalType $sp.PrincipalLoginName
-                    "Sposob przypisania"     = $sp.AssignmentType
-                    "Konto / UPN"            = & $formatAccount $sp.UserPrincipalName $sp.PrincipalLoginName $sp.PrincipalType
-                    "Sklad / Czlonkowie"     = $memberNote
-                    _Rank                    = & $getPermRank $sp.PermissionLevels
+                    "Permission Level"        = $sp.PermissionLevels
+                    "Principal (Group / User)" = $cleanTitle
+                    "Principal Type"           = & $formatType $sp.PrincipalType $sp.PrincipalLoginName
+                    "Assignment Method"        = $sp.AssignmentType
+                    "Account / UPN"            = & $formatAccount $sp.UserPrincipalName $sp.PrincipalLoginName $sp.PrincipalType
+                    "Membership Details"       = $memberNote
+                    _Rank                      = & $getPermRank $sp.PermissionLevels
                 }
             }
 
-            $table1Rows | Sort-Object _Rank, "Poziom Uprawnien", "Podmiot (Grupa / Osoba)" | `
-                Select-Object -Property "Poziom Uprawnien", "Podmiot (Grupa / Osoba)", "Typ podmiotu", "Sposob przypisania", "Konto / UPN", "Sklad / Czlonkowie" | `
+            $table1Rows | Sort-Object _Rank, "Permission Level", "Principal (Group / User)" | `
+                Select-Object -Property "Permission Level", "Principal (Group / User)", "Principal Type", "Assignment Method", "Account / UPN", "Membership Details" | `
                 Format-Table -AutoSize | Out-Host
         }
 
         # ----------------------------------------------------------------------
-        # TABELA 2: SKLAD OSOBOWY POSZCZEGOLNYCH GRUP
+        # TABLE 2: GROUP MEMBERSHIP BREAKDOWN
         # ----------------------------------------------------------------------
         $groupMembers = @($AuditRecords | Where-Object { $_.AssignmentType -eq "Group Membership" })
         if ($groupMembers.Count -gt 0) {
             Write-Host "================================================================================" -ForegroundColor Green
-            Write-Host " TABELA 2: SKLAD OSOBOWY GRUP (KTO NALEZY DO DANEJ GRUPY UPRAWNIEN)" -ForegroundColor Green
+            Write-Host " TABLE 2: GROUP MEMBERSHIP BREAKDOWN (WHO BELONGS TO WHICH PERMISSION GROUP)" -ForegroundColor Green
             Write-Host "================================================================================" -ForegroundColor Green
 
             $table2Rows = foreach ($gm in $groupMembers) {
                 $cleanGroup = if ($gm.GroupName -like "Limited Access System Group*") {
-                    "Dostep ograniczony (Udostepnienia bezposrednie)"
+                    "Limited Access (Direct Item Sharing)"
                 } else {
                     $gm.GroupName
                 }
 
                 [PSCustomObject]@{
-                    "Grupa nadrzedna"      = $cleanGroup
-                    "Poziom uprawnien"     = $gm.PermissionLevels
-                    "Czlonek grupy"        = $gm.PrincipalTitle
-                    "Typ czlonka"          = & $formatType $gm.PrincipalType $gm.PrincipalLoginName
-                    "Konto / UPN / Id"     = & $formatAccount $gm.UserPrincipalName $gm.PrincipalLoginName $gm.PrincipalType
-                    _Rank                  = & $getPermRank $gm.PermissionLevels
+                    "Parent Group"          = $cleanGroup
+                    "Group Permission Level"= $gm.PermissionLevels
+                    "Group Member"          = $gm.PrincipalTitle
+                    "Member Type"           = & $formatType $gm.PrincipalType $gm.PrincipalLoginName
+                    "Account / UPN / ID"    = & $formatAccount $gm.UserPrincipalName $gm.PrincipalLoginName $gm.PrincipalType
+                    _Rank                   = & $getPermRank $gm.PermissionLevels
                 }
             }
 
-            $table2Rows | Sort-Object _Rank, "Grupa nadrzedna", "Czlonek grupy" | `
-                Select-Object -Property "Grupa nadrzedna", "Poziom uprawnien", "Czlonek grupy", "Typ czlonka", "Konto / UPN / Id" | `
+            $table2Rows | Sort-Object _Rank, "Parent Group", "Group Member" | `
+                Select-Object -Property "Parent Group", "Group Permission Level", "Group Member", "Member Type", "Account / UPN / ID" | `
                 Format-Table -AutoSize | Out-Host
         }
         else {
-            Write-Host "[i] Brak zidentyfikowanych czlonkow w grupach SharePoint (grupy sa puste lub nie posiadaja uzytkownikow)." -ForegroundColor Yellow
+            Write-Host "[i] No members discovered within SharePoint groups (groups are empty or unresolvable)." -ForegroundColor Yellow
         }
 
         # ----------------------------------------------------------------------
-        # TABELA 3: ELEMENTY Z UNIKALNYMI UPRAWNIENIAMI (BROKEN INHERITANCE)
+        # TABLE 3: RESOURCES WITH BROKEN INHERITANCE (UNIQUE PERMISSIONS)
         # ----------------------------------------------------------------------
         $uniqueListOrItems = @($AuditRecords | Where-Object { $_.Scope -in @("List", "Item") -and $_.HasUniquePermissions })
         if ($uniqueListOrItems.Count -gt 0) {
             Write-Host "================================================================================" -ForegroundColor Magenta
-            Write-Host " TABELA 3: ELEMENTY Z PRZERWANYM DZIEDZICZENIEM (BROKEN INHERITANCE)" -ForegroundColor Magenta
+            Write-Host " TABLE 3: RESOURCES WITH BROKEN INHERITANCE (UNIQUE PERMISSIONS)" -ForegroundColor Magenta
             Write-Host "================================================================================" -ForegroundColor Magenta
 
             $itemDisplay = $uniqueListOrItems | Select-Object `
-                @{Name = "Zakres"; Expression = { if ($_.Scope -eq "List") { "Lista / Biblioteka" } else { "Element / Plik" } }}, `
-                @{Name = "Typ zasobu"; Expression = { $_.ResourceType }}, `
-                @{Name = "Nazwa elementu"; Expression = { $_.ResourceName }}, `
-                @{Name = "Podmiot uprawniony"; Expression = { $_.PrincipalTitle }}, `
-                @{Name = "Typ podmiotu"; Expression = { & $formatType $_.PrincipalType $_.PrincipalLoginName }}, `
-                @{Name = "Poziom uprawnien"; Expression = { $_.PermissionLevels }}
+                @{Name = "Scope"; Expression = { if ($_.Scope -eq "List") { "List / Library" } else { "Item / File" } }}, `
+                @{Name = "Resource Type"; Expression = { $_.ResourceType }}, `
+                @{Name = "Resource Name"; Expression = { $_.ResourceName }}, `
+                @{Name = "Assigned Principal"; Expression = { $_.PrincipalTitle }}, `
+                @{Name = "Principal Type"; Expression = { & $formatType $_.PrincipalType $_.PrincipalLoginName }}, `
+                @{Name = "Permission Level"; Expression = { $_.PermissionLevels }}
 
             $itemDisplay | Format-Table -AutoSize | Out-Host
         }
         else {
-            Write-Host "[+] Brak elementow z przerwanym dziedziczeniem (wszystkie biblioteki i foldery dziedzicza uprawnienia z witryny).`n" -ForegroundColor Green
+            Write-Host "[+] No broken inheritance detected (all libraries, folders, and items inherit site permissions).`n" -ForegroundColor Green
         }
 
         Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
-        Write-Host "[*] Pelne dane audytu mozna wyeksportowac do pliku za pomoca: -ExportPath 'sciezka.csv'" -ForegroundColor Gray
-        Write-Host "[*] Aby przekazac surowe obiekty do pipeline (np. Out-GridView), uzyj -PassThru lub potoku: | Out-GridView" -ForegroundColor Gray
+        Write-Host "[*] Full audit dataset can be exported to file via: -ExportPath 'path.csv'" -ForegroundColor Gray
+        Write-Host "[*] To stream raw PSCustomObjects into pipeline (e.g. Out-GridView), use -PassThru or pipe: | Out-GridView" -ForegroundColor Gray
         Write-Host "--------------------------------------------------------------------------------`n" -ForegroundColor DarkGray
     }
 

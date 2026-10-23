@@ -40,11 +40,11 @@ An enterprise-grade, CleanCode PowerShell automation utility engineered for **Mi
    - **Microsoft Entra ID App-Only Daemon Authentication**: Secure certificate-based (X.509) authentication for automated, non-interactive execution in scheduled pipelines, Azure Automation, or CI/CD jobs.
 
 4. **Human-Readable Console Reporting & Data Export**
-   - **Tabela 1 (Uprawnienia witryny wg poziomu dostępu)**: przejrzyste zestawienie uprawnionych podmiotów uszeregowanych wg stopnia uprawnień (Pełna kontrola / Administrator root, Projektowanie, Edycja / Zapis, Odczyt, Dostęp ograniczony).
-   - **Tabela 2 (Skład osobowy poszczególnych grup)**: automatyczne rozwinięcie i prezentacja imienna członków przypisanych do każdej grupy SharePoint i Entra ID.
-   - **Tabela 3 (Elementy z przerwanym dziedziczeniem)**: precyzyjne wskazanie unikalnych uprawnień na poziomie bibliotek, list, folderów i pojedynczych plików.
-   - **Czysta konsola**: brak zaśmiecania ekranu surowymi zrzutami obiektów przy bezpośrednim uruchomieniu; obiekty potoku (`PSCustomObject`) są emitowane przy przekazaniu do `|` (np. `| Out-GridView`) lub z parametrem `-PassThru`.
-   - **Eksport do plików**: wieloformatowy silnik eksportu do plików UTF-8 **CSV** oraz wciętego **JSON** (`-ExportPath`, `-ExportFormat`).
+   - **Table 1 (Site Permissions by Access Level)**: Clear, prioritized table of entitled principals sorted by permission hierarchy (Full Control / Site Collection Admin, Design, Edit / Contribute, Read, Limited Access).
+   - **Table 2 (Group Membership Breakdown)**: Deep recursive expansion displaying every individual user and M365 security group assigned inside each SharePoint group.
+   - **Table 3 (Resources with Broken Inheritance)**: Direct enumeration of lists, document libraries, folders, and files possessing unique, non-inherited permissions.
+   - **Clean Console Output**: Automatically suppresses raw object dumping during direct console runs; structured `[PSCustomObject]` pipeline items are emitted only when piping (`| Out-GridView`) or passing `-PassThru`.
+   - **Enterprise File Export**: Integrated multi-format export engine saving results to UTF-8 encoded **CSV** or indented **JSON** (`-ExportPath`, `-ExportFormat`).
 
 5. **Enterprise-Grade Logging & Observability**
    - Real-time step-by-step progress tracking via dynamic PowerShell progress bars (`Write-Progress`).
@@ -138,22 +138,22 @@ flowchart TD
 
 ## 🛠️ Prerequisites & Installation
 
-### ⚠️ Wymagane Uprawnienia Użytkownika (Kto powinien audytować witrynę?)
+### ⚠️ Required User Permissions (Who should audit the site?)
 
 > [!IMPORTANT]
-> **Konto audytujące MUSI być Administratorem Witryny (Site Collection Administrator) lub Właścicielem audytowanej witryny!**
+> **The user executing this audit MUST be a Site Collection Administrator (Site Admin) or Site Owner of the audited SharePoint site!**
 >
-> **Dlaczego to jest konieczne?**
-> W usłudze SharePoint Online obowiązuje zasada ścisłej izolacji uprawnień (Security Isolation):
-> - Nawet **Administrator Globalny (Global Administrator)** ani **Administrator SharePoint** usługi Microsoft 365 **nie posiada automatycznego wglądu** w uprawnienia prywatnych witryn zespołów (np. witryn połączonych z Microsoft Teams lub Grupami M365).
-> - Próba audytu unikalnych uprawnień (`HasUniqueRoleAssignments`) i ról przez konto bez uprawnień administratora tej konkretnej witryny zakończy się błędem `Attempted to perform an unauthorized operation`.
+> **Why is this necessary?**
+> SharePoint Online enforces a strict security isolation model:
+> - Even **Global Administrators** and **SharePoint Administrators** in Microsoft 365 **do not have automatic permission read access** to private team sites (such as sites backing Microsoft Teams or private M365 Groups).
+> - Attempting to audit broken inheritance (`HasUniqueRoleAssignments`) and role assignments without site administrator rights will fail with `Attempted to perform an unauthorized operation`.
 >
-> **Jak dodać swoje konto jako Administrator Witryny:**
-> 1. Zaloguj się do **[SharePoint Admin Center](https://admin.microsoft.com/#/sharepoint)** lub `https://<twoj-tenant>-admin.sharepoint.com`.
-> 2. W menu wybierz: **Witryny (Sites)** > **Aktywne witryny (Active sites)**.
-> 3. Kliknij audytowaną witrynę (np. `marketing`).
-> 4. W prawym panelu przejdź do zakładki **Członkostwo (Membership)**.
-> 5. W sekcji **Administratorzy witryny (Site admins)** kliknij **Edytuj** i dodaj swoje konto użytkownika.
+> **How to assign your account as a Site Collection Administrator:**
+> 1. Sign in to the **[SharePoint Admin Center](https://admin.microsoft.com/#/sharepoint)** (`https://<your-tenant>-admin.sharepoint.com`).
+> 2. In the navigation menu, select: **Sites** > **Active sites**.
+> 3. Click the target site to audit (e.g. `marketing`).
+> 4. In the side panel, switch to the **Membership** tab.
+> 5. Under **Site admins**, click **Edit** (or **Add site admin**) and add your user account.
 
 ### 1. PowerShell Environment
 - Windows PowerShell 5.1 or PowerShell 7.x (Core) on Windows 10/11 or Windows Server.
