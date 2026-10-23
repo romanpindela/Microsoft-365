@@ -39,9 +39,12 @@ An enterprise-grade, CleanCode PowerShell automation utility engineered for **Mi
    - **Interactive Modern Authentication**: Interactive browser authentication with full Multi-Factor Authentication (MFA) and Conditional Access compatibility.
    - **Microsoft Entra ID App-Only Daemon Authentication**: Secure certificate-based (X.509) authentication for automated, non-interactive execution in scheduled pipelines, Azure Automation, or CI/CD jobs.
 
-4. **Structured Output & Data Export**
-   - Emits rich `[PSCustomObject]` pipeline items for direct consumption in downstream PowerShell commands (`Out-GridView`, `Export-Csv`, etc.).
-   - Built-in multi-format export engine supporting UTF-8 encoded **CSV** and indented **JSON** files (`-ExportPath`, `-ExportFormat`).
+4. **Human-Readable Console Reporting & Data Export**
+   - **Tabela 1 (Uprawnienia witryny wg poziomu dostępu)**: przejrzyste zestawienie uprawnionych podmiotów uszeregowanych wg stopnia uprawnień (Pełna kontrola / Administrator root, Projektowanie, Edycja / Zapis, Odczyt, Dostęp ograniczony).
+   - **Tabela 2 (Skład osobowy poszczególnych grup)**: automatyczne rozwinięcie i prezentacja imienna członków przypisanych do każdej grupy SharePoint i Entra ID.
+   - **Tabela 3 (Elementy z przerwanym dziedziczeniem)**: precyzyjne wskazanie unikalnych uprawnień na poziomie bibliotek, list, folderów i pojedynczych plików.
+   - **Czysta konsola**: brak zaśmiecania ekranu surowymi zrzutami obiektów przy bezpośrednim uruchomieniu; obiekty potoku (`PSCustomObject`) są emitowane przy przekazaniu do `|` (np. `| Out-GridView`) lub z parametrem `-PassThru`.
+   - **Eksport do plików**: wieloformatowy silnik eksportu do plików UTF-8 **CSV** oraz wciętego **JSON** (`-ExportPath`, `-ExportFormat`).
 
 5. **Enterprise-Grade Logging & Observability**
    - Real-time step-by-step progress tracking via dynamic PowerShell progress bars (`Write-Progress`).
@@ -214,6 +217,8 @@ Follow the browser prompts to authenticate as a tenant administrator and grant c
 | `-IncludeInherited` | `switch` | No | `False` | Audits inherited lists, libraries, and items in addition to broken inheritance resources. |
 | `-ExportPath` | `string` | No | *None* | Local filesystem destination file path for exported audit findings (e.g. `C:\Reports\Audit.csv`). |
 | `-ExportFormat` | `string` | No | `'CSV'` | Export format: `CSV` or `JSON`. |
+| `-PassThru` | `switch` | No | `False` | Emits raw structured `PSCustomObject` items to the PowerShell pipeline during direct console execution. |
+| `-Force` | `switch` | No | `False` | Bypasses interactive confirmation prompts (such as module installation) for automated execution. |
 | `-Help`, `-h` | `switch` | No | `False` | Displays the built-in help and practical examples, then terminates execution. |
 
 ---

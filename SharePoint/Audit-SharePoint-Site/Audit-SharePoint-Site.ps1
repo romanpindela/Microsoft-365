@@ -131,6 +131,9 @@ param(
     [string]$ExportFormat = 'CSV',
 
     [Parameter(Mandatory = $false)]
+    [switch]$PassThru,
+
+    [Parameter(Mandatory = $false)]
     [switch]$Force,
 
     [Parameter(Mandatory = $false)]
@@ -381,6 +384,7 @@ Target Directory      : $resolvedDir
             "    -IncludeInherited       [Switch]  Audits inherited lists/items in addition to broken inheritance.",
             "    -ExportPath             [String]  File path to export results (.csv or .json).",
             "    -ExportFormat           [String]  Export format: 'CSV' (default) or 'JSON'.",
+            "    -PassThru               [Switch]  Emits raw PSCustomObject records to the pipeline on console execution.",
             "    -Force                  [Switch]  Bypasses confirmation prompts (auto-installs missing modules).",
             "    -Help, -h               [Switch]  Displays this comprehensive help document.",
             "",
@@ -1233,52 +1237,150 @@ musza byc spelnione ponizsze 2 warunki:
         $groupAssign  = @($AuditRecords | Where-Object { $_.AssignmentType -like "*Group*" }).Count
 
         Write-Host "`n================================================================================" -ForegroundColor Cyan
-        Write-Host " SHAREPOINT ONLINE PERMISSION AUDIT SUMMARY" -ForegroundColor Cyan
+        Write-Host " PODSUMOWANIE AUDYTU UPRAWNIEN SHAREPOINT ONLINE" -ForegroundColor Cyan
         Write-Host "================================================================================" -ForegroundColor Cyan
-        Write-Host " Total Permission Entries Extracted   : $totalRecords" -ForegroundColor White
-        Write-Host " Site Collection Administrators       : $siteAdmins" -ForegroundColor White
-        Write-Host " Site-Level Entitlements Evaluated    : $uniqueSites" -ForegroundColor White
-        Write-Host " Lists/Libraries with Broken Perms    : $uniqueLists" -ForegroundColor $(if ($uniqueLists -gt 0) { 'Yellow' } else { 'White' })
-        Write-Host " Folders/Items with Broken Perms      : $uniqueUnique" -ForegroundColor $(if ($uniqueUnique -gt 0) { 'Yellow' } else { 'White' })
-        Write-Host " Direct User Assignments (High Risk)  : $directAssign" -ForegroundColor $(if ($directAssign -gt 0) { 'Yellow' } else { 'White' })
-        Write-Host " Group-Based Access Assignments       : $groupAssign" -ForegroundColor White
+        Write-Host " Wszystkie zarejestrowane wpisy uprawnien : $totalRecords" -ForegroundColor White
+        Write-Host " Administratorzy zbioru witryn (Root)    : $siteAdmins" -ForegroundColor $(if ($siteAdmins -gt 0) { 'Green' } else { 'Yellow' })
+        Write-Host " Uprawnienia na poziomie witryny         : $uniqueSites" -ForegroundColor White
+        Write-Host " Listy / biblioteki z wlasnymi prawami   : $uniqueLists" -ForegroundColor $(if ($uniqueLists -gt 0) { 'Yellow' } else { 'White' })
+        Write-Host " Foldery / pliki z wlasnymi prawami      : $uniqueUnique" -ForegroundColor $(if ($uniqueUnique -gt 0) { 'Yellow' } else { 'White' })
+        Write-Host " Bezposrednie uprawnienia uzytkownikow   : $directAssign" -ForegroundColor $(if ($directAssign -gt 0) { 'Yellow' } else { 'White' })
+        Write-Host " Przypisania oparte na grupach           : $groupAssign" -ForegroundColor White
         Write-Host "================================================================================`n" -ForegroundColor Cyan
 
-        # Zestawienie uprawnionych osób i grup na poziomie witryny
-        $siteEntitlements = @($AuditRecords | Where-Object { $_.Scope -eq "Site" })
-        if ($siteEntitlements.Count -gt 0) {
-            Write-Host "================================================================================" -ForegroundColor Yellow
-            Write-Host " UPRAWNIONE OSOBY I GRUPY W AUDYTOWANEJ WITRYNIE (POZIOM WITRYNY)" -ForegroundColor Yellow
-            Write-Host "================================================================================" -ForegroundColor Yellow
-
-            $siteDisplay = $siteEntitlements | Select-Object `
-                @{Name = "Podmiot / Nazwa"; Expression = { $_.PrincipalTitle }}, `
-                @{Name = "Typ"; Expression = { $_.PrincipalType }}, `
-                @{Name = "Poziom uprawnien"; Expression = { $_.PermissionLevels }}, `
-                @{Name = "Typ przypisania"; Expression = { $_.AssignmentType }}, `
-                @{Name = "Grupa nadrzedna"; Expression = { $_.GroupName }}, `
-                @{Name = "Login / UPN"; Expression = { if (-not [string]::IsNullOrWhiteSpace($_.UserPrincipalName) -and $_.UserPrincipalName -ne "N/A") { $_.UserPrincipalName } else { $_.PrincipalLoginName } }}
-
-            $siteDisplay | Format-Table -AutoSize | Out-Host
+        # Helper: priorytet sortowania poziomow uprawnien
+        $getPermRank = {
+            param([string]$perm)
+            if ([string]::IsNullOrWhiteSpace($perm)) { return 99 }
+            if ($perm -like "*Administrator*" -or $perm -like "*Pełna kontrola*" -or $perm -like "*Full Control*") { return 1 }
+            if ($perm -like "*Projektowanie*" -or $perm -like "*Design*") { return 2 }
+            if ($perm -like "*Edycja*" -or $perm -like "*Edit*" -or $perm -like "*Współtworzenie*" -or $perm -like "*Contribute*") { return 3 }
+            if ($perm -like "*Odczyt*" -or $perm -like "*Read*" -or $perm -like "*Wyświetlanie*") { return 4 }
+            if ($perm -like "*Dostęp ograniczony*" -or $perm -like "*Limited Access*") { return 5 }
+            return 6
         }
 
-        # Zestawienie elementów z unikalnymi uprawnieniami (jeśli wykryto)
+        # Helper: czytelny typ podmiotu
+        $formatType = {
+            param([string]$type, [string]$login)
+            if ($type -eq "SharePointGroup") { return "Grupa SharePoint" }
+            if ($type -eq "SecurityGroup") {
+                if ($login -like "*federateddirectoryclaimprovider*") { return "Grupa M365 (Entra ID)" }
+                return "Grupa zabezpieczen Entra"
+            }
+            if ($type -eq "User") { return "Uzytkownik" }
+            return $type
+        }
+
+        # Helper: czytelne konto / identyfikator
+        $formatAccount = {
+            param([string]$upn, [string]$login, [string]$type)
+            if (-not [string]::IsNullOrWhiteSpace($upn) -and $upn -ne "N/A") { return $upn }
+            if ($login -like "c:0o.c|federateddirectoryclaimprovider|*") { return "Grupa M365 w Entra ID" }
+            if ($type -eq "SharePointGroup") { return "-" }
+            return $login
+        }
+
+        # ----------------------------------------------------------------------
+        # TABELA 1: ZESTAWIENIE UPRAWNIEN WITRYNY WG POZIOMU DOSTEPU
+        # ----------------------------------------------------------------------
+        $sitePrincipals = @($AuditRecords | Where-Object { $_.Scope -eq "Site" -and $_.AssignmentType -ne "Group Membership" })
+        if ($sitePrincipals.Count -gt 0) {
+            Write-Host "================================================================================" -ForegroundColor Yellow
+            Write-Host " TABELA 1: UPRAWNIENIA WITRYNY WG POZIOMU DOSTEPU (KTO CO MOZE W WITRYNIE)" -ForegroundColor Yellow
+            Write-Host "================================================================================" -ForegroundColor Yellow
+
+            $table1Rows = foreach ($sp in $sitePrincipals) {
+                $membersCount = @($AuditRecords | Where-Object { $_.AssignmentType -eq "Group Membership" -and $_.GroupName -eq $sp.PrincipalTitle }).Count
+                $memberNote = if ($sp.PrincipalType -eq "SharePointGroup") {
+                    if ($membersCount -gt 0) { "$membersCount czlonek(ow) -> Zobacz Tabele 2" } else { "Brak czlonkow (pusta grupa)" }
+                } else {
+                    "Dostep bezposredni (osobisty)"
+                }
+
+                $cleanTitle = if ($sp.PrincipalTitle -like "Limited Access System Group*") {
+                    "Dostep ograniczony (Udostepnienia bezposrednie)"
+                } else {
+                    $sp.PrincipalTitle
+                }
+
+                [PSCustomObject]@{
+                    "Poziom Uprawnien"       = $sp.PermissionLevels
+                    "Podmiot (Grupa / Osoba)" = $cleanTitle
+                    "Typ podmiotu"           = & $formatType $sp.PrincipalType $sp.PrincipalLoginName
+                    "Sposob przypisania"     = $sp.AssignmentType
+                    "Konto / UPN"            = & $formatAccount $sp.UserPrincipalName $sp.PrincipalLoginName $sp.PrincipalType
+                    "Sklad / Czlonkowie"     = $memberNote
+                    _Rank                    = & $getPermRank $sp.PermissionLevels
+                }
+            }
+
+            $table1Rows | Sort-Object _Rank, "Poziom Uprawnien", "Podmiot (Grupa / Osoba)" | `
+                Select-Object -Property "Poziom Uprawnien", "Podmiot (Grupa / Osoba)", "Typ podmiotu", "Sposob przypisania", "Konto / UPN", "Sklad / Czlonkowie" | `
+                Format-Table -AutoSize | Out-Host
+        }
+
+        # ----------------------------------------------------------------------
+        # TABELA 2: SKLAD OSOBOWY POSZCZEGOLNYCH GRUP
+        # ----------------------------------------------------------------------
+        $groupMembers = @($AuditRecords | Where-Object { $_.AssignmentType -eq "Group Membership" })
+        if ($groupMembers.Count -gt 0) {
+            Write-Host "================================================================================" -ForegroundColor Green
+            Write-Host " TABELA 2: SKLAD OSOBOWY GRUP (KTO NALEZY DO DANEJ GRUPY UPRAWNIEN)" -ForegroundColor Green
+            Write-Host "================================================================================" -ForegroundColor Green
+
+            $table2Rows = foreach ($gm in $groupMembers) {
+                $cleanGroup = if ($gm.GroupName -like "Limited Access System Group*") {
+                    "Dostep ograniczony (Udostepnienia bezposrednie)"
+                } else {
+                    $gm.GroupName
+                }
+
+                [PSCustomObject]@{
+                    "Grupa nadrzedna"      = $cleanGroup
+                    "Poziom uprawnien"     = $gm.PermissionLevels
+                    "Czlonek grupy"        = $gm.PrincipalTitle
+                    "Typ czlonka"          = & $formatType $gm.PrincipalType $gm.PrincipalLoginName
+                    "Konto / UPN / Id"     = & $formatAccount $gm.UserPrincipalName $gm.PrincipalLoginName $gm.PrincipalType
+                    _Rank                  = & $getPermRank $gm.PermissionLevels
+                }
+            }
+
+            $table2Rows | Sort-Object _Rank, "Grupa nadrzedna", "Czlonek grupy" | `
+                Select-Object -Property "Grupa nadrzedna", "Poziom uprawnien", "Czlonek grupy", "Typ czlonka", "Konto / UPN / Id" | `
+                Format-Table -AutoSize | Out-Host
+        }
+        else {
+            Write-Host "[i] Brak zidentyfikowanych czlonkow w grupach SharePoint (grupy sa puste lub nie posiadaja uzytkownikow)." -ForegroundColor Yellow
+        }
+
+        # ----------------------------------------------------------------------
+        # TABELA 3: ELEMENTY Z UNIKALNYMI UPRAWNIENIAMI (BROKEN INHERITANCE)
+        # ----------------------------------------------------------------------
         $uniqueListOrItems = @($AuditRecords | Where-Object { $_.Scope -in @("List", "Item") -and $_.HasUniquePermissions })
         if ($uniqueListOrItems.Count -gt 0) {
-            Write-Host "`n================================================================================" -ForegroundColor Magenta
-            Write-Host " ELEMENTY Z UNIKALNYMI UPRAWNIENIAMI (BROKEN INHERITANCE - LISTY / FOLDERY / PLIKI)" -ForegroundColor Magenta
+            Write-Host "================================================================================" -ForegroundColor Magenta
+            Write-Host " TABELA 3: ELEMENTY Z PRZERWANYM DZIEDZICZENIEM (BROKEN INHERITANCE)" -ForegroundColor Magenta
             Write-Host "================================================================================" -ForegroundColor Magenta
 
             $itemDisplay = $uniqueListOrItems | Select-Object `
-                @{Name = "Zakres"; Expression = { $_.Scope }}, `
+                @{Name = "Zakres"; Expression = { if ($_.Scope -eq "List") { "Lista / Biblioteka" } else { "Element / Plik" } }}, `
                 @{Name = "Typ zasobu"; Expression = { $_.ResourceType }}, `
                 @{Name = "Nazwa elementu"; Expression = { $_.ResourceName }}, `
                 @{Name = "Podmiot uprawniony"; Expression = { $_.PrincipalTitle }}, `
-                @{Name = "Typ"; Expression = { $_.PrincipalType }}, `
+                @{Name = "Typ podmiotu"; Expression = { & $formatType $_.PrincipalType $_.PrincipalLoginName }}, `
                 @{Name = "Poziom uprawnien"; Expression = { $_.PermissionLevels }}
 
             $itemDisplay | Format-Table -AutoSize | Out-Host
         }
+        else {
+            Write-Host "[+] Brak elementow z przerwanym dziedziczeniem (wszystkie biblioteki i foldery dziedzicza uprawnienia z witryny).`n" -ForegroundColor Green
+        }
+
+        Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "[*] Pelne dane audytu mozna wyeksportowac do pliku za pomoca: -ExportPath 'sciezka.csv'" -ForegroundColor Gray
+        Write-Host "[*] Aby przekazac surowe obiekty do pipeline (np. Out-GridView), uzyj -PassThru lub potoku: | Out-GridView" -ForegroundColor Gray
+        Write-Host "--------------------------------------------------------------------------------`n" -ForegroundColor DarkGray
     }
 
     # ==============================================================================
@@ -1373,10 +1475,13 @@ process {
                 Export-AuditData -Records $auditData -Path $ExportPath -Format $ExportFormat
             }
 
-            # Emit structured objects to the PowerShell pipeline
-            if ($auditData) {
-                foreach ($record in $auditData) {
-                    Write-Output $record
+            # Emit structured objects to the PowerShell pipeline only when explicitly requested (-PassThru) or piped (|)
+            $isOutputPiped = ($MyInvocation.PipelinePosition -lt $MyInvocation.PipelineLength)
+            if ($PassThru -or $isOutputPiped) {
+                if ($auditData) {
+                    foreach ($record in $auditData) {
+                        Write-Output $record
+                    }
                 }
             }
         }
