@@ -501,63 +501,121 @@ Please install it by executing:
             [string]$ApplicationName = "SharePoint-Audit"
         )
 
-        Write-Log -Level INFO -Message "Initiating automated Microsoft Entra ID App registration ('$ApplicationName') in tenant '$Tenant'..."
-        Write-Host "`n[*] Microsoft Entra ID registration requires a one-time administrator consent flow." -ForegroundColor Yellow
-        Write-Host "[*] A browser window will now open for modern interactive sign-in." -ForegroundColor Yellow
-        Write-Host "[*] Please sign in with your Microsoft 365 account and grant consent to the requested SharePoint permissions.`n" -ForegroundColor Yellow
+        $targetAppName = $ApplicationName
+        $maxAttempts   = 3
+        $attempt       = 0
 
-        try {
-            $regResult = Register-PnPEntraIDAppForInteractiveLogin `
-                -ApplicationName $ApplicationName `
-                -Tenant $Tenant `
-                -SharePointDelegatePermissions "AllSites.FullControl" `
-                -GraphDelegatePermissions "Group.Read.All", "User.Read.All" `
-                -ErrorAction Stop
+        while ($attempt -lt $maxAttempts) {
+            $attempt++
 
-            $newAppId = $null
-            if ($null -ne $regResult) {
-                if ($regResult.AppId) {
-                    $newAppId = $regResult.AppId.ToString()
+            Write-Log -Level INFO -Message "Initiating automated Microsoft Entra ID App registration ('$targetAppName') in tenant '$Tenant'..."
+            Write-Host "`n[*] Microsoft Entra ID registration requires a one-time administrator consent flow." -ForegroundColor Yellow
+            Write-Host "[*] A browser window will now open for modern interactive sign-in." -ForegroundColor Yellow
+            Write-Host "[*] Please sign in with your Microsoft 365 account and grant consent to the requested SharePoint permissions.`n" -ForegroundColor Yellow
+
+            try {
+                $regResult = Register-PnPEntraIDAppForInteractiveLogin `
+                    -ApplicationName $targetAppName `
+                    -Tenant $Tenant `
+                    -SharePointDelegatePermissions "AllSites.FullControl" `
+                    -GraphDelegatePermissions "Group.Read.All", "User.Read.All" `
+                    -ErrorAction Stop
+
+                $newAppId = $null
+                if ($null -ne $regResult) {
+                    if ($regResult.AppId) {
+                        $newAppId = $regResult.AppId.ToString()
+                    }
+                    elseif ($regResult.Id) {
+                        $newAppId = $regResult.Id.ToString()
+                    }
+                    else {
+                        $strResult = "$regResult"
+                        if ($strResult -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
+                            $newAppId = $Matches[1]
+                        }
+                    }
                 }
-                elseif ($regResult.Id) {
-                    $newAppId = $regResult.Id.ToString()
+
+                if (-not [string]::IsNullOrWhiteSpace($newAppId)) {
+                    Write-Log -Level SUCCESS -Message "Entra ID App '$targetAppName' registered successfully. Application (Client) ID: $newAppId"
+
+                    # Persist to local cache so subsequent runs never need prompt or re-registration
+                    try {
+                        $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
+                        if (-not (Test-Path -Path $cacheDir)) {
+                            $null = New-Item -Path $cacheDir -ItemType Directory -Force
+                        }
+                        $cacheFile = Join-Path -Path $cacheDir -ChildPath "${Tenant}_client_id.txt"
+                        [System.IO.File]::WriteAllText($cacheFile, $newAppId)
+                        Write-Log -Level SUCCESS -Message "Application ID cached locally at: $cacheFile"
+                    }
+                    catch {
+                        Write-Log -Level WARN -Message "Unable to persist Application ID to local cache: $($_.Exception.Message)"
+                    }
+
+                    return $newAppId
                 }
                 else {
-                    $strResult = "$regResult"
-                    if ($strResult -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
-                        $newAppId = $Matches[1]
+                    throw "Could not extract Application (Client) ID from registration output."
+                }
+            }
+            catch {
+                $errMsg = $_.Exception.Message
+                if ($errMsg -match 'already exists') {
+                    Write-Log -Level WARN -Message "Aplikacja o nazwie '$targetAppName' juz istnieje w Microsoft Entra ID."
+
+                    $suggestedName = "SharePoint-Audit-" + (Get-Date).ToString("yyyyMMdd-HHmm")
+                    if ([Environment]::UserInteractive) {
+                        Write-Host "`n[!] Aplikacja o nazwie '$targetAppName' juz istnieje w Entra ID tenanta '$Tenant'." -ForegroundColor Yellow
+                        Write-Host "[*] Proponowana nowa unikalna nazwa: $suggestedName" -ForegroundColor Cyan
+                        Write-Host "[?] Wcisnij ENTER aby uzyc [$suggestedName], wpisz inna nazwe, lub wklej istniejacy Application ID (GUID): " -NoNewline -ForegroundColor Yellow
+                        $inputVal = Read-Host
+
+                        if ([string]::IsNullOrWhiteSpace($inputVal)) {
+                            $targetAppName = $suggestedName
+                            Write-Log -Level INFO -Message "Ponawianie rejestracji z proponowana nazwa: $targetAppName"
+                            continue
+                        }
+                        # Check if user pasted an existing GUID:
+                        elseif ($inputVal.Trim() -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+                            $pastedId = $inputVal.Trim()
+                            Write-Log -Level SUCCESS -Message "Uzyto podanego istniejacego Application ID: $pastedId"
+                            try {
+                                $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
+                                if (-not (Test-Path -Path $cacheDir)) {
+                                    $null = New-Item -Path $cacheDir -ItemType Directory -Force
+                                }
+                                $cacheFile = Join-Path -Path $cacheDir -ChildPath "${Tenant}_client_id.txt"
+                                [System.IO.File]::WriteAllText($cacheFile, $pastedId)
+                                Write-Log -Level SUCCESS -Message "Application ID zapisany w pamieci podrecznej: $cacheFile"
+                            }
+                            catch {
+                                Write-Log -Level WARN -Message "Nie mozna zapisac ClientId w cache: $($_.Exception.Message)"
+                            }
+                            return $pastedId
+                        }
+                        else {
+                            $targetAppName = $inputVal.Trim()
+                            Write-Log -Level INFO -Message "Ponawianie rejestracji z nowa nazwa: $targetAppName"
+                            continue
+                        }
+                    }
+                    else {
+                        # Non-interactive fallback: auto-append timestamp
+                        $targetAppName = $suggestedName
+                        continue
                     }
                 }
-            }
-
-            if (-not [string]::IsNullOrWhiteSpace($newAppId)) {
-                Write-Log -Level SUCCESS -Message "Entra ID App registered successfully. Application (Client) ID: $newAppId"
-
-                # Persist to local cache so subsequent runs never need prompt or re-registration
-                try {
-                    $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
-                    if (-not (Test-Path -Path $cacheDir)) {
-                        $null = New-Item -Path $cacheDir -ItemType Directory -Force
-                    }
-                    $cacheFile = Join-Path -Path $cacheDir -ChildPath "${Tenant}_client_id.txt"
-                    [System.IO.File]::WriteAllText($cacheFile, $newAppId)
-                    Write-Log -Level SUCCESS -Message "Application ID cached locally at: $cacheFile"
+                else {
+                    $regErr = "Failed to register Microsoft Entra ID application: $errMsg"
+                    Write-Log -Level ERROR -Message $regErr
+                    throw $regErr
                 }
-                catch {
-                    Write-Log -Level WARN -Message "Unable to persist Application ID to local cache: $($_.Exception.Message)"
-                }
-
-                return $newAppId
-            }
-            else {
-                throw "Could not extract Application (Client) ID from registration output."
             }
         }
-        catch {
-            $regErr = "Failed to register Microsoft Entra ID application: $($_.Exception.Message)"
-            Write-Log -Level ERROR -Message $regErr
-            throw $regErr
-        }
+
+        throw "Przekroczono maksymalna liczbe prob rejestracji aplikacji Entra ID."
     }
 
     # ==============================================================================

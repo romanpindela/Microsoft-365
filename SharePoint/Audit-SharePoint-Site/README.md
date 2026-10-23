@@ -155,14 +155,22 @@ Unblock-File -Path .\Audit-SharePoint-Site.ps1
 ### 4. Microsoft Entra ID App Registration (One-time Setup)
 As of September 9, 2024, Microsoft permanently disabled the legacy multi-tenant PnP application (`31359c7f-bd7e-475c-86db-f1e93e6075b9`). To connect interactively or via automation, register an Entra ID application in your tenant using one of the following methods:
 
-**Option A: Automated Registration via PnP.PowerShell (Recommended)**
+**Option A: Built-in Automated Registration (Recommended)**
+Simply run `Audit-SharePoint-Site.ps1` with `-Interactive`. If no Client ID is detected, the script will prompt you to automatically register and configure an Entra ID app:
+- It registers an app with delegated Least Privilege permissions (`AllSites.FullControl` for SharePoint, `User.Read.All` and `Group.Read.All` for Graph).
+- If an app named `SharePoint-Audit` already exists in your tenant, the script automatically proposes a unique timestamped name (e.g. `SharePoint-Audit-20261023-2140`), accepts an alternative custom name, or allows you to paste the existing Application ID (GUID).
+- The acquired Client ID is automatically cached locally in `%LOCALAPPDATA%\SharePoint-Audit\<tenant>_client_id.txt` so subsequent runs require zero configuration.
+
+![Automated Entra ID App Registration](assets/Registering_audit_script.jpg)
+
+**Option B: Manual Registration via PnP.PowerShell**
 Execute the following command in PowerShell 7 (replacing `yourtenant.onmicrosoft.com` with your tenant domain):
 ```powershell
 Register-PnPEntraIDAppForInteractiveLogin -ApplicationName "SharePoint-Audit" -Tenant "yourtenant.onmicrosoft.com"
 ```
 Follow the browser prompts to authenticate as a tenant administrator and grant consent. The cmdlet will output the **Application (Client) ID**.
 
-**Option B: Manual Registration via Microsoft Entra Admin Center**
+**Option C: Manual Registration via Microsoft Entra Admin Center**
 1. Navigate to **Microsoft Entra ID** > **App registrations** > **New registration**.
 2. Name: `SharePoint-Audit`
 3. Supported account types: `Accounts in this organizational directory only (Single tenant)`.
