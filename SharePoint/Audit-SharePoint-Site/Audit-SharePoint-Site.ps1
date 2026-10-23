@@ -158,6 +158,8 @@ begin {
     $Script:StartTime        = Get-Date
     $Script:LogFilePath      = $null
     $Script:ActiveConnection = $null
+    $Script:ActiveClientId   = $null
+    $Script:ActiveTenant     = $null
     $Script:ScriptFilePath   = if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
         $PSCommandPath
     }
@@ -753,6 +755,9 @@ Tip: You can also set an environment variable to avoid entering -ClientId repeat
             }
 
             # Attempt connection with the effective ClientId
+            $Script:ActiveClientId = $effectiveClientId
+            $Script:ActiveTenant   = $effectiveTenant
+
             $interactiveParams = @{
                 Url              = $TargetSiteUrl
                 Interactive      = $true
@@ -801,19 +806,17 @@ Tip: You can also set an environment variable to avoid entering -ClientId repeat
 
     function Disconnect-TargetSite {
         [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
         param(
             [Parameter(Mandatory = $false)]
             $Connection
         )
 
+        $null = $Connection
+
         try {
-            if ($null -ne $Connection) {
-                Write-Log -Level INFO -Message "Disconnecting active SharePoint Online PnP session..."
-                Disconnect-PnPOnline -Connection $Connection -ErrorAction SilentlyContinue
-            }
-            else {
-                Disconnect-PnPOnline -ErrorAction SilentlyContinue
-            }
+            Write-Log -Level INFO -Message "Disconnecting active SharePoint Online PnP session..."
+            Disconnect-PnPOnline -ErrorAction SilentlyContinue
             Write-Log -Level SUCCESS -Message "SharePoint Online session terminated cleanly."
         }
         catch {
@@ -849,10 +852,50 @@ Tip: You can also set an environment variable to avoid entering -ClientId repeat
         Write-Progress -Activity "Auditing SharePoint Site Permissions" -Status "Auditing Site-Level Role Assignments..." -PercentComplete 10
         Write-Log -Level INFO -Message "Auditing site web role assignments and site collection administrators..."
 
-        $web = if ($null -ne $Connection) {
-            Get-PnPWeb -Connection $Connection -Includes Title, Url, HasUniqueRoleAssignments
-        } else {
-            Get-PnPWeb -Includes Title, Url, HasUniqueRoleAssignments
+        $web = try {
+            if ($null -ne $Connection) {
+                Get-PnPWeb -Connection $Connection -Includes Title, Url, HasUniqueRoleAssignments -ErrorAction Stop
+            } else {
+                Get-PnPWeb -Includes Title, Url, HasUniqueRoleAssignments -ErrorAction Stop
+            }
+        }
+        catch {
+            $err = $_.Exception.Message
+            if ($err -match 'unauthorized' -or $err -match 'Access denied') {
+                $appId = if ($Script:ActiveClientId) { $Script:ActiveClientId } else { "<ClientId>" }
+                $tenantName = if ($Script:ActiveTenant) { $Script:ActiveTenant } else { "twoj-tenant.onmicrosoft.com" }
+                $tenantPrefix = $tenantName.Split('.')[0]
+                $consentUrl = "https://login.microsoftonline.com/$tenantName/adminconsent?client_id=$appId"
+
+                $unauthHelp = @"
+
+================================================================================
+BRAK UPRAWNIEN DO AUDYTU WITRYNY SHAREPOINT: $TargetSiteUrl
+Komunikat: $err
+================================================================================
+Aby audyt mogl odczytac uprawnienia (HasUniqueRoleAssignments, RoleAssignments),
+musza byc spelnione ponizsze 2 warunki:
+
+1. ZGODA ADMINISTRATORA (ADMIN CONSENT) DLA APLIKACJI W MICROSOFT ENTRA ID:
+   Uprawnienie SharePoint 'AllSites.FullControl' wymaga zgody administratora tenanta.
+   --> Otworz ponizszy link w przegladarce (zalogowany jako Administrator tenanta):
+       $consentUrl
+   --> Kliknij 'Akceptuj' (Accept).
+   (Alternatywnie: https://entra.microsoft.com -> App registrations -> Aplikacja ID: $appId -> API permissions -> 'Grant admin consent')
+
+2. PRZYPISANIE KONTA JAKO SITE COLLECTION ADMIN DO WITRYNY '$TargetSiteUrl':
+   W SharePoint Online administratorzy M365 nie maja automatycznego dostepu do prywatnych witryn.
+   Konto, ktorym sie logujesz, musi byc dodane jako Administrator Witryny:
+   --> Wejdz do Centrum SharePoint Admin: https://${tenantPrefix}-admin.sharepoint.com
+   --> Aktywne witryny (Active sites) -> Kliknij '$TargetSiteUrl'
+   --> Zakladka 'Czlonkowstwo' (Membership) -> 'Administratorzy witryny' (Site admins)
+   --> Kliknij 'Dodaj administratora witryny' i dodaj swoje konto.
+================================================================================
+"@
+                Write-Log -Level ERROR -Message $unauthHelp
+                throw $unauthHelp
+            }
+            throw
         }
 
         # Audit Site Collection Administrators
