@@ -1,4 +1,4 @@
-﻿# Microsoft 365 PowerShell Automation Toolkit
+# Microsoft 365 PowerShell Automation Toolkit
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-blue.svg)](https://microsoft.com/powershell)
 [![Microsoft Graph](https://img.shields.io/badge/Microsoft%20Graph-v1.0%20%2F%20v2.0-008272.svg)](https://learn.microsoft.com/graph/)
@@ -35,9 +35,12 @@ Microsoft 365/
 │   ├── Sync-OneDriveFolderAndNotify # Cloud-to-local and local-to-cloud sync with progress and notifications
 │   └── Upload-LargeFilesSession     # Chunked Graph upload session for files up to 250 GB
 ├── Send-M365Mail/                   # Microsoft Graph automated email dispatcher with certificate & interactive auth
-└── SharePoint/                      # SharePoint Online synchronization and document library mapping
+└── SharePoint/                      # SharePoint Online governance, auditing, and synchronization
+    ├── Audit-SharePoint-Site        # Deep permission auditing, broken inheritance detection, and export
+    ├── Manage-SharePoint-Site       # Full site administration, role modification, and user management
+    ├── New-SharePoint-Site          # Modern preview and empty site provisioning
     └── Sync-SharePointLibrary       # Automatic mapping of SharePoint libraries via OneDrive sync client
-`
+```
 
 ---
 
@@ -66,11 +69,14 @@ Microsoft 365/
 ### 4. Helpdesk & Endpoint Remediation (/Helpdesk)
 * [**Reset-TeamsIdentityCache**](Helpdesk/Reset-TeamsIdentityCache/README.md) — Comprehensive remediation tool for Microsoft Teams authentication loops, token expiration, stale tenant profiles, and WAM/IdentityCache corruption. Purges New Teams (MSIX) and Classic Teams caches, OneAuth tokens, Web Account Manager broker state, and Windows Credential Manager entries with detailed feature cataloging (-ListFeatures), simulation mode (-WhatIf), and structured logging.
 
-### 5. SharePoint Online (/SharePoint)
-* [**Sync-SharePointLibrary**](SharePoint/Sync-SharePointLibrary/README.md) — Automates SharePoint Online document library mapping and synchronization to Windows 10/11 File Explorer using native OneDrive sync client (odopen://sync?), supporting tenant auto-discovery, interactive device code login, and non-interactive Entra ID app credentials.
+### 5. SharePoint Online (`/SharePoint`)
+* [**Audit-SharePoint-Site**](SharePoint/Audit-SharePoint-Site/README.md) — Audits site, library, folder, and item-level permissions with broken inheritance detection, nested group expansion, and automated CSV/JSON exports.
+* [**Manage-SharePoint-Site**](SharePoint/Manage-SharePoint-Site/README.md) — Automates SharePoint Online site administration: site inventory listing, categorized permissions auditing, defining site modifiers, changing user roles, and safe user removal.
+* [**New-SharePoint-Site**](SharePoint/New-SharePoint-Site/README.md) — Provisions modern Company-Wide preview sites or isolated empty sites with designated owners, members, and visitors.
+* [**Sync-SharePointLibrary**](SharePoint/Sync-SharePointLibrary/README.md) — Automates SharePoint Online document library mapping and synchronization to Windows 10/11 File Explorer using native OneDrive sync client (`odopen://sync?`), supporting tenant auto-discovery, interactive device code login, and non-interactive Entra ID app credentials.
 
 ### 6. Email & Dispatching (/Send-M365Mail)
-* [**Send-M365Mail**](Send-M365Mail/README.md) — Enterprise email dispatcher for Microsoft 365 / Exchange Online via Microsoft Graph API. Supports automated X.509 certificate authentication (App-Only daemon) or interactive sign-in with MFA, client configuration deployment, Base64 MIME attachment encoding, rich HTML bodies, and mandatory execution logging to C:\Logs.
+* [**Send-M365Mail**](Exchange/Send-M365Mail/README.md) — Enterprise email dispatcher for Microsoft 365 / Exchange Online via Microsoft Graph API. Supports automated X.509 certificate authentication (App-Only daemon) or interactive sign-in with MFA, client configuration deployment, Base64 MIME attachment encoding, rich HTML bodies, and mandatory execution logging to C:\Logs.
 
 ---
 
