@@ -507,7 +507,12 @@ Please install it by executing:
         Write-Host "[*] Please sign in with your Microsoft 365 account and grant consent to the requested SharePoint permissions.`n" -ForegroundColor Yellow
 
         try {
-            $regResult = Register-PnPEntraIDAppForInteractiveLogin -ApplicationName $ApplicationName -Tenant $Tenant -ErrorAction Stop
+            $regResult = Register-PnPEntraIDAppForInteractiveLogin `
+                -ApplicationName $ApplicationName `
+                -Tenant $Tenant `
+                -SharePointDelegatePermissions "AllSites.FullControl" `
+                -GraphDelegatePermissions "Group.Read.All", "User.Read.All" `
+                -ErrorAction Stop
 
             $newAppId = $null
             if ($null -ne $regResult) {
