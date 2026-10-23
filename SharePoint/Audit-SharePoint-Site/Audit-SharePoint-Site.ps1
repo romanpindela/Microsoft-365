@@ -510,16 +510,32 @@ Please install it by executing:
 
         Write-Log -Level INFO -Message "Connecting to SharePoint Online site: $TargetSiteUrl"
 
+        # Determine Tenant Domain hint from SiteUrl if not explicitly provided
+        $inferredTenant = try {
+            $uri = [System.Uri]$TargetSiteUrl
+            $uri.Host.Split('.')[0] + ".onmicrosoft.com"
+        }
+        catch {
+            "yourtenant.onmicrosoft.com"
+        }
+
+        $effectiveTenant = if (-not [string]::IsNullOrWhiteSpace($TenantDomain)) {
+            $TenantDomain
+        }
+        else {
+            $inferredTenant
+        }
+
         try {
             # Scenario A: Certificate-based non-interactive authentication (Entra ID App-Only)
             if (-not [string]::IsNullOrWhiteSpace($AppId) -and
                 -not [string]::IsNullOrWhiteSpace($TenantDomain) -and
                 -not [string]::IsNullOrWhiteSpace($CertThumbprint)) {
 
-                Write-Log -Level INFO -Message "Authenticating using Entra ID App-Only Certificate (AppId: $AppId, Tenant: $TenantDomain)..."
+                Write-Log -Level INFO -Message "Authenticating using Entra ID App-Only Certificate (AppId: $AppId, Tenant: $effectiveTenant)..."
                 $conn = Connect-PnPOnline -Url $TargetSiteUrl `
                     -ClientId $AppId `
-                    -Tenant $TenantDomain `
+                    -Tenant $effectiveTenant `
                     -Thumbprint $CertThumbprint `
                     -ReturnConnection -ErrorAction Stop
 
@@ -527,30 +543,51 @@ Please install it by executing:
                 return $conn
             }
 
-            # Scenario B & C: Modern Interactive Authentication (Explicit or Default)
-            # In PnP.PowerShell 2.x and 3.x, -Interactive requires a ClientId for Entra ID app registration.
-            # If not explicitly specified via -ClientId, fall back to the well-known PnP Management Shell AppId.
+            # Scenario B & C: Modern Interactive Authentication
+            # In PnP.PowerShell 2.x and 3.x, Microsoft retired the shared multi-tenant PnP app on Sept 9, 2024.
+            # Interactive authentication requires a dedicated Entra ID App Registration Client ID.
             $effectiveClientId = if (-not [string]::IsNullOrWhiteSpace($AppId)) {
                 $AppId
             }
+            elseif (-not [string]::IsNullOrWhiteSpace($env:ENTRAID_APP_ID)) {
+                $env:ENTRAID_APP_ID
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($env:PNP_APP_ID)) {
+                $env:PNP_APP_ID
+            }
             else {
-                "31359c7f-bd7e-475c-86db-f1e93e6075b9"
+                $null
+            }
+
+            if ([string]::IsNullOrWhiteSpace($effectiveClientId)) {
+                $guidance = @"
+Microsoft Entra ID interactive authentication requires an Application (Client) ID.
+Microsoft permanently retired the legacy shared multi-tenant PnP app on September 9, 2024.
+
+To register a dedicated Entra ID App for your tenant ('$effectiveTenant'), run once in PowerShell 7:
+    Register-PnPEntraIDAppForInteractiveLogin -ApplicationName "SharePoint-Audit" -Tenant "$effectiveTenant"
+
+Then re-run this script with the generated Application ID:
+    .\Audit-SharePoint-Site.ps1 -SiteUrl "$TargetSiteUrl" -ClientId "<ApplicationId>" -Interactive
+
+Tip: You can also set an environment variable to avoid entering -ClientId repeatedly:
+    `$env:ENTRAID_APP_ID = "<ApplicationId>"
+"@
+                Write-Log -Level ERROR -Message $guidance
+                throw $guidance
             }
 
             $interactiveParams = @{
                 Url              = $TargetSiteUrl
                 Interactive      = $true
                 ClientId         = $effectiveClientId
+                Tenant           = $effectiveTenant
                 ReturnConnection = $true
                 ErrorAction      = 'Stop'
             }
 
-            if (-not [string]::IsNullOrWhiteSpace($TenantDomain)) {
-                $interactiveParams['Tenant'] = $TenantDomain
-            }
-
             $authLabel = if ($InteractiveAuth) { "Interactive browser" } else { "Default interactive" }
-            Write-Log -Level INFO -Message "Initiating $authLabel authentication (ClientId: $effectiveClientId)..."
+            Write-Log -Level INFO -Message "Initiating $authLabel authentication (ClientId: $effectiveClientId, Tenant: $effectiveTenant)..."
             $conn = Connect-PnPOnline @interactiveParams
             Write-Log -Level SUCCESS -Message "Connected successfully to $TargetSiteUrl via interactive session."
             return $conn

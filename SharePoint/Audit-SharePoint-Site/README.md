@@ -152,6 +152,29 @@ Downloaded scripts are marked with the Zone.Identifier alternate data stream by 
 Unblock-File -Path .\Audit-SharePoint-Site.ps1
 ```
 
+### 4. Microsoft Entra ID App Registration (One-time Setup)
+As of September 9, 2024, Microsoft permanently disabled the legacy multi-tenant PnP application (`31359c7f-bd7e-475c-86db-f1e93e6075b9`). To connect interactively or via automation, register an Entra ID application in your tenant using one of the following methods:
+
+**Option A: Automated Registration via PnP.PowerShell (Recommended)**
+Execute the following command in PowerShell 7 (replacing `yourtenant.onmicrosoft.com` with your tenant domain):
+```powershell
+Register-PnPEntraIDAppForInteractiveLogin -ApplicationName "SharePoint-Audit" -Tenant "yourtenant.onmicrosoft.com"
+```
+Follow the browser prompts to authenticate as a tenant administrator and grant consent. The cmdlet will output the **Application (Client) ID**.
+
+**Option B: Manual Registration via Microsoft Entra Admin Center**
+1. Navigate to **Microsoft Entra ID** > **App registrations** > **New registration**.
+2. Name: `SharePoint-Audit`
+3. Supported account types: `Accounts in this organizational directory only (Single tenant)`.
+4. Redirect URI: Select **Public client/native (mobile & desktop)** and enter `http://localhost`.
+5. Under **API permissions**, add:
+   - **SharePoint**: `AllSites.FullControl` (Delegated)
+   - **Microsoft Graph**: `User.Read.All`, `Group.Read.All` (Delegated)
+6. Click **Grant admin consent for <tenant>**.
+
+> [!TIP]
+> You can set `$env:ENTRAID_APP_ID = "<ApplicationId>"` in your PowerShell profile or current session to avoid providing `-ClientId` on every execution.
+
 ---
 
 ## 📋 Parameters Reference
