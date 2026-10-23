@@ -347,9 +347,13 @@ Target Directory      : $resolvedDir
             "    recursively audits document libraries, lists, folders, and items with broken",
             "    permission inheritance (HasUniqueRoleAssignments).",
             "",
-            "AUTHENTICATION MODES:",
-            "    1. Interactive Modern Authentication:",
-            "       - Requires an account with SharePoint Administrator or Site Admin rights.",
+            "AUTHENTICATION MODES & PERMISSION REQUIREMENTS:",
+            "    1. Interactive Modern Authentication (ZALECANE):",
+            "       - WAŻNE: Użytkownik uruchamiający skrypt MUSI być Administratorem Witryny (Site Admin /",
+            "         Site Collection Administrator) lub Właścicielem audytowanej witryny SharePoint!",
+            "       - W usłudze SharePoint Online nawet Administrator Globalny (Global Admin) M365 nie ma",
+            "         automatycznego dostępu do prywatnych witryn zespołów, dopóki nie przypisze siebie",
+            "         jako Site Admin w SharePoint Admin Center (Aktywne witryny > Członkostwo > Administratorzy).",
             "       - Uses web browser interactive sign-in with full MFA support:",
             "         .\Audit-SharePoint-Site.ps1 -SiteUrl 'https://contoso.sharepoint.com/sites/hr' -Interactive",
             "",
@@ -363,6 +367,7 @@ Target Directory      : $resolvedDir
             "             -CertificateThumbprint '<Thumbprint>' -ExportPath 'C:\Reports\Audit.csv'",
             "",
             "PREREQUISITES & ENVIRONMENT:",
+            "    - Required Access : Site Collection Administrator or Site Owner on the target site",
             "    - Required Module : 'PnP.PowerShell' (Version 2.x+ or 3.x+ in PowerShell 7+)",
             "    - Execution Policy: Unblock-File -Path .\Audit-SharePoint-Site.ps1",
             "    - Log Directory   : C:\Logs (fallback to $env:LOCALAPPDATA\Logs)",
@@ -907,7 +912,8 @@ musza byc spelnione ponizsze 2 warunki:
             }
 
             if ($siteAdmins) {
-                foreach ($admin in $siteAdmins) {
+                $siteAdminList = @($siteAdmins)
+                foreach ($admin in $siteAdminList) {
                     $upn = if (-not [string]::IsNullOrWhiteSpace($admin.Email)) { $admin.Email } else { $admin.LoginName }
                     $adminRecord = [PSCustomObject]@{
                         Timestamp             = $scanTimestamp
@@ -929,7 +935,7 @@ musza byc spelnione ponizsze 2 warunki:
                     }
                     $results.Add($adminRecord)
                 }
-                Write-Log -Level INFO -Message "Found $($siteAdmins.Count) Site Collection Administrator(s)."
+                Write-Log -Level INFO -Message "Found $($siteAdminList.Count) Site Collection Administrator(s)."
             }
         }
         catch {
@@ -938,10 +944,18 @@ musza byc spelnione ponizsze 2 warunki:
 
         # Audit Web Role Assignments
         try {
-            $null = Get-PnPProperty -ClientObject $web -Property RoleAssignments
+            $null = if ($null -ne $Connection) {
+                Get-PnPProperty -ClientObject $web -Property RoleAssignments -Connection $Connection
+            } else {
+                Get-PnPProperty -ClientObject $web -Property RoleAssignments
+            }
             if ($web.RoleAssignments) {
                 foreach ($assignment in $web.RoleAssignments) {
-                    $null = Get-PnPProperty -ClientObject $assignment -Property Member, RoleDefinitionBindings
+                    $null = if ($null -ne $Connection) {
+                        Get-PnPProperty -ClientObject $assignment -Property Member, RoleDefinitionBindings -Connection $Connection
+                    } else {
+                        Get-PnPProperty -ClientObject $assignment -Property Member, RoleDefinitionBindings
+                    }
                     $member = $assignment.Member
                     $roleNames = ($assignment.RoleDefinitionBindings | ForEach-Object { $_.Name }) -join ", "
                     $pType = $member.PrincipalType.ToString()
@@ -1075,10 +1089,18 @@ musza byc spelnione ponizsze 2 warunki:
                 }
 
                 try {
-                    $null = Get-PnPProperty -ClientObject $list -Property RoleAssignments -ErrorAction SilentlyContinue
+                    $null = if ($null -ne $Connection) {
+                        Get-PnPProperty -ClientObject $list -Property RoleAssignments -Connection $Connection -ErrorAction SilentlyContinue
+                    } else {
+                        Get-PnPProperty -ClientObject $list -Property RoleAssignments -ErrorAction SilentlyContinue
+                    }
                     if ($list.RoleAssignments) {
                         foreach ($lAssignment in $list.RoleAssignments) {
-                            $null = Get-PnPProperty -ClientObject $lAssignment -Property Member, RoleDefinitionBindings
+                            $null = if ($null -ne $Connection) {
+                                Get-PnPProperty -ClientObject $lAssignment -Property Member, RoleDefinitionBindings -Connection $Connection
+                            } else {
+                                Get-PnPProperty -ClientObject $lAssignment -Property Member, RoleDefinitionBindings
+                            }
                             $lMember = $lAssignment.Member
                             $lRoleNames = ($lAssignment.RoleDefinitionBindings | ForEach-Object { $_.Name }) -join ", "
                             $pType = $lMember.PrincipalType.ToString()
@@ -1221,6 +1243,42 @@ musza byc spelnione ponizsze 2 warunki:
         Write-Host " Direct User Assignments (High Risk)  : $directAssign" -ForegroundColor $(if ($directAssign -gt 0) { 'Yellow' } else { 'White' })
         Write-Host " Group-Based Access Assignments       : $groupAssign" -ForegroundColor White
         Write-Host "================================================================================`n" -ForegroundColor Cyan
+
+        # Zestawienie uprawnionych osób i grup na poziomie witryny
+        $siteEntitlements = @($AuditRecords | Where-Object { $_.Scope -eq "Site" })
+        if ($siteEntitlements.Count -gt 0) {
+            Write-Host "================================================================================" -ForegroundColor Yellow
+            Write-Host " UPRAWNIONE OSOBY I GRUPY W AUDYTOWANEJ WITRYNIE (POZIOM WITRYNY)" -ForegroundColor Yellow
+            Write-Host "================================================================================" -ForegroundColor Yellow
+
+            $siteDisplay = $siteEntitlements | Select-Object `
+                @{Name = "Podmiot / Nazwa"; Expression = { $_.PrincipalTitle }}, `
+                @{Name = "Typ"; Expression = { $_.PrincipalType }}, `
+                @{Name = "Poziom uprawnien"; Expression = { $_.PermissionLevels }}, `
+                @{Name = "Typ przypisania"; Expression = { $_.AssignmentType }}, `
+                @{Name = "Grupa nadrzedna"; Expression = { $_.GroupName }}, `
+                @{Name = "Login / UPN"; Expression = { if (-not [string]::IsNullOrWhiteSpace($_.UserPrincipalName) -and $_.UserPrincipalName -ne "N/A") { $_.UserPrincipalName } else { $_.PrincipalLoginName } }}
+
+            $siteDisplay | Format-Table -AutoSize | Out-Host
+        }
+
+        # Zestawienie elementów z unikalnymi uprawnieniami (jeśli wykryto)
+        $uniqueListOrItems = @($AuditRecords | Where-Object { $_.Scope -in @("List", "Item") -and $_.HasUniquePermissions })
+        if ($uniqueListOrItems.Count -gt 0) {
+            Write-Host "`n================================================================================" -ForegroundColor Magenta
+            Write-Host " ELEMENTY Z UNIKALNYMI UPRAWNIENIAMI (BROKEN INHERITANCE - LISTY / FOLDERY / PLIKI)" -ForegroundColor Magenta
+            Write-Host "================================================================================" -ForegroundColor Magenta
+
+            $itemDisplay = $uniqueListOrItems | Select-Object `
+                @{Name = "Zakres"; Expression = { $_.Scope }}, `
+                @{Name = "Typ zasobu"; Expression = { $_.ResourceType }}, `
+                @{Name = "Nazwa elementu"; Expression = { $_.ResourceName }}, `
+                @{Name = "Podmiot uprawniony"; Expression = { $_.PrincipalTitle }}, `
+                @{Name = "Typ"; Expression = { $_.PrincipalType }}, `
+                @{Name = "Poziom uprawnien"; Expression = { $_.PermissionLevels }}
+
+            $itemDisplay | Format-Table -AutoSize | Out-Host
+        }
     }
 
     # ==============================================================================

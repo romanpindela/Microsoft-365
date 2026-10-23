@@ -135,6 +135,23 @@ flowchart TD
 
 ## 🛠️ Prerequisites & Installation
 
+### ⚠️ Wymagane Uprawnienia Użytkownika (Kto powinien audytować witrynę?)
+
+> [!IMPORTANT]
+> **Konto audytujące MUSI być Administratorem Witryny (Site Collection Administrator) lub Właścicielem audytowanej witryny!**
+>
+> **Dlaczego to jest konieczne?**
+> W usłudze SharePoint Online obowiązuje zasada ścisłej izolacji uprawnień (Security Isolation):
+> - Nawet **Administrator Globalny (Global Administrator)** ani **Administrator SharePoint** usługi Microsoft 365 **nie posiada automatycznego wglądu** w uprawnienia prywatnych witryn zespołów (np. witryn połączonych z Microsoft Teams lub Grupami M365).
+> - Próba audytu unikalnych uprawnień (`HasUniqueRoleAssignments`) i ról przez konto bez uprawnień administratora tej konkretnej witryny zakończy się błędem `Attempted to perform an unauthorized operation`.
+>
+> **Jak dodać swoje konto jako Administrator Witryny:**
+> 1. Zaloguj się do **[SharePoint Admin Center](https://admin.microsoft.com/#/sharepoint)** lub `https://<twoj-tenant>-admin.sharepoint.com`.
+> 2. W menu wybierz: **Witryny (Sites)** > **Aktywne witryny (Active sites)**.
+> 3. Kliknij audytowaną witrynę (np. `marketing`).
+> 4. W prawym panelu przejdź do zakładki **Członkostwo (Membership)**.
+> 5. W sekcji **Administratorzy witryny (Site admins)** kliknij **Edytuj** i dodaj swoje konto użytkownika.
+
 ### 1. PowerShell Environment
 - Windows PowerShell 5.1 or PowerShell 7.x (Core) on Windows 10/11 or Windows Server.
 
