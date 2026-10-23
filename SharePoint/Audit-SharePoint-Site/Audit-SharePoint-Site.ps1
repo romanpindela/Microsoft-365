@@ -523,15 +523,27 @@ Please install it by executing:
 
                 $newAppId = $null
                 if ($null -ne $regResult) {
-                    if ($regResult.AppId) {
-                        $newAppId = $regResult.AppId.ToString()
+                    foreach ($item in @($regResult)) {
+                        if ($null -eq $item) { continue }
+                        $itemStr = $item.ToString()
+                        if ($itemStr -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
+                            $newAppId = $Matches[1]
+                            break
+                        }
+                        if ($item.PSObject) {
+                            foreach ($prop in $item.PSObject.Properties) {
+                                if ($prop.Value -and $prop.Value.ToString() -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
+                                    $newAppId = $Matches[1]
+                                    break
+                                }
+                            }
+                            if ($newAppId) { break }
+                        }
                     }
-                    elseif ($regResult.Id) {
-                        $newAppId = $regResult.Id.ToString()
-                    }
-                    else {
-                        $strResult = "$regResult"
-                        if ($strResult -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
+
+                    if ([string]::IsNullOrWhiteSpace($newAppId)) {
+                        $allText = ($regResult | Out-String)
+                        if ($allText -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
                             $newAppId = $Matches[1]
                         }
                     }
@@ -562,52 +574,48 @@ Please install it by executing:
             }
             catch {
                 $errMsg = $_.Exception.Message
-                if ($errMsg -match 'already exists') {
-                    Write-Log -Level WARN -Message "Aplikacja o nazwie '$targetAppName' juz istnieje w Microsoft Entra ID."
+                Write-Log -Level WARN -Message "Blad podczas rejestracji aplikacji Entra ID: $errMsg"
 
+                if ([Environment]::UserInteractive) {
                     $suggestedName = "SharePoint-Audit-" + (Get-Date).ToString("yyyyMMdd-HHmm")
-                    if ([Environment]::UserInteractive) {
-                        Write-Host "`n[!] Aplikacja o nazwie '$targetAppName' juz istnieje w Entra ID tenanta '$Tenant'." -ForegroundColor Yellow
-                        Write-Host "[*] Proponowana nowa unikalna nazwa: $suggestedName" -ForegroundColor Cyan
-                        Write-Host "[?] Wcisnij ENTER aby uzyc [$suggestedName], wpisz inna nazwe, lub wklej istniejacy Application ID (GUID): " -NoNewline -ForegroundColor Yellow
-                        $inputVal = Read-Host
+                    Write-Host "`n[!] Rejestracja aplikacji '$targetAppName' nie powiodla sie: $errMsg" -ForegroundColor Yellow
+                    Write-Host "[*] Proponowana nowa unikalna nazwa: $suggestedName" -ForegroundColor Cyan
+                    Write-Host "[?] Wcisnij ENTER aby sprobowac [$suggestedName], wpisz inna nazwe, lub wklej istniejacy Application ID (GUID): " -NoNewline -ForegroundColor Yellow
+                    $inputVal = Read-Host
 
-                        if ([string]::IsNullOrWhiteSpace($inputVal)) {
-                            $targetAppName = $suggestedName
-                            Write-Log -Level INFO -Message "Ponawianie rejestracji z proponowana nazwa: $targetAppName"
-                            continue
-                        }
-                        # Check if user pasted an existing GUID:
-                        elseif ($inputVal.Trim() -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
-                            $pastedId = $inputVal.Trim()
-                            Write-Log -Level SUCCESS -Message "Uzyto podanego istniejacego Application ID: $pastedId"
-                            try {
-                                $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
-                                if (-not (Test-Path -Path $cacheDir)) {
-                                    $null = New-Item -Path $cacheDir -ItemType Directory -Force
-                                }
-                                $cacheFile = Join-Path -Path $cacheDir -ChildPath "${Tenant}_client_id.txt"
-                                [System.IO.File]::WriteAllText($cacheFile, $pastedId)
-                                Write-Log -Level SUCCESS -Message "Application ID zapisany w pamieci podrecznej: $cacheFile"
+                    if ([string]::IsNullOrWhiteSpace($inputVal)) {
+                        $targetAppName = $suggestedName
+                        Write-Log -Level INFO -Message "Ponawianie rejestracji z proponowana nazwa: $targetAppName"
+                        continue
+                    }
+                    elseif ($inputVal.Trim() -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+                        $pastedId = $inputVal.Trim()
+                        Write-Log -Level SUCCESS -Message "Uzyto podanego istniejacego Application ID: $pastedId"
+                        try {
+                            $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
+                            if (-not (Test-Path -Path $cacheDir)) {
+                                $null = New-Item -Path $cacheDir -ItemType Directory -Force
                             }
-                            catch {
-                                Write-Log -Level WARN -Message "Nie mozna zapisac ClientId w cache: $($_.Exception.Message)"
-                            }
-                            return $pastedId
+                            $cacheFile = Join-Path -Path $cacheDir -ChildPath "${Tenant}_client_id.txt"
+                            [System.IO.File]::WriteAllText($cacheFile, $pastedId)
+                            Write-Log -Level SUCCESS -Message "Application ID zapisany w pamieci podrecznej: $cacheFile"
                         }
-                        else {
-                            $targetAppName = $inputVal.Trim()
-                            Write-Log -Level INFO -Message "Ponawianie rejestracji z nowa nazwa: $targetAppName"
-                            continue
+                        catch {
+                            Write-Log -Level WARN -Message "Nie mozna zapisac ClientId w cache: $($_.Exception.Message)"
                         }
+                        return $pastedId
                     }
                     else {
-                        # Non-interactive fallback: auto-append timestamp
-                        $targetAppName = $suggestedName
+                        $targetAppName = $inputVal.Trim()
+                        Write-Log -Level INFO -Message "Ponawianie rejestracji z nowa nazwa: $targetAppName"
                         continue
                     }
                 }
                 else {
+                    if ($errMsg -match 'already exists') {
+                        $targetAppName = "SharePoint-Audit-" + (Get-Date).ToString("yyyyMMdd-HHmm")
+                        continue
+                    }
                     $regErr = "Failed to register Microsoft Entra ID application: $errMsg"
                     Write-Log -Level ERROR -Message $regErr
                     throw $regErr
