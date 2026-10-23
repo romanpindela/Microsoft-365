@@ -487,10 +487,80 @@ Please install it by executing:
     }
 
     # ==============================================================================
+    # ==============================================================================
+    # AUTOMATED ENTRA ID APP REGISTRATION (Standard 8 & Microsoft Post-2024 Auth)
+    # ==============================================================================
+    function Invoke-EntraIDAppRegistration {
+        [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$Tenant,
+
+            [Parameter(Mandatory = $false)]
+            [string]$ApplicationName = "SharePoint-Audit"
+        )
+
+        Write-Log -Level INFO -Message "Initiating automated Microsoft Entra ID App registration ('$ApplicationName') in tenant '$Tenant'..."
+        Write-Host "`n[*] Microsoft Entra ID registration requires a one-time administrator consent flow." -ForegroundColor Yellow
+        Write-Host "[*] A browser window will now open for modern interactive sign-in." -ForegroundColor Yellow
+        Write-Host "[*] Please sign in with your Microsoft 365 account and grant consent to the requested SharePoint permissions.`n" -ForegroundColor Yellow
+
+        try {
+            $regResult = Register-PnPEntraIDAppForInteractiveLogin -ApplicationName $ApplicationName -Tenant $Tenant -ErrorAction Stop
+
+            $newAppId = $null
+            if ($null -ne $regResult) {
+                if ($regResult.AppId) {
+                    $newAppId = $regResult.AppId.ToString()
+                }
+                elseif ($regResult.Id) {
+                    $newAppId = $regResult.Id.ToString()
+                }
+                else {
+                    $strResult = "$regResult"
+                    if ($strResult -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
+                        $newAppId = $Matches[1]
+                    }
+                }
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($newAppId)) {
+                Write-Log -Level SUCCESS -Message "Entra ID App registered successfully. Application (Client) ID: $newAppId"
+
+                # Persist to local cache so subsequent runs never need prompt or re-registration
+                try {
+                    $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
+                    if (-not (Test-Path -Path $cacheDir)) {
+                        $null = New-Item -Path $cacheDir -ItemType Directory -Force
+                    }
+                    $cacheFile = Join-Path -Path $cacheDir -ChildPath "${Tenant}_client_id.txt"
+                    [System.IO.File]::WriteAllText($cacheFile, $newAppId)
+                    Write-Log -Level SUCCESS -Message "Application ID cached locally at: $cacheFile"
+                }
+                catch {
+                    Write-Log -Level WARN -Message "Unable to persist Application ID to local cache: $($_.Exception.Message)"
+                }
+
+                return $newAppId
+            }
+            else {
+                throw "Could not extract Application (Client) ID from registration output."
+            }
+        }
+        catch {
+            $regErr = "Failed to register Microsoft Entra ID application: $($_.Exception.Message)"
+            Write-Log -Level ERROR -Message $regErr
+            throw $regErr
+        }
+    }
+
+    # ==============================================================================
     # CONNECTION MANAGEMENT
     # ==============================================================================
     function Connect-TargetSite {
         [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
         param(
             [Parameter(Mandatory = $true)]
             [string]$TargetSiteUrl,
@@ -544,23 +614,56 @@ Please install it by executing:
             }
 
             # Scenario B & C: Modern Interactive Authentication
-            # In PnP.PowerShell 2.x and 3.x, Microsoft retired the shared multi-tenant PnP app on Sept 9, 2024.
-            # Interactive authentication requires a dedicated Entra ID App Registration Client ID.
-            $effectiveClientId = if (-not [string]::IsNullOrWhiteSpace($AppId)) {
-                $AppId
-            }
-            elseif (-not [string]::IsNullOrWhiteSpace($env:ENTRAID_APP_ID)) {
-                $env:ENTRAID_APP_ID
-            }
-            elseif (-not [string]::IsNullOrWhiteSpace($env:PNP_APP_ID)) {
-                $env:PNP_APP_ID
-            }
-            else {
-                $null
+            # 1. Check explicit parameter -ClientId
+            $effectiveClientId = $AppId
+
+            # 2. Check environment variables
+            if ([string]::IsNullOrWhiteSpace($effectiveClientId)) {
+                if (-not [string]::IsNullOrWhiteSpace($env:ENTRAID_APP_ID)) {
+                    $effectiveClientId = $env:ENTRAID_APP_ID
+                }
+                elseif (-not [string]::IsNullOrWhiteSpace($env:PNP_APP_ID)) {
+                    $effectiveClientId = $env:PNP_APP_ID
+                }
             }
 
+            # 3. Check persistent tenant cache on local disk
             if ([string]::IsNullOrWhiteSpace($effectiveClientId)) {
-                $guidance = @"
+                $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
+                $cacheFile = Join-Path -Path $cacheDir -ChildPath "${effectiveTenant}_client_id.txt"
+                if (Test-Path -Path $cacheFile) {
+                    try {
+                        $cachedId = [System.IO.File]::ReadAllText($cacheFile).Trim()
+                        if ($cachedId -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+                            Write-Log -Level INFO -Message "Loaded cached Entra ID Application ID: $cachedId"
+                            $effectiveClientId = $cachedId
+                        }
+                    }
+                    catch {
+                        Write-Log -Level WARN -Message "Unable to read cached ClientId: $($_.Exception.Message)"
+                    }
+                }
+            }
+
+            # 4. If ClientId is still missing, prompt user to auto-register on-the-fly
+            if ([string]::IsNullOrWhiteSpace($effectiveClientId)) {
+                Write-Log -Level WARN -Message "No Entra ID Application ID configured for tenant '$effectiveTenant'."
+
+                $shouldRegister = $false
+                if ([Environment]::UserInteractive) {
+                    Write-Host "`n[?] Microsoft Entra ID requires an App Registration Client ID (retired legacy app on Sept 9, 2024)." -ForegroundColor Yellow
+                    Write-Host "[?] Would you like to automatically register and configure an Entra ID App in '$effectiveTenant' now? (Y/N) [T/N]: " -NoNewline -ForegroundColor Yellow
+                    $answer = Read-Host
+                    if ($answer -match '^[ytT1]$') {
+                        $shouldRegister = $true
+                    }
+                }
+
+                if ($shouldRegister) {
+                    $effectiveClientId = Invoke-EntraIDAppRegistration -Tenant $effectiveTenant
+                }
+                else {
+                    $guidance = @"
 Microsoft Entra ID interactive authentication requires an Application (Client) ID.
 Microsoft permanently retired the legacy shared multi-tenant PnP app on September 9, 2024.
 
@@ -573,10 +676,12 @@ Then re-run this script with the generated Application ID:
 Tip: You can also set an environment variable to avoid entering -ClientId repeatedly:
     `$env:ENTRAID_APP_ID = "<ApplicationId>"
 "@
-                Write-Log -Level ERROR -Message $guidance
-                throw $guidance
+                    Write-Log -Level ERROR -Message $guidance
+                    throw $guidance
+                }
             }
 
+            # Attempt connection with the effective ClientId
             $interactiveParams = @{
                 Url              = $TargetSiteUrl
                 Interactive      = $true
@@ -588,9 +693,33 @@ Tip: You can also set an environment variable to avoid entering -ClientId repeat
 
             $authLabel = if ($InteractiveAuth) { "Interactive browser" } else { "Default interactive" }
             Write-Log -Level INFO -Message "Initiating $authLabel authentication (ClientId: $effectiveClientId, Tenant: $effectiveTenant)..."
-            $conn = Connect-PnPOnline @interactiveParams
-            Write-Log -Level SUCCESS -Message "Connected successfully to $TargetSiteUrl via interactive session."
-            return $conn
+
+            try {
+                $conn = Connect-PnPOnline @interactiveParams
+                Write-Log -Level SUCCESS -Message "Connected successfully to $TargetSiteUrl via interactive session."
+                return $conn
+            }
+            catch {
+                # If error is AADSTS700016 (app not found / invalid ClientId) and in interactive session:
+                if ($_.Exception.Message -match 'AADSTS700016' -or $_.Exception.Message -match 'was not found in the directory') {
+                    Write-Log -Level WARN -Message "Application ID '$effectiveClientId' was not found or not consented in directory '$effectiveTenant'."
+
+                    if ([Environment]::UserInteractive) {
+                        Write-Host "`n[!] Application ID '$effectiveClientId' was not found in directory '$effectiveTenant' (AADSTS700016)." -ForegroundColor Yellow
+                        Write-Host "[?] Would you like to register a new Entra ID App in '$effectiveTenant' now? (Y/N) [T/N]: " -NoNewline -ForegroundColor Yellow
+                        $reAns = Read-Host
+                        if ($reAns -match '^[ytT1]$') {
+                            $newId = Invoke-EntraIDAppRegistration -Tenant $effectiveTenant
+                            $interactiveParams['ClientId'] = $newId
+                            Write-Log -Level INFO -Message "Retrying connection with new Application ID: $newId..."
+                            $conn = Connect-PnPOnline @interactiveParams
+                            Write-Log -Level SUCCESS -Message "Connected successfully to $TargetSiteUrl via interactive session."
+                            return $conn
+                        }
+                    }
+                }
+                throw
+            }
         }
         catch {
             $connError = "Failed to connect to SharePoint Online site '$TargetSiteUrl'. Details: $($_.Exception.Message)"
