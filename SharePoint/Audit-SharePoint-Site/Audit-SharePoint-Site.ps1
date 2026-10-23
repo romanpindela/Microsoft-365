@@ -834,6 +834,101 @@ Tip: You can also set an environment variable to avoid entering -ClientId repeat
     }
 
     # ==============================================================================
+    # NESTED ENTRA ID / MICROSOFT 365 GROUP MEMBERSHIP RESOLVER
+    # ==============================================================================
+    function Get-NestedEntraUser {
+        [CmdletBinding()]
+        [OutputType([System.Collections.Generic.List[PSCustomObject]])]
+        param(
+            [Parameter(Mandatory = $false)]
+            [string]$GroupLoginName = "",
+
+            [Parameter(Mandatory = $false)]
+            [string]$GroupTitle = "",
+
+            [Parameter(Mandatory = $false)]
+            [string]$ConnectedSiteGroupId = "",
+
+            [Parameter(Mandatory = $false)]
+            $Connection = $null
+        )
+
+        $resolvedUsers = [System.Collections.Generic.List[PSCustomObject]]::new()
+        $guidPattern = '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})'
+
+        $targetGroupId = $null
+        if (-not [string]::IsNullOrWhiteSpace($GroupLoginName) -and $GroupLoginName -match $guidPattern) {
+            $targetGroupId = $Matches[1]
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($ConnectedSiteGroupId) -and $ConnectedSiteGroupId -ne "00000000-0000-0000-0000-000000000000") {
+            $targetGroupId = $ConnectedSiteGroupId
+        }
+
+        if ([string]::IsNullOrWhiteSpace($targetGroupId)) {
+            return $resolvedUsers
+        }
+
+        $isOwner = ($GroupLoginName -like "*_o*" -or $GroupTitle -like "*Owner*" -or $GroupTitle -like "*Właściciel*" -or $GroupTitle -like "*Wlasciciel*")
+
+        $rawUsers = $null
+        try {
+            if ($isOwner) {
+                $rawUsers = if ($null -ne $Connection) {
+                    Get-PnPEntraIDGroupOwner -Identity $targetGroupId -Connection $Connection -ErrorAction Stop
+                } else {
+                    Get-PnPEntraIDGroupOwner -Identity $targetGroupId -ErrorAction Stop
+                }
+            } else {
+                $rawUsers = if ($null -ne $Connection) {
+                    Get-PnPEntraIDGroupMember -Identity $targetGroupId -Transitive -Connection $Connection -ErrorAction Stop
+                } else {
+                    Get-PnPEntraIDGroupMember -Identity $targetGroupId -Transitive -ErrorAction Stop
+                }
+            }
+        }
+        catch {
+            # Fallback to Get-PnPMicrosoft365GroupOwner / Member
+            try {
+                if ($isOwner) {
+                    $rawUsers = if ($null -ne $Connection) {
+                        Get-PnPMicrosoft365GroupOwner -Identity $targetGroupId -Connection $Connection -ErrorAction Stop
+                    } else {
+                        Get-PnPMicrosoft365GroupOwner -Identity $targetGroupId -ErrorAction Stop
+                    }
+                } else {
+                    $rawUsers = if ($null -ne $Connection) {
+                        Get-PnPMicrosoft365GroupMember -Identity $targetGroupId -Connection $Connection -ErrorAction Stop
+                    } else {
+                        Get-PnPMicrosoft365GroupMember -Identity $targetGroupId -ErrorAction Stop
+                    }
+                }
+            }
+            catch {
+                Write-Verbose "Could not resolve nested Entra ID group members for '$GroupTitle' ($targetGroupId): $($_.Exception.Message)"
+            }
+        }
+
+        if ($rawUsers) {
+            foreach ($u in @($rawUsers)) {
+                if ($null -eq $u) { continue }
+                $dName = if ($u.DisplayName) { $u.DisplayName } elseif ($u.Title) { $u.Title } else { "Unknown User" }
+                $upn   = if ($u.UserPrincipalName) { $u.UserPrincipalName } elseif ($u.Mail) { $u.Mail } elseif ($u.Email) { $u.Email } else { "N/A" }
+                $uLogin = if ($u.UserPrincipalName) { $u.UserPrincipalName } elseif ($u.Mail) { $u.Mail } elseif ($u.Id) { $u.Id } else { $dName }
+                $uType = if ($u.UserType) { $u.UserType } else { "User" }
+
+                $resolvedUsers.Add([PSCustomObject]@{
+                    DisplayName       = $dName
+                    UserPrincipalName = $upn
+                    LoginName         = $uLogin
+                    UserType          = $uType
+                })
+            }
+        }
+
+        return $resolvedUsers
+    }
+
+    # ==============================================================================
     # PERMISSION AUDIT ENGINE
     # ==============================================================================
     function Get-SitePermissionsAudit {
@@ -906,6 +1001,18 @@ the following two prerequisites must be satisfied:
             }
             throw
         }
+
+        # Query connected Microsoft 365 Group ID (if this is a group-connected team site)
+        $siteGroupId = try {
+            $siteObj = if ($null -ne $Connection) {
+                Get-PnPSite -Connection $Connection -Includes GroupId -ErrorAction SilentlyContinue
+            } else {
+                Get-PnPSite -Includes GroupId -ErrorAction SilentlyContinue
+            }
+            if ($siteObj -and $siteObj.GroupId -and $siteObj.GroupId -ne [System.Guid]::Empty) {
+                $siteObj.GroupId.ToString()
+            } else { "" }
+        } catch { "" }
 
         # Audit Site Collection Administrators
         try {
@@ -987,7 +1094,7 @@ the following two prerequisites must be satisfied:
                         }
                         $results.Add($groupRecord)
 
-                        # Expand members within the SharePoint Group
+                        # Expand members within the SharePoint Group (including nested M365 / Entra ID groups)
                         try {
                             $groupUsers = if ($null -ne $Connection) {
                                 Get-PnPGroupMember -Group $member.Id -Connection $Connection -ErrorAction SilentlyContinue
@@ -995,28 +1102,127 @@ the following two prerequisites must be satisfied:
                                 Get-PnPGroupMember -Group $member.Id -ErrorAction SilentlyContinue
                             }
 
+                            $resolvedMembersFound = 0
                             if ($groupUsers) {
                                 foreach ($gUser in $groupUsers) {
+                                    $pMemberType = $gUser.PrincipalType.ToString()
                                     $userUpn = if (-not [string]::IsNullOrWhiteSpace($gUser.Email)) { $gUser.Email } else { $gUser.LoginName }
-                                    $userRecord = [PSCustomObject]@{
-                                        Timestamp             = $scanTimestamp
-                                        SiteUrl               = $TargetSiteUrl
-                                        Scope                 = "Site"
-                                        ResourceType          = "Web"
-                                        ResourceName          = $web.Title
-                                        ResourceUrl           = $web.Url
-                                        HasUniquePermissions = $web.HasUniqueRoleAssignments
-                                        InheritanceStatus     = if ($web.HasUniqueRoleAssignments) { "Unique" } else { "Inherited" }
-                                        PrincipalTitle        = $gUser.Title
-                                        PrincipalType         = $gUser.PrincipalType.ToString()
-                                        PrincipalLoginName    = $gUser.LoginName
-                                        AssignmentType        = "Group Membership"
-                                        GroupName             = $member.Title
-                                        UserDisplayName       = $gUser.Title
-                                        UserPrincipalName     = $userUpn
-                                        PermissionLevels      = $roleNames
+
+                                    # Check if the member is a nested SecurityGroup or M365 Group claim
+                                    if ($pMemberType -eq 'SecurityGroup' -or $gUser.LoginName -like "*federateddirectoryclaimprovider*") {
+                                        # Query nested Entra ID / M365 users
+                                        $nestedEntraUsers = Get-NestedEntraUser `
+                                            -GroupLoginName $gUser.LoginName `
+                                            -GroupTitle $gUser.Title `
+                                            -ConnectedSiteGroupId $siteGroupId `
+                                            -Connection $Connection
+
+                                        if ($nestedEntraUsers -and (@($nestedEntraUsers).Count -gt 0)) {
+                                            foreach ($nUser in $nestedEntraUsers) {
+                                                $resolvedMembersFound++
+                                                $nestedRecord = [PSCustomObject]@{
+                                                    Timestamp             = $scanTimestamp
+                                                    SiteUrl               = $TargetSiteUrl
+                                                    Scope                 = "Site"
+                                                    ResourceType          = "Web"
+                                                    ResourceName          = $web.Title
+                                                    ResourceUrl           = $web.Url
+                                                    HasUniquePermissions = $web.HasUniqueRoleAssignments
+                                                    InheritanceStatus     = if ($web.HasUniqueRoleAssignments) { "Unique" } else { "Inherited" }
+                                                    PrincipalTitle        = $nUser.DisplayName
+                                                    PrincipalType         = "User"
+                                                    PrincipalLoginName    = $nUser.LoginName
+                                                    AssignmentType        = "Group Membership"
+                                                    GroupName             = $member.Title
+                                                    UserDisplayName       = $nUser.DisplayName
+                                                    UserPrincipalName     = $nUser.UserPrincipalName
+                                                    PermissionLevels      = $roleNames
+                                                }
+                                                $results.Add($nestedRecord)
+                                            }
+                                        }
+                                        else {
+                                            # If Graph expansion was not possible, keep the group entity
+                                            $resolvedMembersFound++
+                                            $secRecord = [PSCustomObject]@{
+                                                Timestamp             = $scanTimestamp
+                                                SiteUrl               = $TargetSiteUrl
+                                                Scope                 = "Site"
+                                                ResourceType          = "Web"
+                                                ResourceName          = $web.Title
+                                                ResourceUrl           = $web.Url
+                                                HasUniquePermissions = $web.HasUniqueRoleAssignments
+                                                InheritanceStatus     = if ($web.HasUniqueRoleAssignments) { "Unique" } else { "Inherited" }
+                                                PrincipalTitle        = $gUser.Title
+                                                PrincipalType         = $pMemberType
+                                                PrincipalLoginName    = $gUser.LoginName
+                                                AssignmentType        = "Group Membership"
+                                                GroupName             = $member.Title
+                                                UserDisplayName       = $gUser.Title
+                                                UserPrincipalName     = $userUpn
+                                                PermissionLevels      = $roleNames
+                                            }
+                                            $results.Add($secRecord)
+                                        }
                                     }
-                                    $results.Add($userRecord)
+                                    else {
+                                        # Direct User inside SharePoint Group
+                                        $resolvedMembersFound++
+                                        $userRecord = [PSCustomObject]@{
+                                            Timestamp             = $scanTimestamp
+                                            SiteUrl               = $TargetSiteUrl
+                                            Scope                 = "Site"
+                                            ResourceType          = "Web"
+                                            ResourceName          = $web.Title
+                                            ResourceUrl           = $web.Url
+                                            HasUniquePermissions = $web.HasUniqueRoleAssignments
+                                            InheritanceStatus     = if ($web.HasUniqueRoleAssignments) { "Unique" } else { "Inherited" }
+                                            PrincipalTitle        = $gUser.Title
+                                            PrincipalType         = $pMemberType
+                                            PrincipalLoginName    = $gUser.LoginName
+                                            AssignmentType        = "Group Membership"
+                                            GroupName             = $member.Title
+                                            UserDisplayName       = $gUser.Title
+                                            UserPrincipalName     = $userUpn
+                                            PermissionLevels      = $roleNames
+                                        }
+                                        $results.Add($userRecord)
+                                    }
+                                }
+                            }
+
+                            # If SharePoint group had 0 members returned by Get-PnPGroupMember,
+                            # but the site has a connected Microsoft 365 Group:
+                            if ($resolvedMembersFound -eq 0 -and -not [string]::IsNullOrWhiteSpace($siteGroupId)) {
+                                if ($member.Title -like "*Owner*" -or $member.Title -like "*Właściciel*" -or $member.Title -like "*Wlasciciel*" -or $member.Title -like "*Member*" -or $member.Title -like "*Członk*" -or $member.Title -like "*Czlonk*") {
+                                    $connectedUsers = Get-NestedEntraUser `
+                                        -GroupTitle $member.Title `
+                                        -ConnectedSiteGroupId $siteGroupId `
+                                        -Connection $Connection
+
+                                    if ($connectedUsers -and (@($connectedUsers).Count -gt 0)) {
+                                        foreach ($cUser in $connectedUsers) {
+                                            $cRecord = [PSCustomObject]@{
+                                                Timestamp             = $scanTimestamp
+                                                SiteUrl               = $TargetSiteUrl
+                                                Scope                 = "Site"
+                                                ResourceType          = "Web"
+                                                ResourceName          = $web.Title
+                                                ResourceUrl           = $web.Url
+                                                HasUniquePermissions = $web.HasUniqueRoleAssignments
+                                                InheritanceStatus     = if ($web.HasUniqueRoleAssignments) { "Unique" } else { "Inherited" }
+                                                PrincipalTitle        = $cUser.DisplayName
+                                                PrincipalType         = "User"
+                                                PrincipalLoginName    = $cUser.LoginName
+                                                AssignmentType        = "Group Membership"
+                                                GroupName             = $member.Title
+                                                UserDisplayName       = $cUser.DisplayName
+                                                UserPrincipalName     = $cUser.UserPrincipalName
+                                                PermissionLevels      = $roleNames
+                                            }
+                                            $results.Add($cRecord)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1048,6 +1254,34 @@ the following two prerequisites must be satisfied:
                             PermissionLevels      = $roleNames
                         }
                         $results.Add($directRecord)
+
+                        # If Security Group, expand its members too
+                        if ($pType -eq 'SecurityGroup' -or $member.LoginName -like "*federateddirectoryclaimprovider*") {
+                            $secUsers = Get-NestedEntraUser -GroupLoginName $member.LoginName -GroupTitle $member.Title -Connection $Connection
+                            if ($secUsers -and (@($secUsers).Count -gt 0)) {
+                                foreach ($sUser in $secUsers) {
+                                    $sRecord = [PSCustomObject]@{
+                                        Timestamp             = $scanTimestamp
+                                        SiteUrl               = $TargetSiteUrl
+                                        Scope                 = "Site"
+                                        ResourceType          = "Web"
+                                        ResourceName          = $web.Title
+                                        ResourceUrl           = $web.Url
+                                        HasUniquePermissions = $web.HasUniqueRoleAssignments
+                                        InheritanceStatus     = if ($web.HasUniqueRoleAssignments) { "Unique" } else { "Inherited" }
+                                        PrincipalTitle        = $sUser.DisplayName
+                                        PrincipalType         = "User"
+                                        PrincipalLoginName    = $sUser.LoginName
+                                        AssignmentType        = "Group Membership"
+                                        GroupName             = $member.Title
+                                        UserDisplayName       = $sUser.DisplayName
+                                        UserPrincipalName     = $sUser.UserPrincipalName
+                                        PermissionLevels      = $roleNames
+                                    }
+                                    $results.Add($sRecord)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1292,7 +1526,7 @@ the following two prerequisites must be satisfied:
 
             $table1Rows = foreach ($sp in $sitePrincipals) {
                 $membersCount = @($AuditRecords | Where-Object { $_.AssignmentType -eq "Group Membership" -and $_.GroupName -eq $sp.PrincipalTitle }).Count
-                $memberNote = if ($sp.PrincipalType -eq "SharePointGroup") {
+                $memberNote = if ($sp.PrincipalType -eq "SharePointGroup" -or $sp.PrincipalType -eq "SecurityGroup") {
                     if ($membersCount -gt 0) { "$membersCount member(s) -> See Table 2" } else { "Empty group (0 members)" }
                 } else {
                     "Direct assignment (Individual)"
