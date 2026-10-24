@@ -215,8 +215,11 @@ Executes a full interactive audit of all tenant site collections, displaying the
     -OutputPath "C:\Reports\SharePointAudit"
 ```
 
-#### 📸 Interactive Execution Run
-![Interactive Execution Run](assets/Standard_run.jpg)
+#### 📸 Interactive Authentication & Site Discovery
+![Interactive Authentication & Site Discovery](assets/Standard_run.jpg)
+
+#### 📸 Console Security Posture Audit Table
+![Console Security Posture Audit Table](assets/raport.jpg)
 
 
 ### Scenario 2: Unattended Automated Audit via Entra ID App-Only Certificate
@@ -272,6 +275,9 @@ The generated HTML report is self-contained with embedded CSS and vanilla JavaSc
 * **Instant Client-Side Search**: Filter through hundreds of site collections in real time by site name, URL, owner, or risk driver.
 * **One-Click Risk Filters**: Isolate Critical, High, Medium, Low, External Sharing, or Orphaned sites with a single click.
 * **Actionable Remediation Playbook**: Direct PowerShell command snippets embedded into the dashboard for immediate remediation.
+
+#### 📸 Executive HTML Security Posture Dashboard Preview
+![Executive HTML Security Posture Dashboard Preview](assets/HTML_report.jpg)
 
 ---
 
