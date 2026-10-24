@@ -2039,10 +2039,11 @@ $($tableRowsBuilder.ToString())
         if ($uniqueUsers.Count -eq 1) {
             $sample = $Records[0]
             $statusStr = if ($sample.AccountEnabled) { "Active / Enabled" } else { "Disabled" }
+            $statusColor = if ($sample.AccountEnabled) { 'Green' } else { 'Red' }
             Write-Host "Audited User    : " -NoNewline -ForegroundColor White
             Write-Host "$($sample.UserDisplayName) ($($sample.UserPrincipalName))" -ForegroundColor Cyan
             Write-Host "Account Status  : " -NoNewline -ForegroundColor White
-            Write-Host "$statusStr" -ForegroundColor (if ($sample.AccountEnabled) { "Green" } else { "Red" }) -NoNewline
+            Write-Host "$statusStr" -ForegroundColor $statusColor -NoNewline
             Write-Host " | Sync Authority: " -NoNewline -ForegroundColor White
             Write-Host "$($sample.SyncSource)" -ForegroundColor Yellow
         }
@@ -2064,7 +2065,8 @@ $($tableRowsBuilder.ToString())
         # [1] ENTRA ID DIRECTORY ROLES & PRIVILEGED ACCESS
         # --------------------------------------------------------------------------
         $roles = @($Records | Where-Object { $_.ResourceType -in @('Directory Role', 'PIM Eligible Role') })
-        Write-Host "`n[1] ENTRA ID DIRECTORY ROLES & PRIVILEGED ACCESS ($($roles.Count))" -ForegroundColor (if ($roles.Count -gt 0) { "Red" } else { "Green" })
+        $rolesHeaderColor = if ($roles.Count -gt 0) { 'Red' } else { 'Green' }
+        Write-Host "`n[1] ENTRA ID DIRECTORY ROLES & PRIVILEGED ACCESS ($($roles.Count))" -ForegroundColor $rolesHeaderColor
         if ($roles.Count -gt 0) {
             $rIdx = 0
             $roleRows = foreach ($item in $roles) {
