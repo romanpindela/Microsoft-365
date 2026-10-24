@@ -45,11 +45,31 @@ Enterprise-grade PowerShell access audit and reporting utility for **Microsoft 3
 7. **Executive Reporting Dashboard:**
    - Generates interactive, modern HTML5 dashboards with real-time client-side search, KPI summary metric cards, workload filter tabs, and sortable columns.
    - Exports UTF-8 with BOM CSV files (ready for Microsoft Excel) and structured JSON files.
+   - Displays a structured, color-coded human-readable executive breakdown directly in the console terminal.
    - Implements standardized logging to `C:\Logs\Get-M365UserAccessAudit\` following enterprise standards.
 
 ---
 
-## 2. Prerequisites & Permissions
+## 2. Visual Overview & Live Execution
+
+### 1. Interactive HTML Executive Dashboard
+The generated `.html` report delivers a self-contained, interactive web dashboard featuring the audited user profile banner, KPI metrics, live instant search, workload filtering, and sortable columns:
+
+![Get-M365UserAccessAudit Interactive HTML Report](assets/HTML_Report.jpg)
+
+### 2. Comprehensive Access Audit & Console Executive Report
+Executing an access audit performs real-time discovery across Entra ID, Teams, SharePoint, and Exchange Online, saving all reports and printing a categorized, color-coded human-readable console report:
+
+![Get-M365UserAccessAudit Console Results](assets/Audit_results.jpg)
+
+### 3. Standard Run & Built-in Help Banner
+Running `Get-M365UserAccessAudit.ps1` without parameters or with `-Help` displays the built-in guide, parameter descriptions, and usage examples:
+
+![Get-M365UserAccessAudit Standard Run Banner](assets/Standard_run.jpg)
+
+---
+
+## 3. Prerequisites & Permissions
 
 ### Minimum Requirements:
 * **PowerShell**: **PowerShell 7.2+** recommended (fully compatible with Windows PowerShell 5.1).
@@ -76,7 +96,7 @@ Enterprise-grade PowerShell access audit and reporting utility for **Microsoft 3
 
 ---
 
-## 3. Parameters
+## 4. Parameters
 
 | Parameter | Type | Required | Default | Description |
 | :--- | :---: | :---: | :---: | :--- |
@@ -93,7 +113,7 @@ Enterprise-grade PowerShell access audit and reporting utility for **Microsoft 3
 
 ---
 
-## 4. Usage Examples
+## 5. Usage Examples
 
 ### Example 1: Standard Comprehensive Single-User Audit
 Audits Entra ID groups, directory roles, Teams, and SharePoint sites for a single user:
@@ -128,7 +148,7 @@ Emits raw custom objects directly to PowerShell pipeline:
 
 ---
 
-## 5. Report Data Schema (15 Standard Attributes)
+## 6. Report Data Schema (15 Standard Attributes)
 
 Each row in the exported CSV, HTML, and JSON reports represents an individual permission, role, or group membership:
 
@@ -152,7 +172,7 @@ Each row in the exported CSV, HTML, and JSON reports represents an individual pe
 
 ---
 
-## 6. HTML Executive Dashboard Highlights
+## 7. HTML Executive Dashboard Highlights
 
 The generated `.html` report contains a self-contained web dashboard with:
 - **Executive KPI Cards**: Visual metrics for Total Records, Security Groups, M365 Groups, Directory Roles, Teams, SharePoint Sites, and Exchange Mailboxes.
@@ -164,7 +184,7 @@ The generated `.html` report contains a self-contained web dashboard with:
 
 ---
 
-## 7. Logging Standard (`Write-Log`)
+## 8. Logging Standard (`Write-Log`)
 
 Execution logs are generated in `C:\Logs\Get-M365UserAccessAudit\` (or `-LogPath`):
 - **File Naming**: `Get-M365UserAccessAudit_YYYYMMDD_HHMMSS.log`
@@ -179,7 +199,7 @@ Execution logs are generated in `C:\Logs\Get-M365UserAccessAudit\` (or `-LogPath
 
 ---
 
-## 8. Security & Unblocking
+## 9. Security & Unblocking
 
 After downloading or cloning from GitHub, unblock the script before execution:
 ```powershell
@@ -188,7 +208,7 @@ Unblock-File -Path .\Get-M365UserAccessAudit.ps1
 
 ---
 
-## 9. Author & License
+## 10. Author & License
 
 * **Author:** Roman Pindela
 * **Email:** [roman.pindela@gmail.com](mailto:roman.pindela@gmail.com)
