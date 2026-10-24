@@ -944,9 +944,21 @@ Tip: You can also set an environment variable or paste the ID into:
         $riskFactors = [System.Collections.Generic.List[string]]::new()
         $remediations = [System.Collections.Generic.List[string]]::new()
 
+        $siteUrl          = [string](Get-SafePropertyValue -InputObject $SiteData -PropertyName "Url" -DefaultValue "")
+        $siteOwner        = [string](Get-SafePropertyValue -InputObject $SiteData -PropertyName "Owner" -DefaultValue "")
+        $siteTemplate     = [string](Get-SafePropertyValue -InputObject $SiteData -PropertyName "Template" -DefaultValue "")
+        $adminsCount      = [int](Get-SafePropertyValue -InputObject $SiteData -PropertyName "SiteAdminsCount" -DefaultValue 0)
+        $sharing          = [string](Get-SafePropertyValue -InputObject $SiteData -PropertyName "SharingCapability" -DefaultValue "Unknown")
+        $anonExpDays      = [int](Get-SafePropertyValue -InputObject $SiteData -PropertyName "AnonymousLinkExpirationInDays" -DefaultValue 0)
+        $groupPrivacy     = [string](Get-SafePropertyValue -InputObject $SiteData -PropertyName "GroupPrivacy" -DefaultValue "N/A")
+        $sensitivity      = [string](Get-SafePropertyValue -InputObject $SiteData -PropertyName "SensitivityLabel" -DefaultValue "None")
+        $hasBrokenInherit = [bool](Get-SafePropertyValue -InputObject $SiteData -PropertyName "HasBrokenInheritance" -DefaultValue $false)
+        $storageUsed      = [int](Get-SafePropertyValue -InputObject $SiteData -PropertyName "StorageUsageMB" -DefaultValue 0)
+        $storageLimit     = [int](Get-SafePropertyValue -InputObject $SiteData -PropertyName "StorageLimitMB" -DefaultValue 0)
+
         # Vector 1: Ownership & Orphaned Sites
-        $isSystemSite = ($SiteData.Owner -eq 'SharePoint System' -or $SiteData.Template -in @('SRCHCEN#0', 'APPCATALOG#0', 'POINTPUBLISHINGHUB#0', 'COMMUNITYPORTAL#0', 'BLANKINTERNETCONTAINER#0', 'EDISC#0'))
-        $isOrphaned = ($SiteData.SiteAdminsCount -eq 0 -or [string]::IsNullOrWhiteSpace($SiteData.Owner) -or $SiteData.Owner -eq 'N/A')
+        $isSystemSite = ($siteOwner -eq 'SharePoint System' -or $siteTemplate -in @('SRCHCEN#0', 'APPCATALOG#0', 'POINTPUBLISHINGHUB#0', 'COMMUNITYPORTAL#0', 'BLANKINTERNETCONTAINER#0', 'EDISC#0'))
+        $isOrphaned = ($adminsCount -eq 0 -or [string]::IsNullOrWhiteSpace($siteOwner) -or $siteOwner -eq 'N/A')
 
         if ($isSystemSite) {
             # System infrastructure sites (Search, Hub, AppCatalog) do not require user owners
@@ -954,31 +966,30 @@ Tip: You can also set an environment variable or paste the ID into:
         elseif ($isOrphaned) {
             $riskScore += 45
             $riskFactors.Add("ORPHANED_SITE: 0 active Site Collection Administrators or missing owner")
-            $remediations.Add("Assign at least two designated site administrators: Set-PnPTenantSite -Url '$($SiteData.Url)' -Owners 'admin@domain.com'")
+            $remediations.Add("Assign at least two designated site administrators: Set-PnPTenantSite -Url '$siteUrl' -Owners 'admin@domain.com'")
         }
-        elseif ($SiteData.SiteAdminsCount -gt 5) {
+        elseif ($adminsCount -gt 5) {
             $riskScore += 25
-            $riskFactors.Add("EXCESSIVE_ADMINS: $($SiteData.SiteAdminsCount) Site Collection Administrators detected (Threshold: >5)")
+            $riskFactors.Add("EXCESSIVE_ADMINS: $adminsCount Site Collection Administrators detected (Threshold: >5)")
             $remediations.Add("Review and reduce excessive site collection administrators down to 2-4 primary owners.")
         }
-        elseif ($SiteData.SiteAdminsCount -eq 1 -and $SiteData.Owner -notin @('M365 Group Owners', 'M365 Group-Managed')) {
+        elseif ($adminsCount -eq 1 -and $siteOwner -notin @('M365 Group Owners', 'M365 Group-Managed')) {
             $riskScore += 10
             $riskFactors.Add("SINGLE_ADMIN: Single administrator represents an administrative single point of failure")
             $remediations.Add("Assign a secondary site administrator to prevent orphaned state if current owner leaves.")
         }
 
         # Vector 2: External Sharing & Anonymous Access
-        $sharing = $SiteData.SharingCapability
         if ($sharing -eq 'ExternalUserAndGuestSharing') {
             $riskScore += 30
             $riskFactors.Add("ANYONE_LINKS: Site permits Anonymous/Anyone link sharing without authentication")
 
-            if ($SiteData.AnonymousLinkExpirationInDays -le 0 -or $null -eq $SiteData.AnonymousLinkExpirationInDays) {
+            if ($anonExpDays -le 0) {
                 $riskScore += 20
                 $riskFactors.Add("NO_EXPIRATION: Anonymous links do not enforce expiration policies")
-                $remediations.Add("Enforce anonymous link expiration: Set-PnPTenantSite -Url '$($SiteData.Url)' -AnonymousLinkExpirationInDays 14")
+                $remediations.Add("Enforce anonymous link expiration: Set-PnPTenantSite -Url '$siteUrl' -AnonymousLinkExpirationInDays 14")
             }
-            $remediations.Add("Restrict sharing to authenticated guests: Set-PnPTenantSite -Url '$($SiteData.Url)' -SharingCapability ExistingExternalUserSharingOnly")
+            $remediations.Add("Restrict sharing to authenticated guests: Set-PnPTenantSite -Url '$siteUrl' -SharingCapability ExistingExternalUserSharingOnly")
         }
         elseif ($sharing -eq 'ExistingExternalUserSharingOnly') {
             $riskScore += 15
@@ -989,7 +1000,7 @@ Tip: You can also set an environment variable or paste the ID into:
         }
 
         # Vector 3: M365 Group Privacy & Public Exposure
-        if ($SiteData.GroupPrivacy -eq 'Public') {
+        if ($groupPrivacy -eq 'Public') {
             $riskScore += 15
             $riskFactors.Add("PUBLIC_GROUP: Connected M365 Group is Public; accessible to all internal employees")
             if ($sharing -eq 'ExternalUserAndGuestSharing') {
@@ -1000,31 +1011,31 @@ Tip: You can also set an environment variable or paste the ID into:
         }
 
         # Vector 4: Sensitivity Labels
-        if ([string]::IsNullOrWhiteSpace($SiteData.SensitivityLabel) -or $SiteData.SensitivityLabel -eq 'None') {
+        if ([string]::IsNullOrWhiteSpace($sensitivity) -or $sensitivity -eq 'None') {
             if ($sharing -eq 'ExternalUserAndGuestSharing' -or $sharing -eq 'ExistingExternalUserSharingOnly') {
                 $riskScore += 15
                 $riskFactors.Add("UNLABELED_SHARING: External sharing is enabled on an unlabeled site collection")
                 $remediations.Add("Classify site collection by assigning an appropriate Microsoft Purview Sensitivity Label.")
             }
         }
-        elseif ($SiteData.SensitivityLabel -like "*Confidential*" -or $SiteData.SensitivityLabel -like "*Secret*") {
+        elseif ($sensitivity -like "*Confidential*" -or $sensitivity -like "*Secret*") {
             if ($sharing -eq 'ExternalUserAndGuestSharing') {
                 $riskScore += 35
                 $riskFactors.Add("CONFIDENTIAL_LEAK_RISK: Confidential/Secret labeled site allows Anonymous/Anyone link sharing")
-                $remediations.Add("Immediately disable anyone links: Set-PnPTenantSite -Url '$($SiteData.Url)' -SharingCapability ExternalUserSharingDisabled")
+                $remediations.Add("Immediately disable anyone links: Set-PnPTenantSite -Url '$siteUrl' -SharingCapability ExternalUserSharingDisabled")
             }
         }
 
         # Vector 5: Broken Permission Inheritance
-        if ($SiteData.HasBrokenInheritance) {
+        if ($hasBrokenInherit) {
             $riskScore += 15
             $riskFactors.Add("BROKEN_INHERITANCE: Site or document libraries contain unique role assignments")
             $remediations.Add("Audit subordinate library permissions and restore inheritance where custom access is stale.")
         }
 
         # Vector 6: Storage Consumption
-        if ($SiteData.StorageUsageMB -gt 0 -and $SiteData.StorageLimitMB -gt 0) {
-            $storagePct = [Math]::Round(($SiteData.StorageUsageMB / $SiteData.StorageLimitMB) * 100, 1)
+        if ($storageUsed -gt 0 -and $storageLimit -gt 0) {
+            $storagePct = [Math]::Round(($storageUsed / $storageLimit) * 100, 1)
             if ($storagePct -ge 90) {
                 $riskScore += 10
                 $riskFactors.Add("STORAGE_CAPACITY: Storage utilization at $storagePct% of maximum allocated quota")
@@ -2092,6 +2103,7 @@ process {
             $siteEvalData = [PSCustomObject]@{
                 Url                           = $siteUrl
                 Title                         = $siteTitle
+                Template                      = $templateCode
                 Owner                         = $ownerUpn
                 SiteAdminsCount               = $adminsCount
                 SharingCapability             = $sharingCapability
