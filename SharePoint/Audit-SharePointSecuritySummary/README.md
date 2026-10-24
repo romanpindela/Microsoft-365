@@ -215,6 +215,10 @@ Executes a full interactive audit of all tenant site collections, displaying the
     -OutputPath "C:\Reports\SharePointAudit"
 ```
 
+#### 📸 Interactive Execution Run
+![Interactive Execution Run](assets/Standard_run.jpg)
+
+
 ### Scenario 2: Unattended Automated Audit via Entra ID App-Only Certificate
 
 Runs non-interactively in scheduled CI/CD pipelines, Azure Automation, or Windows Task Scheduler using certificate authentication:

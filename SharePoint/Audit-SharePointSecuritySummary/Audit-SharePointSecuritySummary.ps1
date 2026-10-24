@@ -16,6 +16,8 @@
     - Executive Reporting: Generates an interactive colorized console dashboard, raw CSV remediation dataset,
       and a standalone, responsive HTML executive report with interactive filtering and remediation guidance.
     - Pipeline Support: Emits strongly-typed [PSCustomObject] records to the PowerShell pipeline for downstream automation.
+    - Post-2024 Entra ID Architecture: Automated Entra ID App registration, local credential/client ID caching,
+      and seamless modern authentication compliant with Microsoft's retired multi-tenant PnP app policy.
     - Dual Authentication: Supports interactive browser OAuth with MFA and non-interactive Entra ID App-Only certificate authentication.
     - Enterprise Logging: Maintains timestamped execution logs in C:\Logs\ with automatic fallback.
 
@@ -24,10 +26,12 @@
     Can also accept the root tenant URL (e.g. 'https://contoso.sharepoint.com'), which will be automatically normalized.
 
 .PARAMETER ClientId
-    Microsoft Entra ID Application (Client) ID for unattended App-Only daemon authentication.
+    Microsoft Entra ID Application (Client) ID for unattended App-Only daemon authentication or interactive modern login.
+    If omitted in interactive mode, the script checks local cache or guides automated on-the-fly registration.
 
 .PARAMETER TenantId
     Microsoft Entra ID Directory (Tenant) ID or tenant domain (e.g. 'contoso.onmicrosoft.com').
+    If omitted, the tenant domain is inferred from the SharePoint Admin URL.
 
 .PARAMETER CertificateThumbprint
     The thumbprint of an X.509 certificate installed in Cert:\CurrentUser\My or Cert:\LocalMachine\My
@@ -97,7 +101,7 @@
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: romanpindela
-    Version: 1.0.0
+    Version: 1.0.1
     Last Modified: 2026-10-24
     Standards: CleanCode & PSScriptAnalyzer Zero-Warning Standard
 #>
@@ -169,7 +173,7 @@ begin {
     # ==============================================================================
     $Script:Metadata = @{
         Title        = "Audit-SharePointSecuritySummary.ps1"
-        Version      = "1.0.0"
+        Version      = "1.0.1"
         Author       = "Roman Pindela"
         Email        = "roman.pindela@gmail.com"
         GitHub       = "https://github.com/romanpindela"
@@ -180,6 +184,8 @@ begin {
     $Script:StartTime        = Get-Date
     $Script:LogFilePath      = $null
     $Script:ActiveConnection = $null
+    $Script:ActiveClientId   = $null
+    $Script:ActiveTenant     = $null
     $Script:ScriptFilePath   = if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
         $PSCommandPath
     }
@@ -208,10 +214,14 @@ begin {
         Write-Host "    Evaluates external sharing governance, orphaned site collections, excessive admin" -ForegroundColor Gray
         Write-Host "    assignments, anonymous sharing links, and broken permission inheritance." -ForegroundColor Gray
         Write-Host "    Generates an executive console dashboard, CSV dataset, and standalone HTML report." -ForegroundColor Gray
+        Write-Host "`nPOST-2024 ENTRA ID COMPLIANCE:" -ForegroundColor Yellow
+        Write-Host "    Microsoft permanently retired the multi-tenant PnP App on September 9, 2024." -ForegroundColor Gray
+        Write-Host "    The script automatically resolves or registers a dedicated Entra ID App in your" -ForegroundColor Gray
+        Write-Host "    tenant and caches the Client ID locally under AppData\Local\SharePoint-Audit." -ForegroundColor Gray
         Write-Host "`nPARAMETERS:" -ForegroundColor Yellow
         Write-Host "    -AdminUrl               [String]       SharePoint Online Admin URL (e.g. 'https://contoso-admin.sharepoint.com')." -ForegroundColor Gray
         Write-Host "    -Interactive            [Switch]       Initiate interactive browser OAuth authentication with MFA." -ForegroundColor Gray
-        Write-Host "    -ClientId               [String]       Microsoft Entra ID Application (Client) ID for App-Only auth." -ForegroundColor Gray
+        Write-Host "    -ClientId               [String]       Microsoft Entra ID Application (Client) ID for App-Only or interactive auth." -ForegroundColor Gray
         Write-Host "    -TenantId               [String]       Microsoft Entra ID Tenant ID or domain (contoso.onmicrosoft.com)." -ForegroundColor Gray
         Write-Host "    -CertificateThumbprint  [String]       X.509 Certificate thumbprint for unattended daemon auth." -ForegroundColor Gray
         Write-Host "    -CertificatePath        [String]       Path to certificate (.pfx/.cer) file." -ForegroundColor Gray
@@ -469,7 +479,7 @@ Log File Location     : $Script:LogFilePath
                 $errorMessage = @"
 Required PowerShell module '$modName' is not installed.
 Please install it by running:
-    Install-Module -Name $modName -Scope CurrentUser -Repository PSGallery -Force -AllowClobber
+    Install-Module -Name modName -Scope CurrentUser -Repository PSGallery -Force -AllowClobber
 "@
                 Write-Log -Level ERROR -Message $errorMessage
                 throw $errorMessage
@@ -487,10 +497,152 @@ Please install it by running:
     }
 
     # ==============================================================================
+    # AUTOMATED ENTRA ID APP REGISTRATION (Post-2024 Modern PnP Compliance)
+    # ==============================================================================
+    function Invoke-EntraIDAppRegistration {
+        [CmdletBinding()]
+        [OutputType([string])]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$Tenant,
+
+            [Parameter(Mandatory = $false)]
+            [string]$ApplicationName = "SharePoint-Audit"
+        )
+
+        $targetAppName = $ApplicationName
+        $maxAttempts   = 3
+        $attempt       = 0
+
+        while ($attempt -lt $maxAttempts) {
+            $attempt++
+
+            Write-Log -Level INFO -Message "Initiating automated Microsoft Entra ID App registration ('$targetAppName') in tenant '$Tenant'..."
+            Write-Host "`n[*] Microsoft Entra ID registration requires a one-time administrator consent flow." -ForegroundColor Yellow
+            Write-Host "[*] A browser window will now open for modern interactive sign-in." -ForegroundColor Yellow
+            Write-Host "[*] Please sign in with your Microsoft 365 account and grant consent to the requested SharePoint permissions.`n" -ForegroundColor Yellow
+
+            try {
+                $regResult = Register-PnPEntraIDAppForInteractiveLogin `
+                    -ApplicationName $targetAppName `
+                    -Tenant $Tenant `
+                    -SharePointDelegatePermissions "AllSites.FullControl" `
+                    -GraphDelegatePermissions "Group.Read.All", "User.Read.All" `
+                    -ErrorAction Stop
+
+                $newAppId = $null
+                if ($null -ne $regResult) {
+                    foreach ($item in @($regResult)) {
+                        if ($null -eq $item) { continue }
+                        $itemStr = $item.ToString()
+                        if ($itemStr -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
+                            $newAppId = $Matches[1]
+                            break
+                        }
+                        if ($item.PSObject) {
+                            foreach ($prop in $item.PSObject.Properties) {
+                                if ($prop.Value -and $prop.Value.ToString() -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
+                                    $newAppId = $Matches[1]
+                                    break
+                                }
+                            }
+                            if ($newAppId) { break }
+                        }
+                    }
+
+                    if ([string]::IsNullOrWhiteSpace($newAppId)) {
+                        $allText = ($regResult | Out-String)
+                        if ($allText -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
+                            $newAppId = $Matches[1]
+                        }
+                    }
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($newAppId)) {
+                    Write-Log -Level SUCCESS -Message "Entra ID App '$targetAppName' registered successfully. Application (Client) ID: $newAppId"
+
+                    # Persist to local cache so subsequent runs never need prompt or re-registration
+                    try {
+                        $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
+                        if (-not (Test-Path -Path $cacheDir)) {
+                            $null = New-Item -Path $cacheDir -ItemType Directory -Force
+                        }
+                        $cacheFile = Join-Path -Path $cacheDir -ChildPath "${Tenant}_client_id.txt"
+                        [System.IO.File]::WriteAllText($cacheFile, $newAppId)
+                        Write-Log -Level SUCCESS -Message "Application ID cached locally at: $cacheFile"
+                    }
+                    catch {
+                        Write-Log -Level WARN -Message "Unable to persist Application ID to local cache: $($_.Exception.Message)"
+                    }
+
+                    return $newAppId
+                }
+                else {
+                    throw "Could not extract Application (Client) ID from registration output."
+                }
+            }
+            catch {
+                $errMsg = $_.Exception.Message
+                Write-Log -Level WARN -Message "Error during Microsoft Entra ID app registration: $errMsg"
+
+                if ([Environment]::UserInteractive) {
+                    $suggestedName = "SharePoint-Audit-" + (Get-Date).ToString("yyyyMMdd-HHmm")
+                    Write-Host "`n[!] Application registration for '$targetAppName' failed: $errMsg" -ForegroundColor Yellow
+                    Write-Host "[*] Suggested unique application name: $suggestedName" -ForegroundColor Cyan
+                    Write-Host "[?] Press ENTER to try [$suggestedName], enter a different name, or paste an existing Application ID (GUID): " -NoNewline -ForegroundColor Yellow
+                    $inputVal = Read-Host
+
+                    if ([string]::IsNullOrWhiteSpace($inputVal)) {
+                        $targetAppName = $suggestedName
+                        Write-Log -Level INFO -Message "Retrying registration with suggested name: $targetAppName"
+                        continue
+                    }
+                    elseif ($inputVal.Trim() -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+                        $pastedId = $inputVal.Trim()
+                        Write-Log -Level SUCCESS -Message "Using provided existing Application ID: $pastedId"
+                        try {
+                            $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
+                            if (-not (Test-Path -Path $cacheDir)) {
+                                $null = New-Item -Path $cacheDir -ItemType Directory -Force
+                            }
+                            $cacheFile = Join-Path -Path $cacheDir -ChildPath "${Tenant}_client_id.txt"
+                            [System.IO.File]::WriteAllText($cacheFile, $pastedId)
+                            Write-Log -Level SUCCESS -Message "Application ID cached locally at: $cacheFile"
+                        }
+                        catch {
+                            Write-Log -Level WARN -Message "Unable to persist ClientId to cache: $($_.Exception.Message)"
+                        }
+                        return $pastedId
+                    }
+                    else {
+                        $targetAppName = $inputVal.Trim()
+                        Write-Log -Level INFO -Message "Retrying registration with new name: $targetAppName"
+                        continue
+                    }
+                }
+                else {
+                    if ($errMsg -match 'already exists') {
+                        $targetAppName = "SharePoint-Audit-" + (Get-Date).ToString("yyyyMMdd-HHmm")
+                        continue
+                    }
+                    $regErr = "Failed to register Microsoft Entra ID application: $errMsg"
+                    Write-Log -Level ERROR -Message $regErr
+                    throw $regErr
+                }
+            }
+        }
+
+        throw "Exceeded maximum attempts for Microsoft Entra ID application registration."
+    }
+
+    # ==============================================================================
     # AUTHENTICATION ENGINE (Interactive & App-Only Daemon)
     # ==============================================================================
     function Connect-AuditSession {
         [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '')]
         param(
             [Parameter(Mandatory = $true)]
             [string]$TargetAdminUrl,
@@ -516,36 +668,56 @@ Please install it by running:
 
         Write-Log -Level INFO -Message "Establishing connection to SharePoint Online Admin: $TargetAdminUrl"
 
+        # Determine Tenant Domain hint from AdminUrl if not explicitly provided
+        $inferredTenant = try {
+            $uri = [System.Uri]$TargetAdminUrl
+            $tenantSubdomain = $uri.Host.Split('.')[0].Replace('-admin', '')
+            $tenantSubdomain + ".onmicrosoft.com"
+        }
+        catch {
+            "yourtenant.onmicrosoft.com"
+        }
+
+        $effectiveTenant = if (-not [string]::IsNullOrWhiteSpace($Tenant)) {
+            $Tenant
+        }
+        else {
+            $inferredTenant
+        }
+
         try {
             # Mode 1: Certificate Thumbprint
             if (-not [string]::IsNullOrWhiteSpace($Thumbprint)) {
-                if ([string]::IsNullOrWhiteSpace($AppId) -or [string]::IsNullOrWhiteSpace($Tenant)) {
-                    throw "App-Only authentication via -CertificateThumbprint requires both -ClientId and -TenantId."
+                if ([string]::IsNullOrWhiteSpace($AppId)) {
+                    throw "App-Only authentication via -CertificateThumbprint requires -ClientId."
                 }
-                Write-Log -Level INFO -Message "Authenticating via X.509 Certificate Thumbprint '$Thumbprint' (ClientId: $AppId, Tenant: $Tenant)..."
+                Write-Log -Level INFO -Message "Authenticating via X.509 Certificate Thumbprint '$Thumbprint' (ClientId: $AppId, Tenant: $effectiveTenant)..."
                 $conn = Connect-PnPOnline -Url $TargetAdminUrl `
                     -ClientId $AppId `
-                    -Tenant $Tenant `
+                    -Tenant $effectiveTenant `
                     -Thumbprint $Thumbprint `
                     -ReturnConnection `
                     -ErrorAction Stop
+
+                $Script:ActiveClientId = $AppId
+                $Script:ActiveTenant   = $effectiveTenant
                 Write-Log -Level SUCCESS -Message "Connected successfully using Certificate Thumbprint."
                 return $conn
             }
 
             # Mode 2: Certificate File Path
             if (-not [string]::IsNullOrWhiteSpace($CertFilePath)) {
-                if ([string]::IsNullOrWhiteSpace($AppId) -or [string]::IsNullOrWhiteSpace($Tenant)) {
-                    throw "App-Only authentication via -CertificatePath requires both -ClientId and -TenantId."
+                if ([string]::IsNullOrWhiteSpace($AppId)) {
+                    throw "App-Only authentication via -CertificatePath requires -ClientId."
                 }
                 if (-not (Test-Path -Path $CertFilePath)) {
                     throw "Certificate file not found at path: $CertFilePath"
                 }
-                Write-Log -Level INFO -Message "Authenticating via Certificate file '$CertFilePath' (ClientId: $AppId, Tenant: $Tenant)..."
+                Write-Log -Level INFO -Message "Authenticating via Certificate file '$CertFilePath' (ClientId: $AppId, Tenant: $effectiveTenant)..."
                 $connectParams = @{
                     Url              = $TargetAdminUrl
                     ClientId         = $AppId
-                    Tenant           = $Tenant
+                    Tenant           = $effectiveTenant
                     CertificatePath  = $CertFilePath
                     ReturnConnection = $true
                     ErrorAction      = 'Stop'
@@ -554,25 +726,123 @@ Please install it by running:
                     $connectParams['CertificatePassword'] = $CertPass
                 }
                 $conn = Connect-PnPOnline @connectParams
+
+                $Script:ActiveClientId = $AppId
+                $Script:ActiveTenant   = $effectiveTenant
                 Write-Log -Level SUCCESS -Message "Connected successfully using Certificate Path."
                 return $conn
             }
 
-            # Mode 3: Interactive Browser Authentication
-            if ($UseInteractive -or [string]::IsNullOrWhiteSpace($AppId)) {
-                Write-Log -Level INFO -Message "Initiating modern interactive browser authentication (OAuth/MFA)..."
-                if (-not [string]::IsNullOrWhiteSpace($AppId)) {
-                    $conn = Connect-PnPOnline -Url $TargetAdminUrl -ClientId $AppId -Interactive -ReturnConnection -ErrorAction Stop
+            # Mode 3: Modern Interactive Browser Authentication
+            # 1. Check explicit parameter -ClientId
+            $effectiveClientId = $AppId
+
+            # 2. Check environment variables
+            if ([string]::IsNullOrWhiteSpace($effectiveClientId)) {
+                if (-not [string]::IsNullOrWhiteSpace($env:ENTRAID_APP_ID)) {
+                    $effectiveClientId = $env:ENTRAID_APP_ID
                 }
-                else {
-                    $conn = Connect-PnPOnline -Url $TargetAdminUrl -Interactive -ReturnConnection -ErrorAction Stop
+                elseif (-not [string]::IsNullOrWhiteSpace($env:PNP_APP_ID)) {
+                    $effectiveClientId = $env:PNP_APP_ID
                 }
-                Write-Log -Level SUCCESS -Message "Interactive browser session established successfully."
-                return $conn
             }
 
-            # Fallback
-            throw "Unable to determine authentication method. Provide -Interactive or -CertificateThumbprint/-CertificatePath with -ClientId and -TenantId."
+            # 3. Check persistent tenant cache on local disk (AppData\Local\SharePoint-Audit)
+            if ([string]::IsNullOrWhiteSpace($effectiveClientId)) {
+                $cacheDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "SharePoint-Audit"
+                $cacheFile = Join-Path -Path $cacheDir -ChildPath "${effectiveTenant}_client_id.txt"
+                if (Test-Path -Path $cacheFile) {
+                    try {
+                        $cachedId = [System.IO.File]::ReadAllText($cacheFile).Trim()
+                        if ($cachedId -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+                            Write-Log -Level INFO -Message "Loaded cached Entra ID Application ID for '$effectiveTenant': $cachedId"
+                            $effectiveClientId = $cachedId
+                        }
+                    }
+                    catch {
+                        Write-Log -Level WARN -Message "Unable to read cached ClientId: $($_.Exception.Message)"
+                    }
+                }
+            }
+
+            # 4. If ClientId is still missing, guide registration on-the-fly
+            if ([string]::IsNullOrWhiteSpace($effectiveClientId)) {
+                Write-Log -Level WARN -Message "No Entra ID Application ID configured for tenant '$effectiveTenant'."
+
+                $shouldRegister = $false
+                if ([Environment]::UserInteractive) {
+                    Write-Host "`n[?] Microsoft Entra ID interactive authentication requires an Application (Client) ID." -ForegroundColor Yellow
+                    Write-Host "[?] Microsoft permanently retired the legacy shared multi-tenant PnP app on Sept 9, 2024." -ForegroundColor Yellow
+                    Write-Host "[?] Would you like to automatically register and configure an Entra ID App in '$effectiveTenant' now? (Y/N): " -NoNewline -ForegroundColor Yellow
+                    $answer = Read-Host
+                    if ($answer -match '^[yY1tT]$') {
+                        $shouldRegister = $true
+                    }
+                }
+
+                if ($shouldRegister) {
+                    $effectiveClientId = Invoke-EntraIDAppRegistration -Tenant $effectiveTenant
+                }
+                else {
+                    $guidance = @"
+Microsoft Entra ID interactive authentication requires an Application (Client) ID.
+Microsoft permanently retired the legacy shared multi-tenant PnP app on September 9, 2024.
+
+To register a dedicated Entra ID App for your tenant ('$effectiveTenant'), run once in PowerShell 7:
+    Register-PnPEntraIDAppForInteractiveLogin -ApplicationName "SharePoint-Audit" -Tenant "$effectiveTenant"
+
+Then re-run this script with the generated Application ID:
+    .\Audit-SharePointSecuritySummary.ps1 -AdminUrl "$TargetAdminUrl" -ClientId "<ApplicationId>" -Interactive
+
+Tip: You can also set an environment variable or paste the ID into:
+    `$env:ENTRAID_APP_ID = "<ApplicationId>"
+"@
+                    Write-Log -Level ERROR -Message $guidance
+                    throw $guidance
+                }
+            }
+
+            # Attempt connection with the effective ClientId and Tenant
+            $Script:ActiveClientId = $effectiveClientId
+            $Script:ActiveTenant   = $effectiveTenant
+
+            $interactiveParams = @{
+                Url              = $TargetAdminUrl
+                Interactive      = $true
+                ClientId         = $effectiveClientId
+                Tenant           = $effectiveTenant
+                ReturnConnection = $true
+                ErrorAction      = 'Stop'
+            }
+
+            Write-Log -Level INFO -Message "Initiating modern interactive browser authentication (ClientId: $effectiveClientId, Tenant: $effectiveTenant)..."
+
+            try {
+                $conn = Connect-PnPOnline @interactiveParams
+                Write-Log -Level SUCCESS -Message "Connected successfully to $TargetAdminUrl via interactive session."
+                return $conn
+            }
+            catch {
+                if ($_.Exception.Message -match 'AADSTS700016' -or $_.Exception.Message -match 'was not found in the directory') {
+                    Write-Log -Level WARN -Message "Application ID '$effectiveClientId' was not found or not consented in directory '$effectiveTenant'."
+
+                    if ([Environment]::UserInteractive) {
+                        Write-Host "`n[!] Application ID '$effectiveClientId' was not found in directory '$effectiveTenant' (AADSTS700016)." -ForegroundColor Yellow
+                        Write-Host "[?] Would you like to register a new Entra ID App in '$effectiveTenant' now? (Y/N): " -NoNewline -ForegroundColor Yellow
+                        $reAns = Read-Host
+                        if ($reAns -match '^[yY1tT]$') {
+                            $newId = Invoke-EntraIDAppRegistration -Tenant $effectiveTenant
+                            $interactiveParams['ClientId'] = $newId
+                            $Script:ActiveClientId = $newId
+                            Write-Log -Level INFO -Message "Retrying connection with new Application ID: $newId..."
+                            $conn = Connect-PnPOnline @interactiveParams
+                            Write-Log -Level SUCCESS -Message "Connected successfully to $TargetAdminUrl via interactive session."
+                            return $conn
+                        }
+                    }
+                }
+                throw
+            }
         }
         catch {
             $authErr = "Failed to establish connection to SharePoint Admin ($TargetAdminUrl): $($_.Exception.Message)"
@@ -1358,7 +1628,7 @@ Please install it by running:
             <div class="header-meta">
                 <div>Scan Date: <strong>$scanDate</strong></div>
                 <div>Admin Endpoint: <strong>$TenantAdminEndpoint</strong></div>
-                <div>Tool: <strong>Audit-SharePointSecuritySummary v1.0.0</strong></div>
+                <div>Tool: <strong>Audit-SharePointSecuritySummary v1.0.1</strong></div>
             </div>
         </header>
 
@@ -1657,7 +1927,7 @@ process {
             if ($DetailedScan -or -not [string]::IsNullOrWhiteSpace($site.Owner)) {
                 try {
                     $siteConn = Connect-PnPOnline -Url $site.Url -Interactive:$Interactive `
-                        -ClientId $ClientId -Tenant $TenantId -Thumbprint $CertificateThumbprint `
+                        -ClientId $Script:ActiveClientId -Tenant $Script:ActiveTenant -Thumbprint $CertificateThumbprint `
                         -ReturnConnection -ErrorAction SilentlyContinue
 
                     if ($siteConn) {
