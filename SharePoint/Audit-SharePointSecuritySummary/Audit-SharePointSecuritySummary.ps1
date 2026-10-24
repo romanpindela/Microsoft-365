@@ -945,7 +945,13 @@ Tip: You can also set an environment variable or paste the ID into:
         $remediations = [System.Collections.Generic.List[string]]::new()
 
         # Vector 1: Ownership & Orphaned Sites
-        if ($SiteData.SiteAdminsCount -eq 0 -or [string]::IsNullOrWhiteSpace($SiteData.Owner)) {
+        $isSystemSite = ($SiteData.Owner -eq 'SharePoint System' -or $SiteData.Template -in @('SRCHCEN#0', 'APPCATALOG#0', 'POINTPUBLISHINGHUB#0', 'COMMUNITYPORTAL#0', 'BLANKINTERNETCONTAINER#0', 'EDISC#0'))
+        $isOrphaned = ($SiteData.SiteAdminsCount -eq 0 -or [string]::IsNullOrWhiteSpace($SiteData.Owner) -or $SiteData.Owner -eq 'N/A')
+
+        if ($isSystemSite) {
+            # System infrastructure sites (Search, Hub, AppCatalog) do not require user owners
+        }
+        elseif ($isOrphaned) {
             $riskScore += 45
             $riskFactors.Add("ORPHANED_SITE: 0 active Site Collection Administrators or missing owner")
             $remediations.Add("Assign at least two designated site administrators: Set-PnPTenantSite -Url '$($SiteData.Url)' -Owners 'admin@domain.com'")
@@ -955,7 +961,7 @@ Tip: You can also set an environment variable or paste the ID into:
             $riskFactors.Add("EXCESSIVE_ADMINS: $($SiteData.SiteAdminsCount) Site Collection Administrators detected (Threshold: >5)")
             $remediations.Add("Review and reduce excessive site collection administrators down to 2-4 primary owners.")
         }
-        elseif ($SiteData.SiteAdminsCount -eq 1) {
+        elseif ($SiteData.SiteAdminsCount -eq 1 -and $SiteData.Owner -notin @('M365 Group Owners', 'M365 Group-Managed')) {
             $riskScore += 10
             $riskFactors.Add("SINGLE_ADMIN: Single administrator represents an administrative single point of failure")
             $remediations.Add("Assign a secondary site administrator to prevent orphaned state if current owner leaves.")
@@ -1074,7 +1080,7 @@ Tip: You can also set an environment variable or paste the ID into:
 
         $extSharing     = @($Records | Where-Object { $_.SharingCapability -in @('ExternalUserAndGuestSharing', 'ExistingExternalUserSharingOnly') }).Count
         $anyoneCount    = @($Records | Where-Object { $_.SharingCapability -eq 'ExternalUserAndGuestSharing' }).Count
-        $orphanedCount  = @($Records | Where-Object { $_.SiteAdminsCount -eq 0 -or [string]::IsNullOrWhiteSpace($_.Owner) }).Count
+        $orphanedCount  = @($Records | Where-Object { $_.RiskFactors -like "*ORPHANED_SITE*" }).Count
         $excessiveAdmin = @($Records | Where-Object { $_.SiteAdminsCount -gt 5 }).Count
         $brokenInherit  = @($Records | Where-Object { $_.HasBrokenInheritance -eq $true }).Count
 
@@ -1123,7 +1129,7 @@ Tip: You can also set an environment variable or paste the ID into:
 
         # Print sorted by risk priority: Critical -> High -> Medium -> Low
         $priorityOrder = @{ 'Critical' = 1; 'High' = 2; 'Medium' = 3; 'Low' = 4 }
-        $sortedRows = $tableRows | Sort-Object { $priorityOrder[$_."Risk Level"] }, -Property Score
+        $sortedRows = $tableRows | Sort-Object -Property @{ Expression = { $priorityOrder[$_."Risk Level"] } }, @{ Expression = "Score"; Descending = $true }
 
         $sortedRows | Format-Table -AutoSize | Out-Host
 
@@ -1189,7 +1195,7 @@ Tip: You can also set an environment variable or paste the ID into:
 
         $extSharing     = @($Records | Where-Object { $_.SharingCapability -in @('ExternalUserAndGuestSharing', 'ExistingExternalUserSharingOnly') }).Count
         $anyoneCount    = @($Records | Where-Object { $_.SharingCapability -eq 'ExternalUserAndGuestSharing' }).Count
-        $orphanedCount  = @($Records | Where-Object { $_.SiteAdminsCount -eq 0 -or [string]::IsNullOrWhiteSpace($_.Owner) }).Count
+        $orphanedCount  = @($Records | Where-Object { $_.RiskFactors -like "*ORPHANED_SITE*" }).Count
         $excessiveAdmin = @($Records | Where-Object { $_.SiteAdminsCount -gt 5 }).Count
 
         # Build table rows HTML
@@ -1242,7 +1248,7 @@ Tip: You can also set an environment variable or paste the ID into:
             $encodedRemediation = [System.Web.HttpUtility]::HtmlEncode($r.Remediations)
 
             $rowHtml = @"
-            <tr class="audit-row" data-risk="$($r.RiskLevel)" data-sharing="$($r.SharingCapability)" data-orphaned="$($r.SiteAdminsCount -eq 0)">
+            <tr class="audit-row" data-risk="$($r.RiskLevel)" data-sharing="$($r.SharingCapability)" data-orphaned="$(if ($r.RiskFactors -like '*ORPHANED_SITE*') { 'true' } else { 'false' })">
                 <td><span class="badge $badgeClass">$($r.RiskLevel)</span></td>
                 <td><strong>$($r.RiskScore)</strong></td>
                 <td>
@@ -1805,7 +1811,7 @@ $($tableHtmlBuilder.ToString())
                 const text = row.innerText.toLowerCase();
                 const risk = row.getAttribute('data-risk');
                 const sharing = row.getAttribute('data-sharing');
-                const isOrphaned = row.getAttribute('data-orphaned') === 'true';
+                const isOrphaned = (row.getAttribute('data-orphaned') || '').toLowerCase() === 'true';
 
                 let matchesFilter = false;
                 if (currentFilter === 'all') {
@@ -1947,16 +1953,24 @@ process {
 
             Write-Log -Level INFO -Message "[$counter/$totalFound] Auditing site collection: $siteUrl"
 
-            # Resolve Site Owner & Admin Count
-            $ownerVal = Get-SafePropertyValue -InputObject $site -PropertyName "Owner" -DefaultValue "N/A"
-            $ownerUpn = if (-not [string]::IsNullOrWhiteSpace($ownerVal)) { [string]$ownerVal } else { "N/A" }
-            $adminsCount = 0
-            $adminList = [System.Collections.Generic.List[string]]::new()
-            $hasUniquePerms = $false
-
             # Extract template & friendly name
             $templateCode = [string](Get-SafePropertyValue -InputObject $site -PropertyName "Template" -DefaultValue "Unknown")
             $friendlyTemplate = Get-FriendlyTemplateName -TemplateCode $templateCode
+
+            # Resolve Site Owner & Admin Count
+            $ownerVal = Get-SafePropertyValue -InputObject $site -PropertyName "Owner" -DefaultValue ""
+            if ([string]::IsNullOrWhiteSpace($ownerVal)) {
+                $ownerVal = Get-SafePropertyValue -InputObject $site -PropertyName "OwnerEmail" -DefaultValue ""
+            }
+            if ([string]::IsNullOrWhiteSpace($ownerVal)) {
+                $ownerVal = Get-SafePropertyValue -InputObject $site -PropertyName "OwnerLoginName" -DefaultValue ""
+            }
+            if ([string]::IsNullOrWhiteSpace($ownerVal)) {
+                $ownerVal = Get-SafePropertyValue -InputObject $site -PropertyName "OwnerName" -DefaultValue ""
+            }
+            if ([string]::IsNullOrWhiteSpace($ownerVal)) {
+                $ownerVal = Get-SafePropertyValue -InputObject $site -PropertyName "SecondaryContact" -DefaultValue ""
+            }
 
             # Extract sensitivity label
             $sensitivity = "None"
@@ -1971,11 +1985,12 @@ process {
                 }
             }
 
-            # Extract M365 Group Privacy
+            # Extract M365 Group Privacy & Association
             $groupPrivacy = "N/A"
             $groupIdVal = Get-SafePropertyValue -InputObject $site -PropertyName "GroupId" -DefaultValue $null
             $groupId = if ($groupIdVal) { $groupIdVal.ToString() } else { $null }
-            if (-not [string]::IsNullOrWhiteSpace($groupId) -and $groupId -ne [Guid]::Empty.ToString()) {
+            $isGroupConnected = (-not [string]::IsNullOrWhiteSpace($groupId) -and $groupId -ne [Guid]::Empty.ToString() -and $groupId -ne "00000000-0000-0000-0000-000000000000")
+            if ($isGroupConnected) {
                 $channelType = Get-SafePropertyValue -InputObject $site -PropertyName "ChannelType" -DefaultValue $null
                 if ($channelType) {
                     $groupPrivacy = [string]$channelType
@@ -1983,7 +1998,21 @@ process {
                 else {
                     $groupPrivacy = "Group-Connected"
                 }
+                if ([string]::IsNullOrWhiteSpace($ownerVal)) {
+                    $ownerVal = "M365 Group Owners"
+                }
             }
+
+            # Detect system / tenant infrastructure sites
+            $isSystemSite = ($templateCode -in @('SRCHCEN#0', 'APPCATALOG#0', 'POINTPUBLISHINGHUB#0', 'COMMUNITYPORTAL#0', 'BLANKINTERNETCONTAINER#0', 'EDISC#0') -or $siteUrl -like "*/search" -or $siteUrl -like "*/portals/*" -or $siteUrl -like "*/sites/AppCatalog*")
+            if ($isSystemSite -and [string]::IsNullOrWhiteSpace($ownerVal)) {
+                $ownerVal = "SharePoint System"
+            }
+
+            $ownerUpn = if (-not [string]::IsNullOrWhiteSpace($ownerVal)) { [string]$ownerVal } else { "N/A" }
+            $adminsCount = 0
+            $adminList = [System.Collections.Generic.List[string]]::new()
+            $hasUniquePerms = $false
 
             # Evaluate Site Collection Administrators and unique inheritance
             if ($DetailedScan) {
@@ -2029,7 +2058,7 @@ process {
             }
 
             # Fallback if admin inspection was not performed or returned 0
-            if ($adminsCount -eq 0 -and -not [string]::IsNullOrWhiteSpace($ownerUpn) -and $ownerUpn -ne "N/A") {
+            if ($adminsCount -eq 0 -and -not [string]::IsNullOrWhiteSpace($ownerUpn) -and $ownerUpn -notin @("N/A", "Unknown")) {
                 $adminsCount = 1
                 $adminList.Add($ownerUpn)
             }
