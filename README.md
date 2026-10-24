@@ -17,6 +17,7 @@ This toolkit is organized into modular functional domains:
 `	ext
 Microsoft 365/
 ├── EntraID/                         # Identity, user accounts, licensing, and security groups
+│   ├── Get-M365UserAccessAudit/     # Deep user access matrix across Entra ID, Roles, Teams, SPO & EXO
 │   ├── Get-M365Users/               # Comprehensive user auditing and executive license summary
 │   ├── Manage-M365Groups/           # Lifecycle management of M365 Groups, DLs, and Security Groups
 │   └── Manage-M365UserAccount/      # User password reset, account lock/unlock, and alias control
@@ -62,6 +63,7 @@ Microsoft 365/
 * [**Send-M365Mail**](Exchange/Send-M365Mail/README.md) — Enterprise email dispatcher for Microsoft 365 / Exchange Online via Microsoft Graph API. Supports automated X.509 certificate authentication (App-Only daemon) or interactive sign-in with MFA, client configuration deployment, Base64 MIME attachment encoding, rich HTML bodies, and mandatory execution logging to `C:\Logs`.
 
 ### 3. Microsoft Entra ID (/EntraID)
+* [**Get-M365UserAccessAudit**](EntraID/Get-M365UserAccessAudit/README.md) — Comprehensive user access matrix mapping direct and transitive group memberships, directory roles, PIM schedules, Teams, SharePoint sites, and Exchange mailbox delegations with interactive HTML dashboard.
 * [**Manage-M365UserAccount**](EntraID/Manage-M365UserAccount/README.md) — Password resets, sign-in blocking/unblocking, active session revocation, alias management, and user auditing via Microsoft Graph.
 * [**Get-M365Users**](EntraID/Get-M365Users/README.md) — Comprehensive tenant-wide user auditing, licensing SKU breakdowns, and mailbox status reporting.
 * [**Manage-M365Groups**](EntraID/Manage-M365Groups/README.md) — Management and membership auditing for M365 Unified Groups, Distribution Lists, and Security Groups.
