@@ -186,6 +186,7 @@ begin {
     $Script:ActiveConnection = $null
     $Script:ActiveClientId   = $null
     $Script:ActiveTenant     = $null
+    $Script:AutoSiteFilter   = $null
     $Script:ScriptFilePath   = if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
         $PSCommandPath
     }
@@ -382,6 +383,43 @@ Log File Location     : $Script:LogFilePath
     }
 
     # ==============================================================================
+    # HELPER: SAFE PROPERTY VALUE RETRIEVAL (StrictMode Resilient)
+    # ==============================================================================
+    function Get-SafePropertyValue {
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory = $false)]
+            $InputObject,
+
+            [Parameter(Mandatory = $true)]
+            [string]$PropertyName,
+
+            [Parameter(Mandatory = $false)]
+            $DefaultValue = $null
+        )
+
+        if ($null -eq $InputObject) {
+            return $DefaultValue
+        }
+
+        if ($InputObject -is [System.Collections.IDictionary]) {
+            if ($InputObject.Contains($PropertyName)) {
+                return $InputObject[$PropertyName]
+            }
+            return $DefaultValue
+        }
+
+        if ($InputObject.PSObject -and $InputObject.PSObject.Properties) {
+            $prop = $InputObject.PSObject.Properties[$PropertyName]
+            if ($null -ne $prop) {
+                return $prop.Value
+            }
+        }
+
+        return $DefaultValue
+    }
+
+    # ==============================================================================
     # HELPER: INTERACTIVE INPUT PROMPT
     # ==============================================================================
     function Read-AdminUrlInteractive {
@@ -419,10 +457,19 @@ Log File Location     : $Script:LogFilePath
             $uri = [System.Uri]$trimmed
             $hostName = $uri.Host
 
+            # Detect if user passed a specific site collection URL (e.g. /sites/sales or /teams/it)
+            if ($uri.AbsolutePath -match '^/(sites|teams)/([^/?#]+)') {
+                $subSite = $Matches[2]
+                if ([string]::IsNullOrWhiteSpace($Script:AutoSiteFilter)) {
+                    $Script:AutoSiteFilter = "*$subSite*"
+                    Write-Log -Level INFO -Message "Specific site collection detected in target URL ('$subSite'). Setting auto-filter: $Script:AutoSiteFilter"
+                }
+            }
+
             # Normalize root tenant url to admin url
             # e.g., 'https://contoso.sharepoint.com' -> 'https://contoso-admin.sharepoint.com'
             if ($hostName -notmatch '-admin\.sharepoint\.com$' -and $hostName -match '^([a-zA-Z0-9\-]+)\.sharepoint\.com$') {
-                $tenantName = $Matches[1]
+                $tenantName = $Matches[1].Replace('-my', '')
                 $adminHost = "${tenantName}-admin.sharepoint.com"
                 $trimmed = "https://$adminHost"
                 Write-Log -Level INFO -Message "Normalized tenant URL to SharePoint Admin URL: $trimmed"
@@ -1854,14 +1901,22 @@ process {
             return
         }
 
+        # Auto-apply AutoSiteFilter if SiteFilter was not explicitly passed
+        if ([string]::IsNullOrWhiteSpace($SiteFilter) -and -not [string]::IsNullOrWhiteSpace($Script:AutoSiteFilter)) {
+            $SiteFilter = $Script:AutoSiteFilter
+            Write-Log -Level INFO -Message "Targeting specific site collection filter: $SiteFilter"
+        }
+
         # Filter out personal sites (/personal/) unless explicitly requested
         $filteredSites = [System.Collections.Generic.List[object]]::new()
         foreach ($s in @($allSites)) {
-            if (-not $IncludePersonalSites -and $s.Url -like "*/personal/*") {
+            $sUrl = [string](Get-SafePropertyValue -InputObject $s -PropertyName "Url" -DefaultValue "")
+            $sTitle = [string](Get-SafePropertyValue -InputObject $s -PropertyName "Title" -DefaultValue "")
+            if (-not $IncludePersonalSites -and ($sUrl -like "*/personal/*" -or $sUrl -like "*-my.sharepoint.com*")) {
                 continue
             }
             if (-not [string]::IsNullOrWhiteSpace($SiteFilter)) {
-                if ($s.Url -notlike $SiteFilter -and $s.Title -notlike $SiteFilter) {
+                if ($sUrl -notlike $SiteFilter -and $sTitle -notlike $SiteFilter) {
                     continue
                 }
             }
@@ -1882,41 +1937,48 @@ process {
 
         foreach ($site in $filteredSites) {
             $counter++
+            $siteUrl   = [string](Get-SafePropertyValue -InputObject $site -PropertyName "Url" -DefaultValue "")
+            $siteTitle = [string](Get-SafePropertyValue -InputObject $site -PropertyName "Title" -DefaultValue "Untitled Site")
+
             $pct = [int](15 + (($counter / [Math]::Max($totalFound, 1)) * 70))
             Write-Progress -Activity "Auditing SharePoint Security Posture" `
-                -Status "Inspecting site $counter of $totalFound : $($site.Title)" `
+                -Status "Inspecting site $counter of $totalFound : $siteTitle" `
                 -PercentComplete $pct
 
-            Write-Log -Level INFO -Message "[$counter/$totalFound] Auditing site collection: $($site.Url)"
+            Write-Log -Level INFO -Message "[$counter/$totalFound] Auditing site collection: $siteUrl"
 
             # Resolve Site Owner & Admin Count
-            $ownerUpn = if ($site.Owner) { $site.Owner } else { "N/A" }
+            $ownerVal = Get-SafePropertyValue -InputObject $site -PropertyName "Owner" -DefaultValue "N/A"
+            $ownerUpn = if (-not [string]::IsNullOrWhiteSpace($ownerVal)) { [string]$ownerVal } else { "N/A" }
             $adminsCount = 0
             $adminList = [System.Collections.Generic.List[string]]::new()
             $hasUniquePerms = $false
 
             # Extract template & friendly name
-            $templateCode = if ($site.Template) { $site.Template } else { "Unknown" }
+            $templateCode = [string](Get-SafePropertyValue -InputObject $site -PropertyName "Template" -DefaultValue "Unknown")
             $friendlyTemplate = Get-FriendlyTemplateName -TemplateCode $templateCode
 
             # Extract sensitivity label
             $sensitivity = "None"
-            if ($site.SensitivityLabel) {
-                $sensitivity = $site.SensitivityLabel.ToString()
+            $labelRaw = Get-SafePropertyValue -InputObject $site -PropertyName "SensitivityLabel" -DefaultValue $null
+            if ($labelRaw) {
+                $sensitivity = $labelRaw.ToString()
             }
-            elseif ($site.PSObject.Properties['SensitivityLabelInfo'] -and $site.SensitivityLabelInfo) {
-                $sensitivity = $site.SensitivityLabelInfo.DisplayName
+            else {
+                $labelInfo = Get-SafePropertyValue -InputObject $site -PropertyName "SensitivityLabelInfo" -DefaultValue $null
+                if ($labelInfo -and $labelInfo.PSObject -and $labelInfo.PSObject.Properties['DisplayName']) {
+                    $sensitivity = $labelInfo.DisplayName
+                }
             }
 
             # Extract M365 Group Privacy
             $groupPrivacy = "N/A"
-            $groupId = if ($site.GroupId) { $site.GroupId.ToString() } else { $null }
+            $groupIdVal = Get-SafePropertyValue -InputObject $site -PropertyName "GroupId" -DefaultValue $null
+            $groupId = if ($groupIdVal) { $groupIdVal.ToString() } else { $null }
             if (-not [string]::IsNullOrWhiteSpace($groupId) -and $groupId -ne [Guid]::Empty.ToString()) {
-                if ($site.PSObject.Properties['ChannelType']) {
-                    $groupPrivacy = $site.ChannelType
-                }
-                elseif ($site.PSObject.Properties['StorageQuotaType']) {
-                    $groupPrivacy = "M365 Group"
+                $channelType = Get-SafePropertyValue -InputObject $site -PropertyName "ChannelType" -DefaultValue $null
+                if ($channelType) {
+                    $groupPrivacy = [string]$channelType
                 }
                 else {
                     $groupPrivacy = "Group-Connected"
@@ -1924,9 +1986,9 @@ process {
             }
 
             # Evaluate Site Collection Administrators and unique inheritance
-            if ($DetailedScan -or -not [string]::IsNullOrWhiteSpace($site.Owner)) {
+            if ($DetailedScan) {
                 try {
-                    $siteConn = Connect-PnPOnline -Url $site.Url -Interactive:$Interactive `
+                    $siteConn = Connect-PnPOnline -Url $siteUrl -Interactive:$Interactive `
                         -ClientId $Script:ActiveClientId -Tenant $Script:ActiveTenant -Thumbprint $CertificateThumbprint `
                         -ReturnConnection -ErrorAction SilentlyContinue
 
@@ -1935,50 +1997,72 @@ process {
                         if ($siteAdmins) {
                             $adminsCount = @($siteAdmins).Count
                             foreach ($adm in $siteAdmins) {
-                                $admName = if (-not [string]::IsNullOrWhiteSpace($adm.Email)) { $adm.Email } elseif (-not [string]::IsNullOrWhiteSpace($adm.LoginName)) { $adm.LoginName } else { $adm.Title }
-                                $adminList.Add($admName)
+                                $admEmail = [string](Get-SafePropertyValue -InputObject $adm -PropertyName "Email" -DefaultValue "")
+                                $admLogin = [string](Get-SafePropertyValue -InputObject $adm -PropertyName "LoginName" -DefaultValue "")
+                                $admTitle = [string](Get-SafePropertyValue -InputObject $adm -PropertyName "Title" -DefaultValue "")
+                                $admName  = if (-not [string]::IsNullOrWhiteSpace($admEmail)) { $admEmail } elseif (-not [string]::IsNullOrWhiteSpace($admLogin)) { $admLogin } else { $admTitle }
+                                if (-not [string]::IsNullOrWhiteSpace($admName)) {
+                                    $adminList.Add($admName)
+                                }
                             }
                         }
 
                         # Check broken inheritance on root web or primary document library
-                        if ($DetailedScan) {
-                            $rootWeb = Get-PnPWeb -Connection $siteConn -ErrorAction SilentlyContinue
-                            if ($rootWeb -and $rootWeb.HasUniqueRoleAssignments) {
-                                $hasUniquePerms = $true
-                            }
+                        $rootWeb = Get-PnPWeb -Connection $siteConn -ErrorAction SilentlyContinue
+                        $webInherit = Get-SafePropertyValue -InputObject $rootWeb -PropertyName "HasUniqueRoleAssignments" -DefaultValue $false
+                        if ($webInherit) {
+                            $hasUniquePerms = $true
+                        }
 
-                            $docLib = Get-PnPList -Identity "Documents" -Connection $siteConn -ErrorAction SilentlyContinue
-                            if ($docLib -and $docLib.HasUniqueRoleAssignments) {
-                                $hasUniquePerms = $true
-                            }
+                        $docLib = Get-PnPList -Identity "Documents" -Connection $siteConn -ErrorAction SilentlyContinue
+                        $docInherit = Get-SafePropertyValue -InputObject $docLib -PropertyName "HasUniqueRoleAssignments" -DefaultValue $false
+                        if ($docInherit) {
+                            $hasUniquePerms = $true
                         }
 
                         Disconnect-PnPOnline -Connection $siteConn -ErrorAction SilentlyContinue
                     }
                 }
                 catch {
-                    Write-Log -Level WARN -Message "Could not inspect site-level admins for '$($site.Url)': $($_.Exception.Message)"
+                    Write-Log -Level WARN -Message "Could not inspect site-level admins for '$siteUrl': $($_.Exception.Message)"
                 }
             }
 
-            # Fallback if admin inspection was not possible or returned 0
+            # Fallback if admin inspection was not performed or returned 0
             if ($adminsCount -eq 0 -and -not [string]::IsNullOrWhiteSpace($ownerUpn) -and $ownerUpn -ne "N/A") {
                 $adminsCount = 1
                 $adminList.Add($ownerUpn)
             }
 
             # Storage metrics
-            $storageUsedMB = if ($site.StorageUsageCurrent) { [int]$site.StorageUsageCurrent } else { 0 }
-            $storageLimitMB = if ($site.StorageMaximumLevel) { [int]$site.StorageMaximumLevel } else { 0 }
+            $storageUsedRaw  = Get-SafePropertyValue -InputObject $site -PropertyName "StorageUsageCurrent" -DefaultValue 0
+            $storageLimitRaw = Get-SafePropertyValue -InputObject $site -PropertyName "StorageMaximumLevel" -DefaultValue 0
+            $storageUsedMB   = if ($null -ne $storageUsedRaw) { [int]$storageUsedRaw } else { 0 }
+            $storageLimitMB  = if ($null -ne $storageLimitRaw) { [int]$storageLimitRaw } else { 0 }
 
             # Anonymous link expiration
-            $anonExpirationDays = if ($site.AnonymousLinkExpirationInDays) { [int]$site.AnonymousLinkExpirationInDays } else { 0 }
-            $sharingCapability = if ($site.SharingCapability) { $site.SharingCapability.ToString() } else { "Unknown" }
+            $anonExpRaw = Get-SafePropertyValue -InputObject $site -PropertyName "AnonymousLinkExpirationInDays" -DefaultValue 0
+            $anonExpirationDays = if ($null -ne $anonExpRaw) { [int]$anonExpRaw } else { 0 }
+
+            # Sharing capability
+            $sharingRaw = Get-SafePropertyValue -InputObject $site -PropertyName "SharingCapability" -DefaultValue "Unknown"
+            $sharingCapability = if ($sharingRaw) { $sharingRaw.ToString() } else { "Unknown" }
+
+            # LockState
+            $lockStateRaw = Get-SafePropertyValue -InputObject $site -PropertyName "LockState" -DefaultValue "Unlock"
+            $lockState = if ($lockStateRaw) { $lockStateRaw.ToString() } else { "Unlock" }
+
+            # Default sharing link
+            $defLinkTypeRaw = Get-SafePropertyValue -InputObject $site -PropertyName "DefaultSharingLinkType" -DefaultValue "N/A"
+            $defaultSharingLinkType = if ($defLinkTypeRaw) { $defLinkTypeRaw.ToString() } else { "N/A" }
+
+            $defLinkPermRaw = Get-SafePropertyValue -InputObject $site -PropertyName "DefaultLinkPermission" -DefaultValue "N/A"
+            $defaultLinkPermission = if ($defLinkPermRaw) { $defLinkPermRaw.ToString() } else { "N/A" }
 
             # Build intermediate record for risk evaluation
             $siteEvalData = [PSCustomObject]@{
-                Url                           = $site.Url
-                Title                         = if ($site.Title) { $site.Title } else { "Untitled Site" }
+                Url                           = $siteUrl
+                Title                         = $siteTitle
                 Owner                         = $ownerUpn
                 SiteAdminsCount               = $adminsCount
                 SharingCapability             = $sharingCapability
@@ -1996,8 +2080,8 @@ process {
             # Compile Full Audit Object
             $record = [PSCustomObject]@{
                 ScanTimestamp                 = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-                SiteTitle                     = $siteEvalData.Title
-                SiteUrl                       = $siteEvalData.Url
+                SiteTitle                     = $siteTitle
+                SiteUrl                       = $siteUrl
                 Template                      = $templateCode
                 TemplateFriendlyName          = $friendlyTemplate
                 Owner                         = $ownerUpn
@@ -2006,15 +2090,15 @@ process {
                 SharingCapability             = $sharingCapability
                 AnonymousLinksPermitted       = ($sharingCapability -eq 'ExternalUserAndGuestSharing')
                 AnonymousLinkExpirationInDays = $anonExpirationDays
-                DefaultSharingLinkType        = if ($site.DefaultSharingLinkType) { $site.DefaultSharingLinkType.ToString() } else { "N/A" }
-                DefaultLinkPermission         = if ($site.DefaultLinkPermission) { $site.DefaultLinkPermission.ToString() } else { "N/A" }
+                DefaultSharingLinkType        = $defaultSharingLinkType
+                DefaultLinkPermission         = $defaultLinkPermission
                 M365GroupId                   = $groupId
                 GroupPrivacy                  = $groupPrivacy
                 SensitivityLabel              = $sensitivity
                 HasBrokenInheritance          = $hasUniquePerms
                 StorageUsageMB                = $storageUsedMB
                 StorageLimitMB                = $storageLimitMB
-                LockState                     = if ($site.LockState) { $site.LockState.ToString() } else { "Unlock" }
+                LockState                     = $lockState
                 RiskLevel                     = $riskAssessment.RiskLevel
                 RiskScore                     = $riskAssessment.RiskScore
                 RiskFactors                   = $riskAssessment.RiskFactors
