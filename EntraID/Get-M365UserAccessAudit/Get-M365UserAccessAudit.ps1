@@ -149,6 +149,9 @@ begin {
     $Script:LogFilePath      = $null
     $Script:ActiveTenantId   = $null
     $Script:ActiveTenantName = $null
+    $Script:GeneratedHtmlPath = $null
+    $Script:GeneratedCsvPath  = $null
+    $Script:GeneratedJsonPath = $null
 
     # Synchronized caches to eliminate duplicate Graph API calls and prevent HTTP 429 throttling
     $Script:GroupCache               = [System.Collections.Hashtable]::Synchronized(@{})
@@ -1321,6 +1324,7 @@ Log File Path         : $Script:LogFilePath
                 else {
                     $Records | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -Force
                 }
+                $Script:GeneratedCsvPath = $csvPath
                 Write-Log -Message "CSV Report generated: $csvPath" -Level 'SUCCESS' -Component 'REPORT'
             }
             catch {
@@ -1336,6 +1340,7 @@ Log File Path         : $Script:LogFilePath
             try {
                 $jsonContent = $Records | ConvertTo-Json -Depth 5
                 [System.IO.File]::WriteAllText($jsonPath, $jsonContent, [System.Text.Encoding]::UTF8)
+                $Script:GeneratedJsonPath = $jsonPath
                 Write-Log -Message "JSON Report generated: $jsonPath" -Level 'SUCCESS' -Component 'REPORT'
             }
             catch {
@@ -1350,16 +1355,38 @@ Log File Path         : $Script:LogFilePath
             $htmlPath = Join-Path -Path $DestinationPath -ChildPath "${baseFileName}.html"
             try {
                 $totalCount      = $Records.Count
-                $securityGroups  = ($Records | Where-Object { $_.ResourceType -in @('Security Group', 'Mail-Enabled Security Group') }).Count
-                $m365Groups      = ($Records | Where-Object { $_.ResourceType -eq 'M365 Group' }).Count
-                $directoryRoles  = ($Records | Where-Object { $_.ResourceType -eq 'Directory Role' }).Count
-                $teamsChannels   = ($Records | Where-Object { $_.Workload -eq 'Microsoft Teams' }).Count
-                $spoCount        = ($Records | Where-Object { $_.Workload -eq 'SharePoint Online' }).Count
-                $exoCount        = ($Records | Where-Object { $_.Workload -eq 'Exchange Online' -and $_.ResourceType -eq 'Mailbox' }).Count
+                $securityGroups  = @($Records | Where-Object { $_.ResourceType -in @('Security Group', 'Mail-Enabled Security Group') }).Count
+                $m365Groups      = @($Records | Where-Object { $_.ResourceType -eq 'M365 Group' }).Count
+                $directoryRoles  = @($Records | Where-Object { $_.ResourceType -eq 'Directory Role' }).Count
+                $teamsChannels   = @($Records | Where-Object { $_.Workload -eq 'Microsoft Teams' }).Count
+                $spoCount        = @($Records | Where-Object { $_.Workload -eq 'SharePoint Online' }).Count
+                $exoCount        = @($Records | Where-Object { $_.Workload -eq 'Exchange Online' -and $_.ResourceType -eq 'Mailbox' }).Count
 
-                $uniqueUsers     = ($Records | Select-Object -ExpandProperty UserPrincipalName -Unique).Count
+                $uniqueUsersList = @($Records | Select-Object -ExpandProperty UserPrincipalName -Unique)
+                $uniqueUsers     = $uniqueUsersList.Count
+
+                $userInfoBlock = ""
+                if ($uniqueUsers -eq 1 -and $Records.Count -gt 0) {
+                    $uSample = $Records[0]
+                    $statusBadge = if ($uSample.AccountEnabled) { "<span class='badge badge-member'>Enabled</span>" } else { "<span class='badge badge-danger'>Disabled</span>" }
+                    $avatarInitial = if (-not [string]::IsNullOrWhiteSpace($uSample.UserDisplayName)) { $uSample.UserDisplayName.Substring(0,1).ToUpper() } else { "U" }
+                    $userInfoBlock = @"
+        <section class="user-hero-card">
+            <div class="user-hero-avatar">$avatarInitial</div>
+            <div class="user-hero-info">
+                <h2>$([System.Net.WebUtility]::HtmlEncode($uSample.UserDisplayName))</h2>
+                <div class="user-hero-tags">
+                    <span>UPN: <strong>$([System.Net.WebUtility]::HtmlEncode($uSample.UserPrincipalName))</strong></span>
+                    <span>Account: $statusBadge</span>
+                    <span>Authority: <strong>$($uSample.SyncSource)</strong></span>
+                </div>
+            </div>
+        </section>
+"@
+                }
 
                 $tableRowsBuilder = [System.Text.StringBuilder]::new()
+                $rowNum = 1
                 foreach ($r in $Records) {
                     $workloadClass = switch ($r.Workload) {
                         'Entra ID'          { 'badge-entra' }
@@ -1409,13 +1436,14 @@ Log File Path         : $Script:LogFilePath
 
                     $rowHtml = @"
 <tr>
-    <td><strong>$([System.Web.HttpUtility]::HtmlEncode($r.UserDisplayName))</strong><br><small class='text-muted'>$([System.Web.HttpUtility]::HtmlEncode($r.UserPrincipalName))</small></td>
+    <td class='text-center text-muted mono'>$rowNum</td>
+    <td><strong>$([System.Net.WebUtility]::HtmlEncode($r.UserDisplayName))</strong><br><small class='text-muted'>$([System.Net.WebUtility]::HtmlEncode($r.UserPrincipalName))</small></td>
     <td><span class='badge $workloadClass'>$($r.Workload)</span></td>
-    <td>$([System.Web.HttpUtility]::HtmlEncode($r.ResourceType))</td>
-    <td><strong>$([System.Web.HttpUtility]::HtmlEncode($r.ResourceName))</strong><br><small class='text-muted mono'>$($r.ResourceId)</small></td>
+    <td>$([System.Net.WebUtility]::HtmlEncode($r.ResourceType))</td>
+    <td><strong>$([System.Net.WebUtility]::HtmlEncode($r.ResourceName))</strong><br><small class='text-muted mono'>$($r.ResourceId)</small></td>
     <td><span class='badge $accessBadgeClass'>$($r.AccessLevel)</span></td>
     <td><span class='badge $assignBadgeClass'>$($r.AssignmentMethod)</span></td>
-    <td>$([System.Web.HttpUtility]::HtmlEncode($r.GrantedViaGroup))</td>
+    <td>$([System.Net.WebUtility]::HtmlEncode($r.GrantedViaGroup))</td>
     <td>$($r.GroupMembershipType)</td>
     <td class='text-center'>$roleAssignBadge</td>
     <td class='text-center'>$syncBadge</td>
@@ -1423,7 +1451,10 @@ Log File Path         : $Script:LogFilePath
 </tr>
 "@
                     $null = $tableRowsBuilder.AppendLine($rowHtml)
+                    $rowNum++
                 }
+
+                $Script:GeneratedHtmlPath = $htmlPath
 
                 $htmlDocument = @"
 <!DOCTYPE html>
@@ -1747,6 +1778,58 @@ Log File Path         : $Script:LogFilePath
             color: var(--primary);
             text-decoration: none;
         }
+
+        .user-hero-card {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+            border: 1px solid var(--surface-border);
+            border-left: 4px solid var(--primary);
+            border-radius: 12px;
+            padding: 16px 24px;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .user-hero-avatar {
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-indigo) 100%);
+            color: #0f172a;
+            font-size: 1.5rem;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 10px rgba(56, 189, 248, 0.3);
+            flex-shrink: 0;
+        }
+
+        .user-hero-info h2 {
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 4px;
+        }
+
+        .user-hero-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .user-hero-tags span {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .user-hero-tags strong {
+            color: var(--text-main);
+        }
     </style>
 </head>
 <body>
@@ -1768,6 +1851,8 @@ Log File Path         : $Script:LogFilePath
                 <div>Audited Users: <strong>$uniqueUsers</strong></div>
             </div>
         </header>
+
+$userInfoBlock
 
         <section class="kpi-grid">
             <div class="kpi-card blue">
@@ -1818,16 +1903,17 @@ Log File Path         : $Script:LogFilePath
             <table id="auditTable">
                 <thead>
                     <tr>
-                        <th onclick="sortTable(0)">User &#x21C5;</th>
-                        <th onclick="sortTable(1)">Workload &#x21C5;</th>
-                        <th onclick="sortTable(2)">Resource Type &#x21C5;</th>
-                        <th onclick="sortTable(3)">Resource Name & ID &#x21C5;</th>
-                        <th onclick="sortTable(4)">Access Level &#x21C5;</th>
-                        <th onclick="sortTable(5)">Assignment &#x21C5;</th>
-                        <th onclick="sortTable(6)">Granted Via &#x21C5;</th>
-                        <th onclick="sortTable(7)">Group Type &#x21C5;</th>
-                        <th onclick="sortTable(8)" class="text-center">Role Assignable &#x21C5;</th>
-                        <th onclick="sortTable(9)" class="text-center">Sync Source &#x21C5;</th>
+                        <th onclick="sortTable(0)" class="text-center" style="width: 50px;">Nr &#x21C5;</th>
+                        <th onclick="sortTable(1)">User &#x21C5;</th>
+                        <th onclick="sortTable(2)">Workload &#x21C5;</th>
+                        <th onclick="sortTable(3)">Resource Type &#x21C5;</th>
+                        <th onclick="sortTable(4)">Resource Name & ID &#x21C5;</th>
+                        <th onclick="sortTable(5)">Access Level &#x21C5;</th>
+                        <th onclick="sortTable(6)">Assignment &#x21C5;</th>
+                        <th onclick="sortTable(7)">Granted Via &#x21C5;</th>
+                        <th onclick="sortTable(8)">Group Type &#x21C5;</th>
+                        <th onclick="sortTable(9)" class="text-center">Role Assignable &#x21C5;</th>
+                        <th onclick="sortTable(10)" class="text-center">Sync Source &#x21C5;</th>
                         <th>Resource URL</th>
                     </tr>
                 </thead>
@@ -1858,7 +1944,7 @@ $($tableRowsBuilder.ToString())
 
             rows.forEach(row => {
                 const text = row.textContent.toLowerCase();
-                const workloadCell = row.cells[1] ? row.cells[1].textContent.trim() : '';
+                const workloadCell = row.cells[2] ? row.cells[2].textContent.trim() : '';
 
                 const matchesSearch = query === '' || text.includes(query);
                 const matchesFilter = (activeFilter === 'all') || (workloadCell === activeFilter);
@@ -1919,7 +2005,7 @@ $($tableRowsBuilder.ToString())
     }
 
     # ==============================================================================
-    # SUMMARY DISPLAY (Console Format-Table)
+    # SUMMARY DISPLAY (Console Human-Readable Categorized Report & Metrics)
     # ==============================================================================
     function Show-AuditSummary {
         [CmdletBinding()]
@@ -1932,12 +2018,180 @@ $($tableRowsBuilder.ToString())
             [string]$ReportsDir,
 
             [Parameter(Mandatory = $true)]
-            [string]$LogFile
+            [string]$LogFile,
+
+            [Parameter(Mandatory = $false)]
+            [string]$HtmlFilePath,
+
+            [Parameter(Mandatory = $false)]
+            [string]$CsvFilePath,
+
+            [Parameter(Mandatory = $false)]
+            [switch]$ExchangeAudited
         )
 
         Write-Host ""
         Write-Host "================================================================================" -ForegroundColor Cyan
-        Write-Host " EXECUTIVE AUDIT SUMMARY" -ForegroundColor Yellow
+        Write-Host " MICROSOFT 365 USER ACCESS AUDIT - EXECUTIVE & CONSOLE REPORT" -ForegroundColor Yellow
+        Write-Host "================================================================================" -ForegroundColor Cyan
+
+        $uniqueUsers = @($Records | Select-Object -ExpandProperty UserPrincipalName -Unique)
+        if ($uniqueUsers.Count -eq 1) {
+            $sample = $Records[0]
+            $statusStr = if ($sample.AccountEnabled) { "Active / Enabled" } else { "Disabled" }
+            Write-Host "Audited User    : " -NoNewline -ForegroundColor White
+            Write-Host "$($sample.UserDisplayName) ($($sample.UserPrincipalName))" -ForegroundColor Cyan
+            Write-Host "Account Status  : " -NoNewline -ForegroundColor White
+            Write-Host "$statusStr" -ForegroundColor (if ($sample.AccountEnabled) { "Green" } else { "Red" }) -NoNewline
+            Write-Host " | Sync Authority: " -NoNewline -ForegroundColor White
+            Write-Host "$($sample.SyncSource)" -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "Audited Users   : " -NoNewline -ForegroundColor White
+            Write-Host "$($uniqueUsers.Count) user(s): $($uniqueUsers -join ', ')" -ForegroundColor Cyan
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($Script:ActiveTenantName)) {
+            Write-Host "Tenant Name     : " -NoNewline -ForegroundColor White
+            Write-Host "$($Script:ActiveTenantName)" -ForegroundColor Magenta -NoNewline
+            Write-Host " ($($Script:ActiveTenantId))" -ForegroundColor DarkGray
+        }
+        Write-Host "Total Records   : " -NoNewline -ForegroundColor White
+        Write-Host "$($Records.Count)" -ForegroundColor Green
+        Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+
+        # --------------------------------------------------------------------------
+        # [1] ENTRA ID DIRECTORY ROLES & PRIVILEGED ACCESS
+        # --------------------------------------------------------------------------
+        $roles = @($Records | Where-Object { $_.ResourceType -in @('Directory Role', 'PIM Eligible Role') })
+        Write-Host "`n[1] ENTRA ID DIRECTORY ROLES & PRIVILEGED ACCESS ($($roles.Count))" -ForegroundColor (if ($roles.Count -gt 0) { "Red" } else { "Green" })
+        if ($roles.Count -gt 0) {
+            $rIdx = 0
+            $roleRows = foreach ($item in $roles) {
+                $rIdx++
+                [PSCustomObject]@{
+                    '#'           = $rIdx
+                    'Role Name'   = $item.ResourceName
+                    'Access Level'= $item.AccessLevel
+                    'Assignment'  = $item.AssignmentMethod
+                    'Role Assign' = if ($item.IsRoleAssignable) { 'Yes' } else { 'No' }
+                    'Granted Via' = $item.GrantedViaGroup
+                }
+            }
+            $roleRows | Format-Table -AutoSize | Out-Host
+        }
+        else {
+            Write-Host "    [i] No Entra ID Directory Roles or PIM privileged assignments (Standard User)." -ForegroundColor DarkGray
+        }
+
+        # --------------------------------------------------------------------------
+        # [2] MICROSOFT TEAMS & CHANNELS
+        # --------------------------------------------------------------------------
+        $teams = @($Records | Where-Object { $_.Workload -eq 'Microsoft Teams' })
+        Write-Host "`n[2] MICROSOFT TEAMS & CHANNELS ($($teams.Count))" -ForegroundColor Magenta
+        if ($teams.Count -gt 0) {
+            $tIdx = 0
+            $teamRows = foreach ($item in $teams) {
+                $tIdx++
+                [PSCustomObject]@{
+                    '#'             = $tIdx
+                    'Team / Channel'= $item.ResourceName
+                    'Type'          = $item.ResourceType
+                    'Role / Access' = $item.AccessLevel
+                    'Assignment'    = $item.AssignmentMethod
+                }
+            }
+            $teamRows | Format-Table -AutoSize | Out-Host
+        }
+        else {
+            Write-Host "    [i] No Microsoft Teams or Channel memberships found." -ForegroundColor DarkGray
+        }
+
+        # --------------------------------------------------------------------------
+        # [3] SHAREPOINT ONLINE SITE COLLECTIONS & PERMISSIONS
+        # --------------------------------------------------------------------------
+        $spo = @($Records | Where-Object { $_.Workload -eq 'SharePoint Online' })
+        Write-Host "`n[3] SHAREPOINT ONLINE SITE COLLECTIONS & PERMISSIONS ($($spo.Count))" -ForegroundColor Cyan
+        if ($spo.Count -gt 0) {
+            $sIdx = 0
+            $spoRows = foreach ($item in $spo) {
+                $sIdx++
+                [PSCustomObject]@{
+                    '#'           = $sIdx
+                    'Site Name'   = $item.ResourceName
+                    'Access Level'= $item.AccessLevel
+                    'Assignment'  = $item.AssignmentMethod
+                    'Granted Via' = $item.GrantedViaGroup
+                    'Site URL'    = $item.ResourceUrl
+                }
+            }
+            $spoRows | Format-Table -AutoSize | Out-Host
+        }
+        else {
+            Write-Host "    [i] No SharePoint Online site associations found." -ForegroundColor DarkGray
+        }
+
+        # --------------------------------------------------------------------------
+        # [4] ENTRA ID & M365 GROUPS (SECURITY, UNIFIED, DISTRIBUTION)
+        # --------------------------------------------------------------------------
+        $groups = @($Records | Where-Object {
+            $_.ResourceType -in @('Security Group', 'M365 Group', 'Mail-Enabled Security Group', 'Distribution Group', 'Dynamic Security Group')
+        })
+        Write-Host "`n[4] ENTRA ID & M365 GROUPS ($($groups.Count))" -ForegroundColor Yellow
+        if ($groups.Count -gt 0) {
+            $gIdx = 0
+            $groupRows = foreach ($item in $groups) {
+                $gIdx++
+                [PSCustomObject]@{
+                    '#'           = $gIdx
+                    'Group Name'  = $item.ResourceName
+                    'Group Type'  = $item.ResourceType
+                    'Role / Access'= $item.AccessLevel
+                    'Assignment'  = $item.AssignmentMethod
+                    'Sync Source' = $item.SyncSource
+                    'Role Assign' = if ($item.IsRoleAssignable) { 'Yes' } else { 'No' }
+                }
+            }
+            $groupRows | Format-Table -AutoSize | Out-Host
+        }
+        else {
+            Write-Host "    [i] No group memberships found." -ForegroundColor DarkGray
+        }
+
+        # --------------------------------------------------------------------------
+        # [5] EXCHANGE ONLINE MAILBOX PERMISSIONS
+        # --------------------------------------------------------------------------
+        if ($ExchangeAudited) {
+            $exo = @($Records | Where-Object { $_.Workload -eq 'Exchange Online' -and $_.ResourceType -eq 'Mailbox' })
+            Write-Host "`n[5] EXCHANGE ONLINE MAILBOX PERMISSIONS ($($exo.Count))" -ForegroundColor DarkYellow
+            if ($exo.Count -gt 0) {
+                $eIdx = 0
+                $exoRows = foreach ($item in $exo) {
+                    $eIdx++
+                    [PSCustomObject]@{
+                        '#'           = $eIdx
+                        'Mailbox'     = $item.ResourceName
+                        'Permission'  = $item.AccessLevel
+                        'Assignment'  = $item.AssignmentMethod
+                        'Granted Via' = $item.GrantedViaGroup
+                    }
+                }
+                $exoRows | Format-Table -AutoSize | Out-Host
+            }
+            else {
+                Write-Host "    [i] No delegated mailbox permissions (FullAccess, SendAs, SendOnBehalf) found." -ForegroundColor Green
+            }
+        }
+        else {
+            Write-Host "`n[5] EXCHANGE ONLINE MAILBOX PERMISSIONS" -ForegroundColor DarkGray
+            Write-Host "    [i] Exchange Online audit skipped (use -IncludeExchangePermissions to audit mailbox delegations)." -ForegroundColor DarkGray
+        }
+
+        # --------------------------------------------------------------------------
+        # [6] EXECUTIVE METRICS & ARTIFACT DIRECTORY
+        # --------------------------------------------------------------------------
+        Write-Host "`n================================================================================" -ForegroundColor Cyan
+        Write-Host " EXECUTIVE METRICS & ARTIFACT SUMMARY" -ForegroundColor Cyan
         Write-Host "================================================================================" -ForegroundColor Cyan
 
         $summary = $Records | Group-Object Workload, ResourceType | Select-Object @{
@@ -1954,10 +2208,15 @@ $($tableRowsBuilder.ToString())
         $summary | Format-Table -AutoSize | Out-Host
 
         Write-Host "Total Records Audited : $($Records.Count)" -ForegroundColor Green
+        if (-not [string]::IsNullOrWhiteSpace($HtmlFilePath)) {
+            Write-Host "Interactive HTML      : $HtmlFilePath" -ForegroundColor Cyan
+        }
+        if (-not [string]::IsNullOrWhiteSpace($CsvFilePath)) {
+            Write-Host "CSV Export            : $CsvFilePath" -ForegroundColor Cyan
+        }
         Write-Host "Reports Directory     : $ReportsDir" -ForegroundColor Green
         Write-Host "Execution Log Path    : $LogFile" -ForegroundColor Green
-        Write-Host "================================================================================" -ForegroundColor Cyan
-        Write-Host ""
+        Write-Host "================================================================================`n" -ForegroundColor Cyan
     }
 
     # --------------------------------------------------------------------------
@@ -2012,7 +2271,10 @@ end {
 
         Show-AuditSummary -Records $Script:AllAuditRecords `
                           -ReportsDir $OutputPath `
-                          -LogFile $Script:LogFilePath
+                          -LogFile $Script:LogFilePath `
+                          -HtmlFilePath $Script:GeneratedHtmlPath `
+                          -CsvFilePath $Script:GeneratedCsvPath `
+                          -ExchangeAudited:$IncludeExchangePermissions
     }
     else {
         Write-Log -Message "No audit records were produced during this execution." -Level 'WARN' -Component 'AUDIT'
