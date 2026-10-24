@@ -1,0 +1,1805 @@
+﻿<#
+.SYNOPSIS
+    Audit-SharePointSecuritySummary - Audits SharePoint Online security posture and generates executive reports.
+
+.DESCRIPTION
+    Audit-SharePointSecuritySummary is an enterprise-grade PowerShell automation tool engineered for
+    Microsoft 365 administrators, Information Security Officers, and compliance auditors.
+
+    The script performs comprehensive security posture inspection across SharePoint Online site collections:
+    - External Sharing Governance: Audits site sharing capabilities (Disabled, Existing Guests, Anyone/Anonymous links).
+    - Anonymous & Guest Link Analysis: Identifies unrestricted anyone links and lack of expiration policies.
+    - Site Ownership Footprint: Flags orphaned site collections (0 active owners/admins) and excessive administrators (>5).
+    - Permission Inheritance & Unique Access: Detects broken inheritance on site webs, lists, and document libraries.
+    - Sensitivity Labels & Group Governance: Captures Microsoft 365 Group privacy (Public vs Private) and sensitivity labels.
+    - Multi-Tiered Risk Engine: Computes mathematical risk scores and categorizes sites into Critical, High, Medium, and Low risk.
+    - Executive Reporting: Generates an interactive colorized console dashboard, raw CSV remediation dataset,
+      and a standalone, responsive HTML executive report with interactive filtering and remediation guidance.
+    - Pipeline Support: Emits strongly-typed [PSCustomObject] records to the PowerShell pipeline for downstream automation.
+    - Dual Authentication: Supports interactive browser OAuth with MFA and non-interactive Entra ID App-Only certificate authentication.
+    - Enterprise Logging: Maintains timestamped execution logs in C:\Logs\ with automatic fallback.
+
+.PARAMETER AdminUrl
+    The SharePoint Online Admin URL (e.g. 'https://contoso-admin.sharepoint.com').
+    Can also accept the root tenant URL (e.g. 'https://contoso.sharepoint.com'), which will be automatically normalized.
+
+.PARAMETER ClientId
+    Microsoft Entra ID Application (Client) ID for unattended App-Only daemon authentication.
+
+.PARAMETER TenantId
+    Microsoft Entra ID Directory (Tenant) ID or tenant domain (e.g. 'contoso.onmicrosoft.com').
+
+.PARAMETER CertificateThumbprint
+    The thumbprint of an X.509 certificate installed in Cert:\CurrentUser\My or Cert:\LocalMachine\My
+    used for unattended App-Only authentication.
+
+.PARAMETER CertificatePath
+    File system path to an X.509 certificate file (.pfx or .cer) for App-Only authentication.
+
+.PARAMETER CertificatePassword
+    Optional SecureString password for the certificate file if password-protected.
+
+.PARAMETER Interactive
+    Switch parameter. Initiates interactive modern web browser authentication prompt with MFA support.
+
+.PARAMETER OutputPath
+    Directory path where CSV and HTML reports will be saved. Defaults to 'C:\Logs'.
+
+.PARAMETER GenerateHtmlReport
+    Switch parameter. Generates a standalone, responsive HTML executive summary dashboard.
+
+.PARAMETER LogPath
+    Directory path for transcript and execution logs. Defaults to 'C:\Logs'.
+
+.PARAMETER SiteFilter
+    Optional wildcard or exact string filter to audit specific site collections by URL or Title (e.g. '*finance*', 'https://contoso.sharepoint.com/sites/hr').
+
+.PARAMETER IncludePersonalSites
+    Switch parameter. When specified, personal OneDrive for Business site collections ('/personal/') are included.
+    By default, personal sites are excluded to focus on organizational SharePoint sites.
+
+.PARAMETER DetailedScan
+    Switch parameter. Performs deeper sub-inspection of individual site document libraries and lists for broken inheritance.
+
+.PARAMETER PassThru
+    Switch parameter. Emits the custom audit PSCustomObject collection to the PowerShell pipeline for downstream processing.
+
+.PARAMETER Force
+    Switch parameter. Bypasses interactive prompts and confirmations for automated execution.
+
+.PARAMETER Help
+    Displays the built-in help screen, parameter guidance, and usage examples, then terminates execution.
+    Aliases: -h.
+
+.EXAMPLE
+    # 1. Interactive audit of all tenant sites with HTML executive dashboard
+    .\Audit-SharePointSecuritySummary.ps1 -AdminUrl "https://contoso-admin.sharepoint.com" -Interactive -GenerateHtmlReport
+
+.EXAMPLE
+    # 2. Automated daemon audit using Entra ID App Registration and certificate authentication
+    .\Audit-SharePointSecuritySummary.ps1 -AdminUrl "https://contoso-admin.sharepoint.com" `
+        -ClientId "00000000-0000-0000-0000-000000000000" `
+        -TenantId "11111111-1111-1111-1111-111111111111" `
+        -CertificateThumbprint "A1B2C3D4E5F67890123456789ABCDEF012345678" `
+        -OutputPath "C:\Reports" -GenerateHtmlReport
+
+.EXAMPLE
+    # 3. Targeted audit filtering specific site collections, piping results to Out-GridView
+    .\Audit-SharePointSecuritySummary.ps1 -AdminUrl "https://contoso-admin.sharepoint.com" -Interactive `
+        -SiteFilter "*teams*" -PassThru | Out-GridView
+
+.EXAMPLE
+    # 4. Pipeline filtering for high-risk sites only
+    $riskySites = .\Audit-SharePointSecuritySummary.ps1 -AdminUrl "https://contoso-admin.sharepoint.com" -Interactive -PassThru |
+        Where-Object { $_.RiskLevel -in @('Critical', 'High') }
+
+.NOTES
+    Author: Roman Pindela
+    Email: roman.pindela@gmail.com
+    GitHub: romanpindela
+    Version: 1.0.0
+    Last Modified: 2026-10-24
+    Standards: CleanCode & PSScriptAnalyzer Zero-Warning Standard
+#>
+
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+param(
+    [Parameter(Mandatory = $false, ValueFromPipeline = $true, Position = 0)]
+    [Alias('AdminSiteUrl', 'Url')]
+    [string]$AdminUrl,
+
+    [Parameter(Mandatory = $false)]
+    [Alias('AppId')]
+    [string]$ClientId,
+
+    [Parameter(Mandatory = $false)]
+    [Alias('Tenant')]
+    [string]$TenantId,
+
+    [Parameter(Mandatory = $false)]
+    [Alias('Thumbprint')]
+    [string]$CertificateThumbprint,
+
+    [Parameter(Mandatory = $false)]
+    [string]$CertificatePath,
+
+    [Parameter(Mandatory = $false)]
+    [System.Security.SecureString]$CertificatePassword,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Interactive,
+
+    [Parameter(Mandatory = $false)]
+    [Alias('ReportDir', 'OutDir')]
+    [string]$OutputPath = 'C:\Logs',
+
+    [Parameter(Mandatory = $false)]
+    [Alias('Html')]
+    [switch]$GenerateHtmlReport,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LogPath = 'C:\Logs',
+
+    [Parameter(Mandatory = $false)]
+    [string]$SiteFilter,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$IncludePersonalSites,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$DetailedScan,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$PassThru,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Force,
+
+    [Parameter(Mandatory = $false)]
+    [Alias('h')]
+    [switch]$Help
+)
+
+begin {
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+
+    # ==============================================================================
+    # SCRIPT METADATA & TELEMETRY
+    # ==============================================================================
+    $Script:Metadata = @{
+        Title        = "Audit-SharePointSecuritySummary.ps1"
+        Version      = "1.0.0"
+        Author       = "Roman Pindela"
+        Email        = "roman.pindela@gmail.com"
+        GitHub       = "https://github.com/romanpindela"
+        LastModified = "2026-10-24"
+        RequiredMod  = "PnP.PowerShell"
+    }
+
+    $Script:StartTime        = Get-Date
+    $Script:LogFilePath      = $null
+    $Script:ActiveConnection = $null
+    $Script:ScriptFilePath   = if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
+        $PSCommandPath
+    }
+    elseif ($MyInvocation.MyCommand -and -not [string]::IsNullOrWhiteSpace($MyInvocation.MyCommand.Path)) {
+        $MyInvocation.MyCommand.Path
+    }
+    else {
+        $null
+    }
+
+    # ==============================================================================
+    # ZERO-PARAMETER & -HELP SAFETY GUARD (Specification Section 3.3)
+    # ==============================================================================
+    function Show-ScriptHelp {
+        [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        param()
+
+        Write-Host "================================================================================" -ForegroundColor Cyan
+        Write-Host " SCRIPT  : $($Script:Metadata.Title) (v$($Script:Metadata.Version))" -ForegroundColor Cyan
+        Write-Host " AUTHOR  : $($Script:Metadata.Author) <$($Script:Metadata.Email)>" -ForegroundColor Cyan
+        Write-Host " GITHUB  : $($Script:Metadata.GitHub)" -ForegroundColor Cyan
+        Write-Host "================================================================================" -ForegroundColor Cyan
+        Write-Host "`nDESCRIPTION:" -ForegroundColor White
+        Write-Host "    Audits SharePoint Online security posture across tenant site collections." -ForegroundColor Gray
+        Write-Host "    Evaluates external sharing governance, orphaned site collections, excessive admin" -ForegroundColor Gray
+        Write-Host "    assignments, anonymous sharing links, and broken permission inheritance." -ForegroundColor Gray
+        Write-Host "    Generates an executive console dashboard, CSV dataset, and standalone HTML report." -ForegroundColor Gray
+        Write-Host "`nPARAMETERS:" -ForegroundColor Yellow
+        Write-Host "    -AdminUrl               [String]       SharePoint Online Admin URL (e.g. 'https://contoso-admin.sharepoint.com')." -ForegroundColor Gray
+        Write-Host "    -Interactive            [Switch]       Initiate interactive browser OAuth authentication with MFA." -ForegroundColor Gray
+        Write-Host "    -ClientId               [String]       Microsoft Entra ID Application (Client) ID for App-Only auth." -ForegroundColor Gray
+        Write-Host "    -TenantId               [String]       Microsoft Entra ID Tenant ID or domain (contoso.onmicrosoft.com)." -ForegroundColor Gray
+        Write-Host "    -CertificateThumbprint  [String]       X.509 Certificate thumbprint for unattended daemon auth." -ForegroundColor Gray
+        Write-Host "    -CertificatePath        [String]       Path to certificate (.pfx/.cer) file." -ForegroundColor Gray
+        Write-Host "    -OutputPath             [String]       Target directory for CSV and HTML reports (Default: 'C:\Logs')." -ForegroundColor Gray
+        Write-Host "    -GenerateHtmlReport     [Switch]       Generate standalone HTML executive summary report." -ForegroundColor Gray
+        Write-Host "    -LogPath                [String]       Target directory for transcript logs (Default: 'C:\Logs')." -ForegroundColor Gray
+        Write-Host "    -SiteFilter             [String]       Filter sites by URL or Title wildcard (e.g. '*finance*')." -ForegroundColor Gray
+        Write-Host "    -IncludePersonalSites   [Switch]       Include OneDrive for Business (/personal/) sites." -ForegroundColor Gray
+        Write-Host "    -DetailedScan           [Switch]       Perform deeper inspection of document library inheritance." -ForegroundColor Gray
+        Write-Host "    -PassThru               [Switch]       Emit [PSCustomObject] collection to pipeline." -ForegroundColor Gray
+        Write-Host "    -Help (-h)              [Switch]       Display this help documentation and exit." -ForegroundColor Gray
+        Write-Host "`nEXAMPLES:" -ForegroundColor Yellow
+        Write-Host "    .\Audit-SharePointSecuritySummary.ps1 -AdminUrl 'https://contoso-admin.sharepoint.com' -Interactive -GenerateHtmlReport" -ForegroundColor Green
+        Write-Host "    .\Audit-SharePointSecuritySummary.ps1 -AdminUrl 'https://contoso-admin.sharepoint.com' -Interactive -SiteFilter '*hr*' -PassThru | Out-GridView" -ForegroundColor Green
+        Write-Host "    .\Audit-SharePointSecuritySummary.ps1 -AdminUrl 'https://contoso-admin.sharepoint.com' -ClientId '<AppId>' -TenantId '<TenantId>' -CertificateThumbprint '<Thumbprint>' -OutputPath 'C:\Reports' -GenerateHtmlReport" -ForegroundColor Green
+        Write-Host "`n================================================================================`n" -ForegroundColor Cyan
+    }
+
+    if ($Help -or ($PSBoundParameters.Count -eq 0)) {
+        Show-ScriptHelp
+        exit 0
+    }
+
+    # ==============================================================================
+    # POWERSHELL VERSION CHECK & AUTOMATIC RELAUNCH IN PWSH (PowerShell 7+)
+    # ==============================================================================
+    function Assert-PowerShellVersion {
+        [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        param(
+            [Parameter(Mandatory = $false)]
+            [System.Collections.IDictionary]$BoundParams
+        )
+
+        if ($PSVersionTable.PSVersion.Major -lt 7) {
+            $pwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+            if ($pwsh -and (-not [string]::IsNullOrWhiteSpace($Script:ScriptFilePath))) {
+                Write-Host "[*] PnP.PowerShell requires PowerShell 7+ (Core). Current host: Windows PowerShell $($PSVersionTable.PSVersion)" -ForegroundColor Cyan
+                Write-Host "[*] Automatically relaunching script in PowerShell 7 (pwsh.exe)...`n" -ForegroundColor Yellow
+
+                $forwardArgs = [System.Collections.Generic.List[string]]::new()
+                $escapedScriptPath = $Script:ScriptFilePath.Replace('"', '`"')
+                $forwardArgs.Add("& `"$escapedScriptPath`"")
+
+                if ($BoundParams) {
+                    foreach ($key in $BoundParams.Keys) {
+                        $val = $BoundParams[$key]
+                        if ($val -is [switch] -or $val -is [System.Management.Automation.SwitchParameter]) {
+                            if ($val.IsPresent) {
+                                $forwardArgs.Add("-$key")
+                            }
+                        }
+                        elseif ($val -is [bool]) {
+                            $forwardArgs.Add("-$key")
+                            $forwardArgs.Add("`$$val")
+                        }
+                        else {
+                            $forwardArgs.Add("-$key")
+                            $escapedVal = $val.ToString().Replace('"', '`"')
+                            $forwardArgs.Add("`"$escapedVal`"")
+                        }
+                    }
+                }
+
+                $cmdBlock = $forwardArgs -join " "
+                $bytes = [System.Text.Encoding]::Unicode.GetBytes($cmdBlock)
+                $encoded = [System.Convert]::ToBase64String($bytes)
+                $process = Start-Process -FilePath $pwsh.Source -ArgumentList "-NoProfile -EncodedCommand $encoded" -Wait -PassThru -NoNewWindow
+                exit $process.ExitCode
+            }
+            elseif (-not $pwsh) {
+                $ps7Msg = @"
+PnP.PowerShell requires PowerShell 7.4.0+ (pwsh.exe).
+Current environment is Windows PowerShell $($PSVersionTable.PSVersion).
+Please install PowerShell 7 from https://aka.ms/powershell or via:
+    winget install --id Microsoft.PowerShell --source winget
+"@
+                Write-Host "[-] $ps7Msg" -ForegroundColor Red
+                throw $ps7Msg
+            }
+        }
+    }
+
+    # ==============================================================================
+    # LOGGING INFRASTRUCTURE (Specification Section 3.4)
+    # ==============================================================================
+    function Initialize-AuditLogging {
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory = $false)]
+            [string]$TargetDirectory = 'C:\Logs'
+        )
+
+        $timestamp    = (Get-Date).ToString("yyyyMMdd-HHmmss")
+        $computerName = $env:COMPUTERNAME
+        $userName     = $env:USERNAME
+        $logFileName  = "${timestamp}-Audit-SharePointSecuritySummary-${computerName}-${userName}.log"
+
+        $resolvedDir = $TargetDirectory
+        try {
+            if (-not (Test-Path -Path $resolvedDir)) {
+                $null = New-Item -Path $resolvedDir -ItemType Directory -Force -ErrorAction Stop
+            }
+        }
+        catch {
+            $resolvedDir = Join-Path -Path $env:LOCALAPPDATA -ChildPath "Logs"
+            if (-not (Test-Path -Path $resolvedDir)) {
+                $null = New-Item -Path $resolvedDir -ItemType Directory -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        $Script:LogFilePath = Join-Path -Path $resolvedDir -ChildPath $logFileName
+        $header = @"
+================================================================================
+Audit Log Initialized : $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+Script                : $($Script:Metadata.Title) v$($Script:Metadata.Version)
+Author                : $($Script:Metadata.Author) ($($Script:Metadata.Email))
+GitHub                : $($Script:Metadata.GitHub)
+Host Machine          : $computerName
+User Context          : $userName
+Log File Location     : $Script:LogFilePath
+================================================================================
+"@
+        Add-Content -Path $Script:LogFilePath -Value $header -Encoding UTF8 -ErrorAction SilentlyContinue
+    }
+
+    function Write-Log {
+        [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '')]
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$Message,
+
+            [Parameter(Mandatory = $false)]
+            [ValidateSet('INFO', 'WARN', 'ERROR', 'SUCCESS')]
+            [string]$Level = 'INFO'
+        )
+
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $logEntry  = "[$timestamp] [$Level] $Message"
+
+        if ($Script:LogFilePath) {
+            try {
+                Add-Content -Path $Script:LogFilePath -Value $logEntry -Encoding UTF8 -ErrorAction SilentlyContinue
+            }
+            catch {
+                Write-Verbose -Message "Unable to write log entry to file: $($_.Exception.Message)"
+            }
+        }
+
+        switch ($Level) {
+            'INFO'    { Write-Host $logEntry -ForegroundColor Cyan }
+            'WARN'    { Write-Host $logEntry -ForegroundColor Yellow }
+            'ERROR'   { Write-Host $logEntry -ForegroundColor Red }
+            'SUCCESS' { Write-Host $logEntry -ForegroundColor Green }
+        }
+    }
+
+    # ==============================================================================
+    # HELPER: INTERACTIVE INPUT PROMPT
+    # ==============================================================================
+    function Read-AdminUrlInteractive {
+        [CmdletBinding()]
+        [OutputType([string])]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        param()
+
+        Write-Host "`n[?] Enter SharePoint Online Admin URL (e.g. 'https://contoso-admin.sharepoint.com'): " -NoNewline -ForegroundColor Yellow
+        $entered = Read-Host
+        return $entered
+    }
+
+    # ==============================================================================
+    # HELPER: RESOLVE ADMIN URL
+    # ==============================================================================
+    function Resolve-SharePointAdminUrl {
+        [CmdletBinding()]
+        [OutputType([string])]
+        param(
+            [Parameter(Mandatory = $false)]
+            [string]$Url
+        )
+
+        if ([string]::IsNullOrWhiteSpace($Url)) {
+            return ""
+        }
+
+        $trimmed = $Url.Trim().TrimEnd('/')
+        if ($trimmed -notmatch '^https?://') {
+            $trimmed = "https://$trimmed"
+        }
+
+        try {
+            $uri = [System.Uri]$trimmed
+            $hostName = $uri.Host
+
+            # Normalize root tenant url to admin url
+            # e.g., 'https://contoso.sharepoint.com' -> 'https://contoso-admin.sharepoint.com'
+            if ($hostName -notmatch '-admin\.sharepoint\.com$' -and $hostName -match '^([a-zA-Z0-9\-]+)\.sharepoint\.com$') {
+                $tenantName = $Matches[1]
+                $adminHost = "${tenantName}-admin.sharepoint.com"
+                $trimmed = "https://$adminHost"
+                Write-Log -Level INFO -Message "Normalized tenant URL to SharePoint Admin URL: $trimmed"
+            }
+        }
+        catch {
+            Write-Log -Level WARN -Message "Unable to parse URL '$Url'. Using as provided: $trimmed"
+        }
+
+        return $trimmed
+    }
+
+    # ==============================================================================
+    # HELPER: MODULE DEPENDENCY VALIDATION
+    # ==============================================================================
+    function Assert-PnPModule {
+        [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        param(
+            [Parameter(Mandatory = $false)]
+            [switch]$ForceInstall
+        )
+
+        $modName = $Script:Metadata.RequiredMod
+        $moduleInstalled = Get-Module -ListAvailable -Name $modName
+        if (-not $moduleInstalled) {
+            Write-Log -Level WARN -Message "Required PowerShell module '$modName' is not installed."
+
+            $shouldInstall = $false
+            if ($ForceInstall) {
+                $shouldInstall = $true
+            }
+            elseif ([Environment]::UserInteractive) {
+                Write-Host "Would you like to install '$modName' from PSGallery now? (Y/N): " -NoNewline -ForegroundColor Yellow
+                $response = Read-Host
+                if ($response -match '^[ytT1]$') {
+                    $shouldInstall = $true
+                }
+            }
+
+            if ($shouldInstall) {
+                Write-Log -Level INFO -Message "Installing '$modName' from PSGallery for CurrentUser..."
+                try {
+                    Install-Module -Name $modName -Scope CurrentUser -Repository PSGallery -Force -AllowClobber -ErrorAction Stop
+                    Write-Log -Level SUCCESS -Message "Module '$modName' installed successfully."
+                }
+                catch {
+                    $installErr = "Automatic installation of '$modName' failed: $($_.Exception.Message)"
+                    Write-Log -Level ERROR -Message $installErr
+                    throw $installErr
+                }
+            }
+            else {
+                $errorMessage = @"
+Required PowerShell module '$modName' is not installed.
+Please install it by running:
+    Install-Module -Name $modName -Scope CurrentUser -Repository PSGallery -Force -AllowClobber
+"@
+                Write-Log -Level ERROR -Message $errorMessage
+                throw $errorMessage
+            }
+        }
+
+        $loaded = Get-Module -Name $modName
+        if (-not $loaded) {
+            Write-Log -Level INFO -Message "Importing module '$modName'..."
+            Import-Module -Name $modName -ErrorAction Stop
+        }
+
+        $currentMod = Get-Module -Name $modName
+        Write-Log -Level SUCCESS -Message "Module '$modName' (v$($currentMod.Version)) verified."
+    }
+
+    # ==============================================================================
+    # AUTHENTICATION ENGINE (Interactive & App-Only Daemon)
+    # ==============================================================================
+    function Connect-AuditSession {
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$TargetAdminUrl,
+
+            [Parameter(Mandatory = $false)]
+            [string]$AppId,
+
+            [Parameter(Mandatory = $false)]
+            [string]$Tenant,
+
+            [Parameter(Mandatory = $false)]
+            [string]$Thumbprint,
+
+            [Parameter(Mandatory = $false)]
+            [string]$CertFilePath,
+
+            [Parameter(Mandatory = $false)]
+            [System.Security.SecureString]$CertPass,
+
+            [Parameter(Mandatory = $false)]
+            [switch]$UseInteractive
+        )
+
+        Write-Log -Level INFO -Message "Establishing connection to SharePoint Online Admin: $TargetAdminUrl"
+
+        try {
+            # Mode 1: Certificate Thumbprint
+            if (-not [string]::IsNullOrWhiteSpace($Thumbprint)) {
+                if ([string]::IsNullOrWhiteSpace($AppId) -or [string]::IsNullOrWhiteSpace($Tenant)) {
+                    throw "App-Only authentication via -CertificateThumbprint requires both -ClientId and -TenantId."
+                }
+                Write-Log -Level INFO -Message "Authenticating via X.509 Certificate Thumbprint '$Thumbprint' (ClientId: $AppId, Tenant: $Tenant)..."
+                $conn = Connect-PnPOnline -Url $TargetAdminUrl `
+                    -ClientId $AppId `
+                    -Tenant $Tenant `
+                    -Thumbprint $Thumbprint `
+                    -ReturnConnection `
+                    -ErrorAction Stop
+                Write-Log -Level SUCCESS -Message "Connected successfully using Certificate Thumbprint."
+                return $conn
+            }
+
+            # Mode 2: Certificate File Path
+            if (-not [string]::IsNullOrWhiteSpace($CertFilePath)) {
+                if ([string]::IsNullOrWhiteSpace($AppId) -or [string]::IsNullOrWhiteSpace($Tenant)) {
+                    throw "App-Only authentication via -CertificatePath requires both -ClientId and -TenantId."
+                }
+                if (-not (Test-Path -Path $CertFilePath)) {
+                    throw "Certificate file not found at path: $CertFilePath"
+                }
+                Write-Log -Level INFO -Message "Authenticating via Certificate file '$CertFilePath' (ClientId: $AppId, Tenant: $Tenant)..."
+                $connectParams = @{
+                    Url              = $TargetAdminUrl
+                    ClientId         = $AppId
+                    Tenant           = $Tenant
+                    CertificatePath  = $CertFilePath
+                    ReturnConnection = $true
+                    ErrorAction      = 'Stop'
+                }
+                if ($CertPass) {
+                    $connectParams['CertificatePassword'] = $CertPass
+                }
+                $conn = Connect-PnPOnline @connectParams
+                Write-Log -Level SUCCESS -Message "Connected successfully using Certificate Path."
+                return $conn
+            }
+
+            # Mode 3: Interactive Browser Authentication
+            if ($UseInteractive -or [string]::IsNullOrWhiteSpace($AppId)) {
+                Write-Log -Level INFO -Message "Initiating modern interactive browser authentication (OAuth/MFA)..."
+                if (-not [string]::IsNullOrWhiteSpace($AppId)) {
+                    $conn = Connect-PnPOnline -Url $TargetAdminUrl -ClientId $AppId -Interactive -ReturnConnection -ErrorAction Stop
+                }
+                else {
+                    $conn = Connect-PnPOnline -Url $TargetAdminUrl -Interactive -ReturnConnection -ErrorAction Stop
+                }
+                Write-Log -Level SUCCESS -Message "Interactive browser session established successfully."
+                return $conn
+            }
+
+            # Fallback
+            throw "Unable to determine authentication method. Provide -Interactive or -CertificateThumbprint/-CertificatePath with -ClientId and -TenantId."
+        }
+        catch {
+            $authErr = "Failed to establish connection to SharePoint Admin ($TargetAdminUrl): $($_.Exception.Message)"
+            Write-Log -Level ERROR -Message $authErr
+            throw $authErr
+        }
+    }
+
+    # ==============================================================================
+    # HELPER: TEMPLATE IDENTIFIER RESOLUTION
+    # ==============================================================================
+    function Get-FriendlyTemplateName {
+        [CmdletBinding()]
+        [OutputType([string])]
+        param([string]$TemplateCode)
+
+        if ([string]::IsNullOrWhiteSpace($TemplateCode)) {
+            return "Unknown"
+        }
+
+        switch -Wildcard ($TemplateCode) {
+            "GROUP#0*"                { return "Modern Team Site (M365 Group)" }
+            "SITEPAGE-PUBLISHING#0*"  { return "Communication Site" }
+            "STS#3*"                  { return "Modern Team Site (No Group)" }
+            "STS#0*"                  { return "Classic Team Site" }
+            "BDR#0*"                  { return "Document Center" }
+            "BICenterSite#0*"         { return "Business Intelligence Center" }
+            "COMMUNITY#0*"            { return "Community Site" }
+            "ENTERWIKI#0*"            { return "Enterprise Wiki" }
+            "POINTPUBLISHINGHUB#0*"   { return "Hub Site" }
+            "POINTPUBLISHINGTOPIC#0*" { return "Topic Site" }
+            "SRCHCEN#0*"              { return "Search Center" }
+            "VISUSVR#0*"              { return "Visio Process Repository" }
+            "APPCATALOG#0*"           { return "App Catalog Site" }
+            "SPSPERS#*"               { return "OneDrive / Personal Site" }
+            Default                   { return $TemplateCode }
+        }
+    }
+
+    # ==============================================================================
+    # RISK ASSESSMENT ENGINE (Specification Section 3.5 & 2.2)
+    # ==============================================================================
+    function Measure-SiteSecurityRisk {
+        [CmdletBinding()]
+        [OutputType([PSCustomObject])]
+        param(
+            [Parameter(Mandatory = $true)]
+            [PSCustomObject]$SiteData
+        )
+
+        $riskScore = 0
+        $riskFactors = [System.Collections.Generic.List[string]]::new()
+        $remediations = [System.Collections.Generic.List[string]]::new()
+
+        # Vector 1: Ownership & Orphaned Sites
+        if ($SiteData.SiteAdminsCount -eq 0 -or [string]::IsNullOrWhiteSpace($SiteData.Owner)) {
+            $riskScore += 45
+            $riskFactors.Add("ORPHANED_SITE: 0 active Site Collection Administrators or missing owner")
+            $remediations.Add("Assign at least two designated site administrators: Set-PnPTenantSite -Url '$($SiteData.Url)' -Owners 'admin@domain.com'")
+        }
+        elseif ($SiteData.SiteAdminsCount -gt 5) {
+            $riskScore += 25
+            $riskFactors.Add("EXCESSIVE_ADMINS: $($SiteData.SiteAdminsCount) Site Collection Administrators detected (Threshold: >5)")
+            $remediations.Add("Review and reduce excessive site collection administrators down to 2-4 primary owners.")
+        }
+        elseif ($SiteData.SiteAdminsCount -eq 1) {
+            $riskScore += 10
+            $riskFactors.Add("SINGLE_ADMIN: Single administrator represents an administrative single point of failure")
+            $remediations.Add("Assign a secondary site administrator to prevent orphaned state if current owner leaves.")
+        }
+
+        # Vector 2: External Sharing & Anonymous Access
+        $sharing = $SiteData.SharingCapability
+        if ($sharing -eq 'ExternalUserAndGuestSharing') {
+            $riskScore += 30
+            $riskFactors.Add("ANYONE_LINKS: Site permits Anonymous/Anyone link sharing without authentication")
+
+            if ($SiteData.AnonymousLinkExpirationInDays -le 0 -or $null -eq $SiteData.AnonymousLinkExpirationInDays) {
+                $riskScore += 20
+                $riskFactors.Add("NO_EXPIRATION: Anonymous links do not enforce expiration policies")
+                $remediations.Add("Enforce anonymous link expiration: Set-PnPTenantSite -Url '$($SiteData.Url)' -AnonymousLinkExpirationInDays 14")
+            }
+            $remediations.Add("Restrict sharing to authenticated guests: Set-PnPTenantSite -Url '$($SiteData.Url)' -SharingCapability ExistingExternalUserSharingOnly")
+        }
+        elseif ($sharing -eq 'ExistingExternalUserSharingOnly') {
+            $riskScore += 15
+            $riskFactors.Add("GUEST_SHARING: External sharing enabled for existing directory guests")
+        }
+        elseif ($sharing -eq 'ExternalUserSharingDisabled' -or $sharing -eq 'Disabled') {
+            # Compliant / Secure sharing posture
+        }
+
+        # Vector 3: M365 Group Privacy & Public Exposure
+        if ($SiteData.GroupPrivacy -eq 'Public') {
+            $riskScore += 15
+            $riskFactors.Add("PUBLIC_GROUP: Connected M365 Group is Public; accessible to all internal employees")
+            if ($sharing -eq 'ExternalUserAndGuestSharing') {
+                $riskScore += 20
+                $riskFactors.Add("PUBLIC_WITH_ANONYMOUS: Public group allows unrestricted anonymous file sharing")
+            }
+            $remediations.Add("Review group privacy settings and convert to Private if confidential assets are stored.")
+        }
+
+        # Vector 4: Sensitivity Labels
+        if ([string]::IsNullOrWhiteSpace($SiteData.SensitivityLabel) -or $SiteData.SensitivityLabel -eq 'None') {
+            if ($sharing -eq 'ExternalUserAndGuestSharing' -or $sharing -eq 'ExistingExternalUserSharingOnly') {
+                $riskScore += 15
+                $riskFactors.Add("UNLABELED_SHARING: External sharing is enabled on an unlabeled site collection")
+                $remediations.Add("Classify site collection by assigning an appropriate Microsoft Purview Sensitivity Label.")
+            }
+        }
+        elseif ($SiteData.SensitivityLabel -like "*Confidential*" -or $SiteData.SensitivityLabel -like "*Secret*") {
+            if ($sharing -eq 'ExternalUserAndGuestSharing') {
+                $riskScore += 35
+                $riskFactors.Add("CONFIDENTIAL_LEAK_RISK: Confidential/Secret labeled site allows Anonymous/Anyone link sharing")
+                $remediations.Add("Immediately disable anyone links: Set-PnPTenantSite -Url '$($SiteData.Url)' -SharingCapability ExternalUserSharingDisabled")
+            }
+        }
+
+        # Vector 5: Broken Permission Inheritance
+        if ($SiteData.HasBrokenInheritance) {
+            $riskScore += 15
+            $riskFactors.Add("BROKEN_INHERITANCE: Site or document libraries contain unique role assignments")
+            $remediations.Add("Audit subordinate library permissions and restore inheritance where custom access is stale.")
+        }
+
+        # Vector 6: Storage Consumption
+        if ($SiteData.StorageUsageMB -gt 0 -and $SiteData.StorageLimitMB -gt 0) {
+            $storagePct = [Math]::Round(($SiteData.StorageUsageMB / $SiteData.StorageLimitMB) * 100, 1)
+            if ($storagePct -ge 90) {
+                $riskScore += 10
+                $riskFactors.Add("STORAGE_CAPACITY: Storage utilization at $storagePct% of maximum allocated quota")
+                $remediations.Add("Increase storage quota or purge unneeded versions/recycle bin content.")
+            }
+        }
+
+        # Determine Final Risk Level
+        $riskLevel = if ($riskScore -ge 50 -or $riskFactors -match "ORPHANED_SITE" -or $riskFactors -match "CONFIDENTIAL_LEAK_RISK") {
+            'Critical'
+        }
+        elseif ($riskScore -ge 30 -or $riskFactors -match "ANYONE_LINKS" -or $riskFactors -match "EXCESSIVE_ADMINS") {
+            'High'
+        }
+        elseif ($riskScore -ge 15 -or $riskFactors -match "GUEST_SHARING" -or $riskFactors -match "BROKEN_INHERITANCE") {
+            'Medium'
+        }
+        else {
+            'Low'
+        }
+
+        if ($riskFactors.Count -eq 0) {
+            $riskFactors.Add("COMPLIANT: Standard governance posture; no immediate risks identified")
+        }
+        if ($remediations.Count -eq 0) {
+            $remediations.Add("Maintain regular access reviews and audit logging.")
+        }
+
+        return [PSCustomObject]@{
+            RiskLevel    = $riskLevel
+            RiskScore    = $riskScore
+            RiskFactors  = ($riskFactors -join " | ")
+            Remediations = ($remediations -join " | ")
+        }
+    }
+
+    # ==============================================================================
+    # CONSOLE DASHBOARD RENDERING (Specification Section 2.2 & 3.5)
+    # ==============================================================================
+    function Show-ConsoleAuditDashboard {
+        [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Collections.Generic.List[PSCustomObject]]$Records
+        )
+
+        $totalSites     = $Records.Count
+        $criticalCount  = @($Records | Where-Object { $_.RiskLevel -eq 'Critical' }).Count
+        $highCount      = @($Records | Where-Object { $_.RiskLevel -eq 'High' }).Count
+        $mediumCount    = @($Records | Where-Object { $_.RiskLevel -eq 'Medium' }).Count
+        $lowCount       = @($Records | Where-Object { $_.RiskLevel -eq 'Low' }).Count
+
+        $extSharing     = @($Records | Where-Object { $_.SharingCapability -in @('ExternalUserAndGuestSharing', 'ExistingExternalUserSharingOnly') }).Count
+        $anyoneCount    = @($Records | Where-Object { $_.SharingCapability -eq 'ExternalUserAndGuestSharing' }).Count
+        $orphanedCount  = @($Records | Where-Object { $_.SiteAdminsCount -eq 0 -or [string]::IsNullOrWhiteSpace($_.Owner) }).Count
+        $excessiveAdmin = @($Records | Where-Object { $_.SiteAdminsCount -gt 5 }).Count
+        $brokenInherit  = @($Records | Where-Object { $_.HasBrokenInheritance -eq $true }).Count
+
+        Write-Host "`n" -NoNewline
+        Write-Host "================================================================================" -ForegroundColor Cyan
+        Write-Host "           SHAREPOINT ONLINE SECURITY AUDIT EXECUTIVE SUMMARY" -ForegroundColor Cyan
+        Write-Host "================================================================================" -ForegroundColor Cyan
+        Write-Host " Total Site Collections Scanned     : $totalSites" -ForegroundColor White
+        Write-Host " [CRITICAL] Immediate Action Sites   : $criticalCount" -ForegroundColor $(if ($criticalCount -gt 0) { 'Red' } else { 'Green' })
+        Write-Host " [HIGH]     High Risk Posture Sites  : $highCount" -ForegroundColor $(if ($highCount -gt 0) { 'Red' } else { 'Green' })
+        Write-Host " [MEDIUM]   Elevated Warning Sites   : $mediumCount" -ForegroundColor $(if ($mediumCount -gt 0) { 'Yellow' } else { 'White' })
+        Write-Host " [LOW]      Compliant / Secure Sites : $lowCount" -ForegroundColor Green
+        Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host " External Sharing Enabled (Any Mode) : $extSharing site(s)" -ForegroundColor $(if ($extSharing -gt 0) { 'Yellow' } else { 'Green' })
+        Write-Host " Anonymous / Anyone Links Permitted  : $anyoneCount site(s)" -ForegroundColor $(if ($anyoneCount -gt 0) { 'Red' } else { 'Green' })
+        Write-Host " Orphaned Sites (0 Active Owners)    : $orphanedCount site(s)" -ForegroundColor $(if ($orphanedCount -gt 0) { 'Red' } else { 'Green' })
+        Write-Host " Excessive Admins (>5 Administrators): $excessiveAdmin site(s)" -ForegroundColor $(if ($excessiveAdmin -gt 0) { 'Yellow' } else { 'Green' })
+        Write-Host " Broken Permission Inheritance       : $brokenInherit site(s)" -ForegroundColor $(if ($brokenInherit -gt 0) { 'Yellow' } else { 'White' })
+        Write-Host "================================================================================" -ForegroundColor Cyan
+        Write-Host "`nDETAILED SITE SECURITY POSTURE AUDIT TABLE:" -ForegroundColor Yellow
+        Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+
+        $tableRows = foreach ($rec in $Records) {
+            $shortUrl = if ($rec.SiteUrl.Length -gt 45) { $rec.SiteUrl.Substring(0, 42) + "..." } else { $rec.SiteUrl }
+            $shortTitle = if ($rec.SiteTitle.Length -gt 25) { $rec.SiteTitle.Substring(0, 22) + "..." } else { $rec.SiteTitle }
+            $shortSharing = switch ($rec.SharingCapability) {
+                'ExternalUserAndGuestSharing'     { 'Anyone (Anon)' }
+                'ExistingExternalUserSharingOnly' { 'Existing Guests' }
+                'Disabled'                        { 'Disabled' }
+                'ExternalUserSharingDisabled'     { 'Disabled' }
+                Default                           { $rec.SharingCapability }
+            }
+
+            [PSCustomObject]@{
+                "Risk Level" = $rec.RiskLevel
+                "Score"      = $rec.RiskScore
+                "Site Title" = $shortTitle
+                "Sharing"    = $shortSharing
+                "Admins"     = $rec.SiteAdminsCount
+                "Privacy"    = if ($rec.GroupPrivacy) { $rec.GroupPrivacy } else { "N/A" }
+                "Label"      = if ($rec.SensitivityLabel) { $rec.SensitivityLabel } else { "-" }
+                "Broken"     = if ($rec.HasBrokenInheritance) { "Yes" } else { "No" }
+                "Site URL"   = $shortUrl
+            }
+        }
+
+        # Print sorted by risk priority: Critical -> High -> Medium -> Low
+        $priorityOrder = @{ 'Critical' = 1; 'High' = 2; 'Medium' = 3; 'Low' = 4 }
+        $sortedRows = $tableRows | Sort-Object { $priorityOrder[$_."Risk Level"] }, -Property Score
+
+        $sortedRows | Format-Table -AutoSize | Out-Host
+
+        Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "[*] Complete raw datasets exported to CSV and HTML report." -ForegroundColor Gray
+        Write-Host "[*] Use -PassThru to stream [PSCustomObject] records into pipeline or Out-GridView." -ForegroundColor Gray
+        Write-Host "================================================================================`n" -ForegroundColor DarkGray
+    }
+
+    # ==============================================================================
+    # CSV EXPORT ENGINE
+    # ==============================================================================
+    function Export-AuditCsv {
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Collections.Generic.List[PSCustomObject]]$Records,
+
+            [Parameter(Mandatory = $true)]
+            [string]$FilePath
+        )
+
+        Write-Log -Level INFO -Message "Exporting $($Records.Count) audit records to CSV: $FilePath"
+
+        try {
+            $parentDir = Split-Path -Path $FilePath -Parent
+            if (-not [string]::IsNullOrWhiteSpace($parentDir) -and -not (Test-Path -Path $parentDir)) {
+                $null = New-Item -Path $parentDir -ItemType Directory -Force -ErrorAction Stop
+            }
+
+            $Records | Export-Csv -Path $FilePath -NoTypeInformation -Encoding UTF8 -Force
+            Write-Log -Level SUCCESS -Message "CSV export completed successfully: $FilePath"
+        }
+        catch {
+            Write-Log -Level ERROR -Message "Failed to export CSV: $($_.Exception.Message)"
+        }
+    }
+
+    # ==============================================================================
+    # HTML EXECUTIVE DASHBOARD GENERATOR (Specification Section 2.2)
+    # ==============================================================================
+    function Export-AuditHtmlReport {
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Collections.Generic.List[PSCustomObject]]$Records,
+
+            [Parameter(Mandatory = $true)]
+            [string]$FilePath,
+
+            [Parameter(Mandatory = $false)]
+            [string]$TenantAdminEndpoint
+        )
+
+        Write-Log -Level INFO -Message "Generating standalone HTML executive summary report: $FilePath"
+
+        $scanDate       = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $totalSites     = $Records.Count
+        $criticalCount  = @($Records | Where-Object { $_.RiskLevel -eq 'Critical' }).Count
+        $highCount      = @($Records | Where-Object { $_.RiskLevel -eq 'High' }).Count
+        $mediumCount    = @($Records | Where-Object { $_.RiskLevel -eq 'Medium' }).Count
+        $lowCount       = @($Records | Where-Object { $_.RiskLevel -eq 'Low' }).Count
+
+        $extSharing     = @($Records | Where-Object { $_.SharingCapability -in @('ExternalUserAndGuestSharing', 'ExistingExternalUserSharingOnly') }).Count
+        $anyoneCount    = @($Records | Where-Object { $_.SharingCapability -eq 'ExternalUserAndGuestSharing' }).Count
+        $orphanedCount  = @($Records | Where-Object { $_.SiteAdminsCount -eq 0 -or [string]::IsNullOrWhiteSpace($_.Owner) }).Count
+        $excessiveAdmin = @($Records | Where-Object { $_.SiteAdminsCount -gt 5 }).Count
+
+        # Build table rows HTML
+        $tableHtmlBuilder = [System.Text.StringBuilder]::new()
+        foreach ($r in $Records) {
+            $badgeClass = switch ($r.RiskLevel) {
+                'Critical' { 'badge-critical' }
+                'High'     { 'badge-high' }
+                'Medium'   { 'badge-medium' }
+                'Low'      { 'badge-low' }
+                Default    { 'badge-low' }
+            }
+
+            $sharingBadge = switch ($r.SharingCapability) {
+                'ExternalUserAndGuestSharing'     { '<span class="badge badge-critical">Anyone / Anonymous</span>' }
+                'ExistingExternalUserSharingOnly' { '<span class="badge badge-medium">Existing Guests</span>' }
+                'Disabled'                        { '<span class="badge badge-low">Disabled</span>' }
+                'ExternalUserSharingDisabled'     { '<span class="badge badge-low">Disabled</span>' }
+                Default                           { "<span class=`"badge badge-low`">$($r.SharingCapability)</span>" }
+            }
+
+            $privacyBadge = if ($r.GroupPrivacy -eq 'Public') {
+                '<span class="badge badge-medium">Public</span>'
+            }
+            elseif ($r.GroupPrivacy -eq 'Private') {
+                '<span class="badge badge-low">Private</span>'
+            }
+            else {
+                '<span class="text-muted">N/A</span>'
+            }
+
+            $labelDisplay = if (-not [string]::IsNullOrWhiteSpace($r.SensitivityLabel) -and $r.SensitivityLabel -ne 'None') {
+                "<span class=`"badge badge-info`">$([System.Web.HttpUtility]::HtmlEncode($r.SensitivityLabel))</span>"
+            }
+            else {
+                '<span class="text-muted">Unlabeled</span>'
+            }
+
+            $brokenDisplay = if ($r.HasBrokenInheritance) {
+                '<span class="badge badge-medium">Unique Perms</span>'
+            }
+            else {
+                '<span class="text-muted">Inherited</span>'
+            }
+
+            $encodedTitle = [System.Web.HttpUtility]::HtmlEncode($r.SiteTitle)
+            $encodedUrl   = [System.Web.HttpUtility]::HtmlEncode($r.SiteUrl)
+            $encodedOwner = [System.Web.HttpUtility]::HtmlEncode($r.Owner)
+            $encodedFactors = [System.Web.HttpUtility]::HtmlEncode($r.RiskFactors)
+            $encodedRemediation = [System.Web.HttpUtility]::HtmlEncode($r.Remediations)
+
+            $rowHtml = @"
+            <tr class="audit-row" data-risk="$($r.RiskLevel)" data-sharing="$($r.SharingCapability)" data-orphaned="$($r.SiteAdminsCount -eq 0)">
+                <td><span class="badge $badgeClass">$($r.RiskLevel)</span></td>
+                <td><strong>$($r.RiskScore)</strong></td>
+                <td>
+                    <div class="site-title">$encodedTitle</div>
+                    <div class="site-url"><a href="$encodedUrl" target="_blank" rel="noopener noreferrer">$encodedUrl</a></div>
+                </td>
+                <td>$sharingBadge</td>
+                <td>
+                    <span class="admin-count $(if ($r.SiteAdminsCount -gt 5) { 'text-danger font-bold' } elseif ($r.SiteAdminsCount -eq 0) { 'text-critical font-bold' })">
+                        $($r.SiteAdminsCount)
+                    </span>
+                    <div class="admin-owner text-muted" title="$encodedOwner">$encodedOwner</div>
+                </td>
+                <td>$privacyBadge</td>
+                <td>$labelDisplay</td>
+                <td>$brokenDisplay</td>
+                <td>
+                    <div class="risk-factors">$encodedFactors</div>
+                    <div class="remediation-hint"><em>$encodedRemediation</em></div>
+                </td>
+            </tr>
+"@
+            $null = $tableHtmlBuilder.AppendLine($rowHtml)
+        }
+
+        $htmlContent = @"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SharePoint Online Security Posture Audit - Executive Report</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border-color: #334155;
+            --color-critical: #ef4444;
+            --color-high: #f97316;
+            --color-medium: #eab308;
+            --color-low: #10b981;
+            --color-info: #3b82f6;
+            --color-purple: #a855f7;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 1540px;
+            margin: 0 auto;
+        }
+
+        /* HEADER */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .header-title h1 {
+            font-size: 1.85rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-title p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            margin-top: 4px;
+        }
+
+        .header-meta {
+            text-align: right;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .header-meta strong {
+            color: var(--text-secondary);
+        }
+
+        /* METRIC CARDS */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .metric-card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 18px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.15s ease;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--text-muted);
+        }
+
+        .card-total::before { background: var(--color-info); }
+        .card-critical::before { background: var(--color-critical); }
+        .card-high::before { background: var(--color-high); }
+        .card-medium::before { background: var(--color-medium); }
+        .card-low::before { background: var(--color-low); }
+        .card-sharing::before { background: var(--color-purple); }
+
+        .metric-label {
+            font-size: 0.82rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .metric-value {
+            font-size: 2.1rem;
+            font-weight: 700;
+        }
+
+        .text-critical { color: var(--color-critical); }
+        .text-high { color: var(--color-high); }
+        .text-medium { color: var(--color-medium); }
+        .text-low { color: var(--color-low); }
+        .text-info { color: var(--color-info); }
+        .text-purple { color: var(--color-purple); }
+        .text-danger { color: #f87171; }
+        .font-bold { font-weight: 700; }
+
+        /* CONTROLS & FILTER BAR */
+        .controls-bar {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .search-box {
+            flex: 1;
+            min-width: 280px;
+            position: relative;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 10px 14px;
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            outline: none;
+        }
+
+        .search-input:focus {
+            border-color: var(--color-info);
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .filter-btn:hover {
+            background-color: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .filter-btn.active {
+            background-color: var(--color-info);
+            border-color: var(--color-info);
+            color: #ffffff;
+        }
+
+        /* TABLE */
+        .table-container {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.88rem;
+        }
+
+        th {
+            background-color: #172033;
+            color: var(--text-secondary);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border-color);
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: top;
+        }
+
+        tr:hover {
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        .site-title {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .site-url a {
+            color: var(--color-info);
+            text-decoration: none;
+            font-size: 0.78rem;
+            word-break: break-all;
+        }
+
+        .site-url a:hover {
+            text-decoration: underline;
+        }
+
+        .admin-owner {
+            font-size: 0.75rem;
+            max-width: 160px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .risk-factors {
+            font-size: 0.8rem;
+            color: #cbd5e1;
+            margin-bottom: 4px;
+        }
+
+        .remediation-hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* BADGES */
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .badge-critical {
+            background-color: rgba(239, 68, 68, 0.15);
+            color: #fca5a5;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .badge-high {
+            background-color: rgba(249, 115, 22, 0.15);
+            color: #fdba74;
+            border: 1px solid rgba(249, 115, 22, 0.3);
+        }
+
+        .badge-medium {
+            background-color: rgba(234, 179, 8, 0.15);
+            color: #fde047;
+            border: 1px solid rgba(234, 179, 8, 0.3);
+        }
+
+        .badge-low {
+            background-color: rgba(16, 185, 129, 0.15);
+            color: #6ee7b7;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-info {
+            background-color: rgba(59, 130, 246, 0.15);
+            color: #93c5fd;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        /* REMEDIATION PLAYBOOK */
+        .remediation-section {
+            margin-top: 32px;
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 24px;
+        }
+
+        .remediation-section h2 {
+            font-size: 1.25rem;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+
+        .playbook-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
+        }
+
+        .playbook-card {
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .playbook-card h3 {
+            font-size: 0.95rem;
+            margin-bottom: 8px;
+            color: var(--color-info);
+        }
+
+        .playbook-card p {
+            font-size: 0.82rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .code-block {
+            background-color: #020617;
+            border: 1px solid #1e293b;
+            border-radius: 4px;
+            padding: 8px 10px;
+            font-family: monospace;
+            font-size: 0.78rem;
+            color: #38bdf8;
+            overflow-x: auto;
+        }
+
+        /* FOOTER */
+        .footer {
+            margin-top: 32px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+            text-align: center;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+        }
+
+        .footer a {
+            color: var(--text-secondary);
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <header class="header">
+            <div class="header-title">
+                <h1>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                    SharePoint Online Security Posture Audit
+                </h1>
+                <p>Tenant-wide Governance, External Sharing, Orphaned Site & Inheritance Exposure Assessment</p>
+            </div>
+            <div class="header-meta">
+                <div>Scan Date: <strong>$scanDate</strong></div>
+                <div>Admin Endpoint: <strong>$TenantAdminEndpoint</strong></div>
+                <div>Tool: <strong>Audit-SharePointSecuritySummary v1.0.0</strong></div>
+            </div>
+        </header>
+
+        <!-- METRIC CARDS -->
+        <section class="metrics-grid">
+            <div class="metric-card card-total">
+                <div class="metric-label">Total Sites Audited</div>
+                <div class="metric-value text-info">$totalSites</div>
+            </div>
+            <div class="metric-card card-critical">
+                <div class="metric-label">Critical Risk Sites</div>
+                <div class="metric-value text-critical">$criticalCount</div>
+            </div>
+            <div class="metric-card card-high">
+                <div class="metric-label">High Risk Sites</div>
+                <div class="metric-value text-high">$highCount</div>
+            </div>
+            <div class="metric-card card-medium">
+                <div class="metric-label">Medium Risk Sites</div>
+                <div class="metric-value text-medium">$mediumCount</div>
+            </div>
+            <div class="metric-card card-low">
+                <div class="metric-label">Compliant / Low Risk</div>
+                <div class="metric-value text-low">$lowCount</div>
+            </div>
+            <div class="metric-card card-sharing">
+                <div class="metric-label">Anonymous Sharing</div>
+                <div class="metric-value text-purple">$anyoneCount</div>
+            </div>
+            <div class="metric-card card-critical">
+                <div class="metric-label">Orphaned Sites</div>
+                <div class="metric-value text-critical">$orphanedCount</div>
+            </div>
+            <div class="metric-card card-high">
+                <div class="metric-label">Excessive Admins (>5)</div>
+                <div class="metric-value text-high">$excessiveAdmin</div>
+            </div>
+        </section>
+
+        <!-- CONTROLS & FILTER BAR -->
+        <section class="controls-bar">
+            <div class="search-box">
+                <input type="text" id="searchInput" class="search-input" placeholder="Search by site title, URL, owner, or risk factor..." onkeyup="filterTable()">
+            </div>
+            <div class="filter-buttons">
+                <button class="filter-btn active" onclick="setFilter('all', this)">All ($totalSites)</button>
+                <button class="filter-btn" onclick="setFilter('Critical', this)">Critical ($criticalCount)</button>
+                <button class="filter-btn" onclick="setFilter('High', this)">High ($highCount)</button>
+                <button class="filter-btn" onclick="setFilter('Medium', this)">Medium ($mediumCount)</button>
+                <button class="filter-btn" onclick="setFilter('Low', this)">Low ($lowCount)</button>
+                <button class="filter-btn" onclick="setFilter('sharing', this)">External Sharing ($extSharing)</button>
+                <button class="filter-btn" onclick="setFilter('orphaned', this)">Orphaned ($orphanedCount)</button>
+            </div>
+        </section>
+
+        <!-- AUDIT TABLE -->
+        <section class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Risk Level</th>
+                        <th>Score</th>
+                        <th>Site Collection</th>
+                        <th>Sharing Governance</th>
+                        <th>Admins / Owner</th>
+                        <th>M365 Privacy</th>
+                        <th>Sensitivity Label</th>
+                        <th>Inheritance</th>
+                        <th>Risk Drivers & Remediation</th>
+                    </tr>
+                </thead>
+                <tbody id="auditTableBody">
+$($tableHtmlBuilder.ToString())
+                </tbody>
+            </table>
+        </section>
+
+        <!-- REMEDIATION PLAYBOOK -->
+        <section class="remediation-section">
+            <h2>Recommended Governance Remediation Playbook</h2>
+            <div class="playbook-grid">
+                <div class="playbook-card">
+                    <h3>1. Disable Anonymous/Anyone Links</h3>
+                    <p>Restrict site sharing to authenticated organization members or invited directory guests.</p>
+                    <div class="code-block">Set-PnPTenantSite -Url "&lt;SiteUrl&gt;" -SharingCapability ExistingExternalUserSharingOnly</div>
+                </div>
+                <div class="playbook-card">
+                    <h3>2. Enforce Link Expiration Policy</h3>
+                    <p>Enforce mandatory expiration on anyone links to prevent stale public file access.</p>
+                    <div class="code-block">Set-PnPTenantSite -Url "&lt;SiteUrl&gt;" -AnonymousLinkExpirationInDays 14</div>
+                </div>
+                <div class="playbook-card">
+                    <h3>3. Remediate Orphaned Sites</h3>
+                    <p>Assign designated organizational owners to orphaned site collections with 0 administrators.</p>
+                    <div class="code-block">Set-PnPTenantSite -Url "&lt;SiteUrl&gt;" -Owners "sec-admin@contoso.com"</div>
+                </div>
+                <div class="playbook-card">
+                    <h3>4. Reduce Excessive Administrators</h3>
+                    <p>Review site collections with more than 5 administrators and apply least-privilege RBAC.</p>
+                    <div class="code-block">Remove-PnPSiteCollectionAdmin -Owners "user@contoso.com"</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- FOOTER -->
+        <footer class="footer">
+            <p>Report generated by <strong>Audit-SharePointSecuritySummary.ps1</strong> &bull; Author: <a href="mailto:roman.pindela@gmail.com">Roman Pindela</a> &bull; GitHub: <a href="https://github.com/romanpindela" target="_blank" rel="noopener noreferrer">romanpindela</a></p>
+        </footer>
+    </div>
+
+    <!-- CLIENT-SIDE FILTERING JAVASCRIPT -->
+    <script>
+        let currentFilter = 'all';
+
+        function setFilter(filterType, btnElement) {
+            currentFilter = filterType;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            if (btnElement) btnElement.classList.add('active');
+            filterTable();
+        }
+
+        function filterTable() {
+            const searchVal = document.getElementById('searchInput').value.toLowerCase();
+            const rows = document.querySelectorAll('#auditTableBody tr.audit-row');
+
+            rows.forEach(row => {
+                const text = row.innerText.toLowerCase();
+                const risk = row.getAttribute('data-risk');
+                const sharing = row.getAttribute('data-sharing');
+                const isOrphaned = row.getAttribute('data-orphaned') === 'true';
+
+                let matchesFilter = false;
+                if (currentFilter === 'all') {
+                    matchesFilter = true;
+                } else if (currentFilter === 'sharing') {
+                    matchesFilter = (sharing === 'ExternalUserAndGuestSharing' || sharing === 'ExistingExternalUserSharingOnly');
+                } else if (currentFilter === 'orphaned') {
+                    matchesFilter = isOrphaned;
+                } else if (risk === currentFilter) {
+                    matchesFilter = true;
+                }
+
+                const matchesSearch = text.includes(searchVal);
+
+                if (matchesFilter && matchesSearch) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+    </script>
+</body>
+</html>
+"@
+
+        try {
+            $parentDir = Split-Path -Path $FilePath -Parent
+            if (-not [string]::IsNullOrWhiteSpace($parentDir) -and -not (Test-Path -Path $parentDir)) {
+                $null = New-Item -Path $parentDir -ItemType Directory -Force -ErrorAction Stop
+            }
+
+            [System.IO.File]::WriteAllText($FilePath, $htmlContent, [System.Text.UTF8Encoding]::new($false))
+            Write-Log -Level SUCCESS -Message "HTML report generated successfully: $FilePath"
+        }
+        catch {
+            Write-Log -Level ERROR -Message "Failed to generate HTML report: $($_.Exception.Message)"
+        }
+    }
+}
+
+process {
+    try {
+        # 1. Check PowerShell Core compatibility & auto-relaunch
+        Assert-PowerShellVersion -BoundParams $PSBoundParameters
+
+        # 2. Initialize enterprise transcript logging
+        Initialize-AuditLogging -TargetDirectory $LogPath
+        Write-Log -Level INFO -Message "Starting SharePoint Online Security Posture Audit ($($Script:Metadata.Title) v$($Script:Metadata.Version))..."
+
+        # 3. Verify PnP Module
+        Assert-PnPModule -ForceInstall:$Force
+
+        # 4. Resolve SharePoint Online Admin URL
+        if ([string]::IsNullOrWhiteSpace($AdminUrl)) {
+            if ([Environment]::UserInteractive) {
+                $AdminUrl = Read-AdminUrlInteractive
+            }
+            if ([string]::IsNullOrWhiteSpace($AdminUrl)) {
+                throw "SharePoint Online Admin URL is mandatory. Pass -AdminUrl 'https://contoso-admin.sharepoint.com'."
+            }
+        }
+
+        $resolvedAdminUrl = Resolve-SharePointAdminUrl -Url $AdminUrl
+        if ([string]::IsNullOrWhiteSpace($resolvedAdminUrl)) {
+            throw "Invalid SharePoint Online Admin URL: $AdminUrl"
+        }
+
+        # 5. Connect to SharePoint Online Admin Center
+        $Script:ActiveConnection = Connect-AuditSession `
+            -TargetAdminUrl $resolvedAdminUrl `
+            -AppId $ClientId `
+            -Tenant $TenantId `
+            -Thumbprint $CertificateThumbprint `
+            -CertFilePath $CertificatePath `
+            -CertPass $CertificatePassword `
+            -UseInteractive:$Interactive
+
+        # 6. Discover Site Collections
+        Write-Log -Level INFO -Message "Discovering site collections from tenant admin endpoint: $resolvedAdminUrl"
+        Write-Progress -Activity "Auditing SharePoint Security Posture" -Status "Discovering site collections..." -PercentComplete 10
+
+        $allSites = try {
+            Get-PnPTenantSite -Detailed -Connection $Script:ActiveConnection -ErrorAction Stop
+        }
+        catch {
+            Write-Log -Level WARN -Message "Get-PnPTenantSite -Detailed failed: $($_.Exception.Message). Retrying standard query..."
+            Get-PnPTenantSite -Connection $Script:ActiveConnection -ErrorAction Stop
+        }
+
+        if (-not $allSites -or (@($allSites).Count -eq 0)) {
+            Write-Log -Level WARN -Message "No site collections returned from tenant admin endpoint."
+            return
+        }
+
+        # Filter out personal sites (/personal/) unless explicitly requested
+        $filteredSites = [System.Collections.Generic.List[object]]::new()
+        foreach ($s in @($allSites)) {
+            if (-not $IncludePersonalSites -and $s.Url -like "*/personal/*") {
+                continue
+            }
+            if (-not [string]::IsNullOrWhiteSpace($SiteFilter)) {
+                if ($s.Url -notlike $SiteFilter -and $s.Title -notlike $SiteFilter) {
+                    continue
+                }
+            }
+            $filteredSites.Add($s)
+        }
+
+        $totalFound = $filteredSites.Count
+        Write-Log -Level SUCCESS -Message "Discovered $totalFound site collection(s) to evaluate (Personal sites excluded: $(-not $IncludePersonalSites))."
+
+        if ($totalFound -eq 0) {
+            Write-Log -Level WARN -Message "No site collections matched the filter '$SiteFilter'."
+            return
+        }
+
+        # 7. Audit Each Site Collection
+        $auditRecords = [System.Collections.Generic.List[PSCustomObject]]::new()
+        $counter = 0
+
+        foreach ($site in $filteredSites) {
+            $counter++
+            $pct = [int](15 + (($counter / [Math]::Max($totalFound, 1)) * 70))
+            Write-Progress -Activity "Auditing SharePoint Security Posture" `
+                -Status "Inspecting site $counter of $totalFound : $($site.Title)" `
+                -PercentComplete $pct
+
+            Write-Log -Level INFO -Message "[$counter/$totalFound] Auditing site collection: $($site.Url)"
+
+            # Resolve Site Owner & Admin Count
+            $ownerUpn = if ($site.Owner) { $site.Owner } else { "N/A" }
+            $adminsCount = 0
+            $adminList = [System.Collections.Generic.List[string]]::new()
+            $hasUniquePerms = $false
+
+            # Extract template & friendly name
+            $templateCode = if ($site.Template) { $site.Template } else { "Unknown" }
+            $friendlyTemplate = Get-FriendlyTemplateName -TemplateCode $templateCode
+
+            # Extract sensitivity label
+            $sensitivity = "None"
+            if ($site.SensitivityLabel) {
+                $sensitivity = $site.SensitivityLabel.ToString()
+            }
+            elseif ($site.PSObject.Properties['SensitivityLabelInfo'] -and $site.SensitivityLabelInfo) {
+                $sensitivity = $site.SensitivityLabelInfo.DisplayName
+            }
+
+            # Extract M365 Group Privacy
+            $groupPrivacy = "N/A"
+            $groupId = if ($site.GroupId) { $site.GroupId.ToString() } else { $null }
+            if (-not [string]::IsNullOrWhiteSpace($groupId) -and $groupId -ne [Guid]::Empty.ToString()) {
+                if ($site.PSObject.Properties['ChannelType']) {
+                    $groupPrivacy = $site.ChannelType
+                }
+                elseif ($site.PSObject.Properties['StorageQuotaType']) {
+                    $groupPrivacy = "M365 Group"
+                }
+                else {
+                    $groupPrivacy = "Group-Connected"
+                }
+            }
+
+            # Evaluate Site Collection Administrators and unique inheritance
+            if ($DetailedScan -or -not [string]::IsNullOrWhiteSpace($site.Owner)) {
+                try {
+                    $siteConn = Connect-PnPOnline -Url $site.Url -Interactive:$Interactive `
+                        -ClientId $ClientId -Tenant $TenantId -Thumbprint $CertificateThumbprint `
+                        -ReturnConnection -ErrorAction SilentlyContinue
+
+                    if ($siteConn) {
+                        $siteAdmins = Get-PnPSiteCollectionAdmin -Connection $siteConn -ErrorAction SilentlyContinue
+                        if ($siteAdmins) {
+                            $adminsCount = @($siteAdmins).Count
+                            foreach ($adm in $siteAdmins) {
+                                $admName = if (-not [string]::IsNullOrWhiteSpace($adm.Email)) { $adm.Email } elseif (-not [string]::IsNullOrWhiteSpace($adm.LoginName)) { $adm.LoginName } else { $adm.Title }
+                                $adminList.Add($admName)
+                            }
+                        }
+
+                        # Check broken inheritance on root web or primary document library
+                        if ($DetailedScan) {
+                            $rootWeb = Get-PnPWeb -Connection $siteConn -ErrorAction SilentlyContinue
+                            if ($rootWeb -and $rootWeb.HasUniqueRoleAssignments) {
+                                $hasUniquePerms = $true
+                            }
+
+                            $docLib = Get-PnPList -Identity "Documents" -Connection $siteConn -ErrorAction SilentlyContinue
+                            if ($docLib -and $docLib.HasUniqueRoleAssignments) {
+                                $hasUniquePerms = $true
+                            }
+                        }
+
+                        Disconnect-PnPOnline -Connection $siteConn -ErrorAction SilentlyContinue
+                    }
+                }
+                catch {
+                    Write-Log -Level WARN -Message "Could not inspect site-level admins for '$($site.Url)': $($_.Exception.Message)"
+                }
+            }
+
+            # Fallback if admin inspection was not possible or returned 0
+            if ($adminsCount -eq 0 -and -not [string]::IsNullOrWhiteSpace($ownerUpn) -and $ownerUpn -ne "N/A") {
+                $adminsCount = 1
+                $adminList.Add($ownerUpn)
+            }
+
+            # Storage metrics
+            $storageUsedMB = if ($site.StorageUsageCurrent) { [int]$site.StorageUsageCurrent } else { 0 }
+            $storageLimitMB = if ($site.StorageMaximumLevel) { [int]$site.StorageMaximumLevel } else { 0 }
+
+            # Anonymous link expiration
+            $anonExpirationDays = if ($site.AnonymousLinkExpirationInDays) { [int]$site.AnonymousLinkExpirationInDays } else { 0 }
+            $sharingCapability = if ($site.SharingCapability) { $site.SharingCapability.ToString() } else { "Unknown" }
+
+            # Build intermediate record for risk evaluation
+            $siteEvalData = [PSCustomObject]@{
+                Url                           = $site.Url
+                Title                         = if ($site.Title) { $site.Title } else { "Untitled Site" }
+                Owner                         = $ownerUpn
+                SiteAdminsCount               = $adminsCount
+                SharingCapability             = $sharingCapability
+                AnonymousLinkExpirationInDays = $anonExpirationDays
+                GroupPrivacy                  = $groupPrivacy
+                SensitivityLabel              = $sensitivity
+                HasBrokenInheritance          = $hasUniquePerms
+                StorageUsageMB                = $storageUsedMB
+                StorageLimitMB                = $storageLimitMB
+            }
+
+            # Evaluate Security Risk
+            $riskAssessment = Measure-SiteSecurityRisk -SiteData $siteEvalData
+
+            # Compile Full Audit Object
+            $record = [PSCustomObject]@{
+                ScanTimestamp                 = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                SiteTitle                     = $siteEvalData.Title
+                SiteUrl                       = $siteEvalData.Url
+                Template                      = $templateCode
+                TemplateFriendlyName          = $friendlyTemplate
+                Owner                         = $ownerUpn
+                SiteAdminsCount               = $adminsCount
+                SiteAdminsList                = ($adminList -join "; ")
+                SharingCapability             = $sharingCapability
+                AnonymousLinksPermitted       = ($sharingCapability -eq 'ExternalUserAndGuestSharing')
+                AnonymousLinkExpirationInDays = $anonExpirationDays
+                DefaultSharingLinkType        = if ($site.DefaultSharingLinkType) { $site.DefaultSharingLinkType.ToString() } else { "N/A" }
+                DefaultLinkPermission         = if ($site.DefaultLinkPermission) { $site.DefaultLinkPermission.ToString() } else { "N/A" }
+                M365GroupId                   = $groupId
+                GroupPrivacy                  = $groupPrivacy
+                SensitivityLabel              = $sensitivity
+                HasBrokenInheritance          = $hasUniquePerms
+                StorageUsageMB                = $storageUsedMB
+                StorageLimitMB                = $storageLimitMB
+                LockState                     = if ($site.LockState) { $site.LockState.ToString() } else { "Unlock" }
+                RiskLevel                     = $riskAssessment.RiskLevel
+                RiskScore                     = $riskAssessment.RiskScore
+                RiskFactors                   = $riskAssessment.RiskFactors
+                Remediations                  = $riskAssessment.Remediations
+            }
+
+            $auditRecords.Add($record)
+        }
+
+        Write-Progress -Activity "Auditing SharePoint Security Posture" -Completed
+        Write-Log -Level SUCCESS -Message "Completed evaluation of $($auditRecords.Count) site collection(s)."
+
+        # 8. Render Console Dashboard
+        Show-ConsoleAuditDashboard -Records $auditRecords
+
+        # 9. Export to CSV
+        $timestamp = (Get-Date).ToString("yyyyMMdd-HHmmss")
+        $csvFileName = "Audit-SharePointSecuritySummary-${timestamp}.csv"
+        $csvPath = Join-Path -Path $OutputPath -ChildPath $csvFileName
+        Export-AuditCsv -Records $auditRecords -FilePath $csvPath
+
+        # 10. Export HTML Executive Summary
+        if ($GenerateHtmlReport) {
+            $htmlFileName = "Audit-SharePointSecuritySummary-${timestamp}.html"
+            $htmlPath = Join-Path -Path $OutputPath -ChildPath $htmlFileName
+            Export-AuditHtmlReport -Records $auditRecords -FilePath $htmlPath -TenantAdminEndpoint $resolvedAdminUrl
+        }
+
+        # 11. Pipeline Emission
+        if ($PassThru) {
+            $auditRecords
+        }
+    }
+    catch {
+        Write-Log -Level ERROR -Message "Critical error during SharePoint security audit: $($_.Exception.Message)"
+        throw
+    }
+    finally {
+        # Session Teardown
+        if ($Script:ActiveConnection) {
+            Write-Log -Level INFO -Message "Terminating active SharePoint Online connection..."
+            try {
+                Disconnect-PnPOnline -Connection $Script:ActiveConnection -ErrorAction SilentlyContinue
+            }
+            catch {
+                Write-Verbose -Message "Connection teardown notice: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+end {
+    $duration = (Get-Date) - $Script:StartTime
+    Write-Log -Level SUCCESS -Message "Audit execution finished in $($duration.Minutes)m $($duration.Seconds)s."
+    if ($Script:LogFilePath) {
+        Write-Log -Level INFO -Message "Audit execution log saved at: $Script:LogFilePath"
+    }
+}
