@@ -93,7 +93,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Default')]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
 param(
-    [Parameter(Mandatory = $true, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true, Position = 0, ParameterSetName = 'Default')]
+    [Parameter(Mandatory = $false, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true, Position = 0, ParameterSetName = 'Default')]
     [ValidateNotNullOrEmpty()]
     [Alias('UPN', 'User', 'Identity', 'UserId')]
     [string[]]$UserPrincipalName,
@@ -1961,11 +1961,22 @@ $($tableRowsBuilder.ToString())
     }
 
     # --------------------------------------------------------------------------
-    # Check for Help invocation inside begin
+    # Check for Help invocation, no-parameter execution, and target identity
     # --------------------------------------------------------------------------
-    if ($Help) {
+    $hasPipelineInput = $MyInvocation.ExpectingInput
+    $hasUserParam     = $PSBoundParameters.ContainsKey('UserPrincipalName') -and ($null -ne $UserPrincipalName) -and ($UserPrincipalName.Count -gt 0)
+
+    # 1. Running without parameters or with -Help displays help banner and exits cleanly
+    if ($Help -or ($PSBoundParameters.Count -eq 0 -and -not $hasPipelineInput)) {
         Show-ScriptHelp
         exit 0
+    }
+
+    # 2. Running with options but omitting -UserPrincipalName and without pipeline input
+    if (-not $hasUserParam -and -not $hasPipelineInput) {
+        Write-Host "[-] Error: Parameter -UserPrincipalName is required. Specify at least one user to audit (e.g. -UserPrincipalName `"user@domain.com`") or use pipeline input." -ForegroundColor Red
+        Write-Host "[*] Run without parameters or with -Help to display the full usage guide.`n" -ForegroundColor Yellow
+        exit 1
     }
 
     Initialize-AuditLogging -TargetDirectory $LogPath

@@ -80,7 +80,7 @@ Enterprise-grade PowerShell access audit and reporting utility for **Microsoft 3
 
 | Parameter | Type | Required | Default | Description |
 | :--- | :---: | :---: | :---: | :--- |
-| `-UserPrincipalName` | `string[]` | **Yes** | — | One or more User Principal Names (UPN) or ObjectIds of users to audit. Supports pipeline input (`ValueFromPipeline`). Aliases: `-UPN`, `-User`, `-Identity`, `-UserId`. |
+| `-UserPrincipalName` | `string[]` | Required* | — | One or more User Principal Names (UPN) or ObjectIds of users to audit. Running without parameters displays the help banner. Specifying target user(s) is done via this parameter or pipeline (`ValueFromPipeline`). Aliases: `-UPN`, `-User`, `-Identity`, `-UserId`. |
 | `-IncludeExchangePermissions` | `switch` | No | `$false` | Scans Exchange Online mailboxes for delegated permissions (`FullAccess`, `SendAs`, `SendOnBehalf`) held directly or via groups. |
 | `-IncludeSharePointSiteAudit` | `switch` | No | `$false` | Inspects site collection permissions on SharePoint Online sites associated with user groups. |
 | `-IncludePIM` | `switch` | No | `$false` | Audits Entra ID Privileged Identity Management (PIM) eligible role assignment schedules. |
