@@ -1,4 +1,4 @@
-﻿# Microsoft 365 Exchange Online Automation Toolkit
+# Microsoft 365 Exchange Online Automation Toolkit
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-blue.svg)](https://microsoft.com/powershell)
 [![Exchange Online](https://img.shields.io/badge/Exchange%20Online-v3.0%2B-0078D4.svg)](https://learn.microsoft.com/powershell/exchange/)
@@ -42,6 +42,7 @@ A centralized, enterprise-grade PowerShell automation repository engineered for 
 
 | Tool / Directory | Focus Area | Primary Capabilities |
 | :--- | :--- | :--- |
+| [**Audit-ExchangeSecuritySummary**](Audit-ExchangeSecuritySummary/) | Security & Governance | Audits tenant site collections for external sharing, site admins, access governance, and security posture. |
 | [**Manage-M365TenantFilterList**](Manage-M365TenantFilterList/) | Security & Anti-Spam | Audits, searches, adds, and removes sender domains and emails across Anti-Spam inbound policies (`HostedContentFilterPolicy`) and Tenant Allow/Block Lists (`TABL`). |
 | [**Get-M365Users**](Get-M365Users/) | User Auditing & Licensing | Generates detailed reports of tenant users, assigned licenses, mailbox configurations, account statuses, and SKU breakdowns. |
 | [**Manage-M365UserAccount**](Manage-M365UserAccount/) | Identity & Account Lifecycle | End-to-end user management via Microsoft Graph: password resets, account locking/unlocking, MFA auditing, and Entra ID attributes. |
