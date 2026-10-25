@@ -14,6 +14,7 @@ Enterprise-grade PowerShell automation utilities for **Microsoft 365** and **Sha
 | :--- | :--- | :---: |
 | [Audit-SharePoint-Site](./Audit-SharePoint-Site) | Audits site, library, folder, and item-level permissions with broken inheritance detection. | 1.0.0 |
 | [Audit-SharePointSecuritySummary](./Audit-SharePointSecuritySummary/) | Audits SharePoint Online external sharing, permissions, orphaned sites, and exports security dashboards (HTML/CSV). | 1.0.0 |
+| [Get-SharePointSitesAndUsers](./Get-SharePointSitesAndUsers/) | Audits SharePoint Online site collections and aggregates user roles into 4 standardized permission tiers. | 1.0.0 |
 | [Manage-SharePoint-Site](./Manage-SharePoint-Site) | Automates site administration: site inventory listing, categorized permissions auditing, defining site modifiers, changing user roles, and safe user removal. | 1.0.0 |
 | [New-SharePoint-Site](./New-SharePoint-Site) | Provisions modern Company-Wide preview sites or isolated empty sites with designated owners, members, and visitors. | 1.0.0 |
 | [Sync-SharePointLibrary](./Sync-SharePointLibrary) | Automates SharePoint Online document library mapping and synchronization to Windows File Explorer via native OneDrive sync client. | 1.0.0 |
