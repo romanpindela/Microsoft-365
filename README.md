@@ -31,8 +31,9 @@ Microsoft 365/
 │   ├── Manage-MailflowRules/        # Transport rules lifecycle and backup
 │   ├── Manage-M365TenantFilterList/ # Anti-Spam whitelists/blacklists and TABL synchronization
 │   └── set-Mailbox1YearArchive...   # Retention policy configuration
-├── Helpdesk/                        # Helpdesk troubleshooting, endpoint remediation, and cache resets
-│   └── Reset-TeamsIdentityCache     # Reset Teams caches, WAM token broker, and identity credentials
+├── Teams/                           # Microsoft Teams lifecycle, governance, and identity remediation
+│   ├── Get-TeamsAndUsers/           # Comprehensive Teams & SharePoint permissions and role mapping
+│   └── Reset-TeamsIdentityCache/    # Reset Teams caches, WAM token broker, and identity credentials
 ├── OneDrive/                        # Cloud storage administration, synchronization, and uploads
 │   ├── Sync-OneDriveFolderAndNotify # Cloud-to-local and local-to-cloud sync with progress and notifications
 │   └── Upload-LargeFilesSession     # Chunked Graph upload session for files up to 250 GB
@@ -81,6 +82,10 @@ Microsoft 365/
 
 ### 6. Email & Dispatching (/Send-M365Mail)
 * [**Send-M365Mail**](Exchange/Send-M365Mail/README.md) — Enterprise email dispatcher for Microsoft 365 / Exchange Online via Microsoft Graph API. Supports automated X.509 certificate authentication (App-Only daemon) or interactive sign-in with MFA, client configuration deployment, Base64 MIME attachment encoding, rich HTML bodies, and mandatory execution logging to C:\Logs.
+
+### 7. Microsoft Teams (/Teams)
+* [**Get-TeamsAndUsers**](Teams/Get-TeamsAndUsers/README.md) — Audits Microsoft Teams and underlying SharePoint sites, mapping users, owners, members, and guest permissions in clean tabular view.
+* [**Reset-TeamsIdentityCache**](Teams/Reset-TeamsIdentityCache/README.md) — Comprehensive remediation tool for Microsoft Teams authentication loops, token expiration, stale tenant profiles, and WAM/IdentityCache corruption. Purges New Teams (MSIX) and Classic Teams caches, OneAuth tokens, Web Account Manager broker state, and Windows Credential Manager entries with detailed feature cataloging (-ListFeatures), simulation mode (-WhatIf), and structured logging.
 
 ---
 
