@@ -54,12 +54,15 @@ A centralized, enterprise-grade PowerShell automation repository engineered for 
 | [**Get-M365MessageTrace**](Get-M365MessageTrace/) | Diagnostics & Delivery Tracking | Queries historical message traces, tracks delivery status, inspects quarantine states, and troubleshoots spam verdicts. |
 | [**Manage-AutomaticRepliesMailbox**](Manage-AutomaticRepliesMailbox/) | Mailbox Availability | Audits, schedules, configures, and disables Out-Of-Office (OOF) automatic replies and internal/external message bodies. |
 | [**Send-M365Mail**](Send-M365Mail/) | Mail Dispatch & Automation | Automated Microsoft 365 email dispatcher via Microsoft Graph with certificate (App-Only) and interactive (MFA) authentication, attachments, and logging. |
+| [Audit-ExchangeSecuritySummary](./Audit-ExchangeSecuritySummary/) | Non-intrusive Exchange Online security posture audit with plain-English risk rationales and standalone HTML reporting. | v1.0.0 |
 
 ---
 
 ## Detailed Tool Descriptions
 
 ### 1. Security & Mailflow Protection
+- **[Audit-ExchangeSecuritySummary](Audit-ExchangeSecuritySummary/Audit-ExchangeSecuritySummary.ps1)**:
+  Non-intrusive Exchange Online security posture auditor assessing modern authentication, mail routing exfiltration protections, unified audit logging, mailbox delegation sprawl, and high-privilege RBAC assignments with standalone executive HTML reporting.
 - **[Manage-M365TenantFilterList](Manage-M365TenantFilterList/Manage-M365TenantFilterList.ps1)**:
   Manages tenant-wide whitelists and blacklists. Fully synchronizes Anti-Spam Inbound Policies (`AllowedSenders`, `AllowedSenderDomains`, `BlockedSenders`, `BlockedSenderDomains`) with Defender's Tenant Allow/Block List (TABL). Includes wildcard search, duplicate protection, and automated CSV reporting.
 - **[Manage-MailflowRules](Manage-MailflowRules/Manage-MailflowRules.ps1)**:

@@ -22,6 +22,7 @@ Microsoft 365/
 │   ├── Manage-M365Groups/           # Lifecycle management of M365 Groups, DLs, and Security Groups
 │   └── Manage-M365UserAccount/      # User password reset, account lock/unlock, and alias control
 ├── Exchange/                        # Exchange Online administration, mailflow, and archiving
+│   ├── Audit-ExchangeSecuritySummary/ # Security posture audit, risk rationales, and standalone HTML dashboard
 │   ├── Enable-OnlineArchive/        # Provisioning online archive mailboxes
 │   ├── Get-MailboxSizeAndArchive... # Deep mailbox storage forensics and quota monitoring
 │   ├── Get-M365MessageTrace/        # Message delivery tracking and quarantine diagnostics
@@ -52,6 +53,7 @@ Microsoft 365/
 * [**Upload-LargeFilesSession**](OneDrive/Upload-LargeFilesSession/README.md) — Uploads large files (up to 250 GB), entire directory trees, and wildcard file sets (*.pdf, p?indela.pdf, p*.docx, folder names) to user OneDrive libraries using Microsoft Graph createUploadSession chunking. Features automatic remote folder creation, dual progress bars (MB/s, ETA), UTF-8 file logging, and Entra ID App-Only non-interactive authentication. Accompanied by three in-depth PDF guides: Graph SDK Compendium, Security Hardening Guide, and X.509 Certificate Walkthrough.
 
 ### 2. Exchange Online (/Exchange)
+* [**Audit-ExchangeSecuritySummary**](Exchange/Audit-ExchangeSecuritySummary/README.md) — Non-intrusive Exchange Online security posture audit evaluating modern authentication, mail routing exfiltration, unified auditing, mailbox delegation sprawl, and RBAC roles with standalone executive HTML reporting.
 * [**Manage-M365TenantFilterList**](Exchange/Manage-M365TenantFilterList/README.md) — Audits, searches, adds, and removes sender domains and emails across Anti-Spam inbound policies and Tenant Allow/Block Lists (TABL).
 * [**Get-MailboxSizeAndArchiveDetails**](Exchange/Get-MailboxSizeAndArchiveDetails/README.md) — Capacity auditing of primary mailboxes, archive quotas, item counts, and storage usage.
 * [**Manage-AutomaticRepliesMailbox**](Exchange/Manage-AutomaticRepliesMailbox/README.md) — Auditing and scheduling internal/external Out-Of-Office (OOF) auto-replies.
