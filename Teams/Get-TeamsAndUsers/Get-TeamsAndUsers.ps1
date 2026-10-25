@@ -128,6 +128,7 @@ begin {
     )
     $Script:AllAuditResults = [System.Collections.Generic.List[PSCustomObject]]::new()
     $Script:TeamsInventory = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $Script:SharePointBaseUrl = $null
 
     # ==============================================================================
     # LOGGING SUBSYSTEM
@@ -205,7 +206,12 @@ Log Destination  : $($Script:LogFilePath)
             'SUCCESS' { Write-Host "[$Level] " -ForegroundColor Green -NoNewline; Write-Host $Message -ForegroundColor White }
             'WARN'    { Write-Host "[$Level] " -ForegroundColor Yellow -NoNewline; Write-Host $Message -ForegroundColor Yellow }
             'ERROR'   { Write-Host "[$Level] " -ForegroundColor Red -NoNewline; Write-Host $Message -ForegroundColor Red }
-            'DEBUG'   { Write-Host "[$Level] " -ForegroundColor DarkGray -NoNewline; Write-Host $Message -ForegroundColor DarkGray }
+            'DEBUG'   {
+                if ($DebugPreference -ne 'SilentlyContinue') {
+                    Write-Host "[$Level] " -ForegroundColor DarkGray -NoNewline
+                    Write-Host $Message -ForegroundColor DarkGray
+                }
+            }
         }
     }
 
@@ -325,6 +331,24 @@ Log Destination  : $($Script:LogFilePath)
                 Write-Log -Message $err -Level 'ERROR'
                 throw $err
             }
+        }
+
+        # Auto-discover tenant SharePoint root base URL
+        try {
+            $org = Invoke-GraphSingleRequest -Uri "https://graph.microsoft.com/v1.0/organization?`$select=verifiedDomains"
+            if ($null -ne $org -and $org.value) {
+                foreach ($dom in $org.value[0].verifiedDomains) {
+                    if ($dom.name -and $dom.name.EndsWith(".onmicrosoft.com", [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $prefix = $dom.name.Substring(0, $dom.name.IndexOf(".onmicrosoft.com", [System.StringComparison]::OrdinalIgnoreCase))
+                        $Script:SharePointBaseUrl = "https://${prefix}.sharepoint.com/sites"
+                        Write-Log -Message "Discovered tenant SharePoint root: '$($Script:SharePointBaseUrl)'" -Level 'DEBUG'
+                        break
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Log -Message "Could not auto-discover tenant SharePoint root via organization API: $($_.Exception.Message)" -Level 'DEBUG'
         }
     }
 
@@ -487,6 +511,19 @@ Log Destination  : $($Script:LogFilePath)
             $siteUrl = 'Not Provisioned'
             if ($null -ne $spoSiteObj -and $spoSiteObj.webUrl) {
                 $siteUrl = [string]$spoSiteObj.webUrl
+                if ([string]::IsNullOrEmpty($Script:SharePointBaseUrl)) {
+                    try {
+                        $parsedUri = [System.Uri]$siteUrl
+                        $Script:SharePointBaseUrl = "$($parsedUri.Scheme)://$($parsedUri.Authority)/sites"
+                    }
+                    catch {
+                        Write-Log -Message "Could not parse SharePoint URL '$siteUrl': $($_.Exception.Message)" -Level 'DEBUG'
+                    }
+                }
+            }
+            elseif (-not [string]::IsNullOrEmpty($Script:SharePointBaseUrl) -and $mailNickName -ne 'N/A') {
+                # Intelligent fallback derivation using discovered tenant SharePoint root and team mailNickname
+                $siteUrl = "$($Script:SharePointBaseUrl.TrimEnd('/'))/$mailNickName"
             }
 
             $teamRecord = [PSCustomObject]@{
@@ -718,12 +755,12 @@ process {
 
 end {
     try {
-        $totalTeams = $Script:TeamsInventory.Count
-        $totalUsers = $Script:AllAuditResults.Count
-        $totalOwners = ($Script:AllAuditResults | Where-Object { $_.Role -eq 'Owner' }).Count
-        $totalMembers = ($Script:AllAuditResults | Where-Object { $_.Role -eq 'Member' }).Count
-        $totalGuests = ($Script:AllAuditResults | Where-Object { $_.Role -eq 'Guest' }).Count
-        $totalDisabled = ($Script:AllAuditResults | Where-Object { $_.AccountStatus -eq 'Disabled' }).Count
+        $totalTeams = @($Script:TeamsInventory).Count
+        $totalUsers = @($Script:AllAuditResults).Count
+        $totalOwners = @($Script:AllAuditResults | Where-Object { $_.Role -eq 'Owner' }).Count
+        $totalMembers = @($Script:AllAuditResults | Where-Object { $_.Role -eq 'Member' }).Count
+        $totalGuests = @($Script:AllAuditResults | Where-Object { $_.Role -eq 'Guest' }).Count
+        $totalDisabled = @($Script:AllAuditResults | Where-Object { $_.AccountStatus -eq 'Disabled' }).Count
 
         if ($Script:AllAuditResults.Count -gt 0) {
             $tableColumns = @(
