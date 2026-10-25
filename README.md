@@ -17,6 +17,7 @@ This toolkit is organized into modular functional domains:
 `	ext
 Microsoft 365/
 ├── EntraID/                         # Identity, user accounts, licensing, and security groups
+│   ├── Audit-EntraIDSecuritySummary/ # Security posture audit against CIS Benchmark with HTML dashboard
 │   ├── Get-M365UserAccessAudit/     # Deep user access matrix across Entra ID, Roles, Teams, SPO & EXO
 │   ├── Get-M365Users/               # Comprehensive user auditing and executive license summary
 │   ├── Manage-M365Groups/           # Lifecycle management of M365 Groups, DLs, and Security Groups
@@ -40,6 +41,8 @@ Microsoft 365/
 ├── Send-M365Mail/                   # Microsoft Graph automated email dispatcher with certificate & interactive auth
 └── SharePoint/                      # SharePoint Online governance, auditing, and synchronization
     ├── Audit-SharePoint-Site        # Deep permission auditing, broken inheritance detection, and export
+    ├── Audit-SharePointSecuritySummary # Tenant-wide SPO security posture audit with HTML dashboard
+    ├── Get-SharePointSitesAndUsers  # Audit SPO site collections & aggregate users into 4 permission tiers
     ├── Manage-SharePoint-Site       # Full site administration, role modification, and user management
     ├── New-SharePoint-Site          # Modern preview and empty site provisioning
     └── Sync-SharePointLibrary       # Automatic mapping of SharePoint libraries via OneDrive sync client
@@ -66,6 +69,7 @@ Microsoft 365/
 * [**Send-M365Mail**](Exchange/Send-M365Mail/README.md) — Enterprise email dispatcher for Microsoft 365 / Exchange Online via Microsoft Graph API. Supports automated X.509 certificate authentication (App-Only daemon) or interactive sign-in with MFA, client configuration deployment, Base64 MIME attachment encoding, rich HTML bodies, and mandatory execution logging to `C:\Logs`.
 
 ### 3. Microsoft Entra ID (/EntraID)
+* [**Audit-EntraIDSecuritySummary**](EntraID/Audit-EntraIDSecuritySummary/README.md) — Read-only security posture audit aligned with CIS Microsoft 365 Foundations Benchmark standards, evaluating user & app settings, guest access, authentication methods/SSPR, Conditional Access, and Global Administrator break-glass hygiene with an interactive HTML executive dashboard.
 * [**Get-M365UserAccessAudit**](EntraID/Get-M365UserAccessAudit/README.md) — Comprehensive user access matrix mapping direct and transitive group memberships, directory roles, PIM schedules, Teams, SharePoint sites, and Exchange mailbox delegations with interactive HTML dashboard.
 * [**Manage-M365UserAccount**](EntraID/Manage-M365UserAccount/README.md) — Password resets, sign-in blocking/unblocking, active session revocation, alias management, and user auditing via Microsoft Graph.
 * [**Get-M365Users**](EntraID/Get-M365Users/README.md) — Comprehensive tenant-wide user auditing, licensing SKU breakdowns, and mailbox status reporting.
@@ -76,6 +80,8 @@ Microsoft 365/
 
 ### 5. SharePoint Online (`/SharePoint`)
 * [**Audit-SharePoint-Site**](SharePoint/Audit-SharePoint-Site/README.md) — Audits site, library, folder, and item-level permissions with broken inheritance detection, nested group expansion, and automated CSV/JSON exports.
+* [**Audit-SharePointSecuritySummary**](SharePoint/Audit-SharePointSecuritySummary/README.md) — Non-intrusive SharePoint Online security posture assessment evaluating external sharing controls, anonymous guest links, legacy auth, and access governance with interactive HTML dashboard.
+* [**Get-SharePointSitesAndUsers**](SharePoint/Get-SharePointSitesAndUsers/README.md) — Audits SharePoint Online site collections and aggregates user roles into 4 standardized permission tiers (Site Admins, Owners, Members, Visitors) with pipeline streaming.
 * [**Manage-SharePoint-Site**](SharePoint/Manage-SharePoint-Site/README.md) — Automates SharePoint Online site administration: site inventory listing, categorized permissions auditing, defining site modifiers, changing user roles, and safe user removal.
 * [**New-SharePoint-Site**](SharePoint/New-SharePoint-Site/README.md) — Provisions modern Company-Wide preview sites or isolated empty sites with designated owners, members, and visitors.
 * [**Sync-SharePointLibrary**](SharePoint/Sync-SharePointLibrary/README.md) — Automates SharePoint Online document library mapping and synchronization to Windows 10/11 File Explorer using native OneDrive sync client (`odopen://sync?`), supporting tenant auto-discovery, interactive device code login, and non-interactive Entra ID app credentials.
