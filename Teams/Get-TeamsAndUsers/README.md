@@ -35,6 +35,20 @@ Managing collaboration lifecycles and permission governance across modern Micros
 
 ---
 
+## 📸 Visual Overview & Live Execution
+
+### 1. Standard Run & Interactive Help Banner
+Running `Get-TeamsAndUsers.ps1` without parameters or with `-Help` displays the built-in guide, parameter descriptions, prerequisites, and operational usage examples:
+
+![Get-TeamsAndUsers Standard Run Banner](assets/Standard_run.jpg)
+
+### 2. Grouped Teams & Users Permissions Table
+Executing an inventory audit (e.g. `.\Get-TeamsAndUsers.ps1 -All`) discovers all Teams across the tenant, resolves underlying SharePoint site URLs, renders color-coded user permissions grouped by Team, and concludes with an executive KPI summary card:
+
+![Get-TeamsAndUsers Live Audit Execution](assets/Audit1.jpg)
+
+---
+
 ## 🏗️ Architecture & Execution Flow
 
 ```mermaid
