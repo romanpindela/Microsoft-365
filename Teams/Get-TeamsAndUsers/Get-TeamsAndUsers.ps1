@@ -37,6 +37,11 @@
     Defaults to 'C:\Logs' (or the script directory if C:\Logs is inaccessible).
     Aliases: -OutputPath, -Path.
 
+.PARAMETER PassThru
+    Switch parameter. Emits structured [PSCustomObject] records to the PowerShell pipeline
+    for downstream cmdlets, scripting, or Out-GridView. When omitted, displays the visual
+    colored console report.
+
 .PARAMETER Help
     Switch parameter. Displays command syntax, parameter descriptions, prerequisites, and practical examples.
     Aliases: -h.
@@ -63,7 +68,7 @@
 
 .EXAMPLE
     # Query all Teams and pipe results to Out-GridView or downstream filtering
-    .\Get-TeamsAndUsers.ps1 -All | Where-Object { $_.Role -eq 'Guest' } | Out-GridView
+    .\Get-TeamsAndUsers.ps1 -All -PassThru | Where-Object { $_.Role -eq 'Guest' } | Out-GridView
 
 .NOTES
     Script Name   : Get-TeamsAndUsers.ps1
@@ -95,6 +100,9 @@ param(
     [Parameter(Mandatory = $false)]
     [Alias('OutputPath', 'Path')]
     [string]$ExportPath,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$PassThru,
 
     [Parameter(Mandatory = $false)]
     [Alias('h')]
@@ -235,8 +243,8 @@ Log Destination  : $($Script:LogFilePath)
         Write-Host "  permission hierarchies (Owners, Members, and External Guests)."
         Write-Host ""
         Write-Host "SYNTAX:" -ForegroundColor Yellow
-        Write-Host "  .\Get-TeamsAndUsers.ps1 -All [-ExportCsv] [-ExportPath <String>]"
-        Write-Host "  .\Get-TeamsAndUsers.ps1 -Site <String> [-ExportCsv] [-ExportPath <String>]"
+        Write-Host "  .\Get-TeamsAndUsers.ps1 -All [-ExportCsv] [-ExportPath <String>] [-PassThru]"
+        Write-Host "  .\Get-TeamsAndUsers.ps1 -Site <String> [-ExportCsv] [-ExportPath <String>] [-PassThru]"
         Write-Host "  .\Get-TeamsAndUsers.ps1 -Help"
         Write-Host ""
         Write-Host "PARAMETERS:" -ForegroundColor Yellow
@@ -245,6 +253,7 @@ Log Destination  : $($Script:LogFilePath)
         Write-Host "                         MailNickName, Group ID (GUID), or SharePoint site URL."
         Write-Host "  -ExportCsv           : Optional switch to export audit results to a CSV report."
         Write-Host "  -ExportPath <String> : Directory path for exported CSV reports (defaults to C:\Logs\)."
+        Write-Host "  -PassThru            : Optional switch to emit [PSCustomObject] pipeline records."
         Write-Host "  -Help, -h            : Displays this help screen, parameter details, and examples."
         Write-Host ""
         Write-Host "PREREQUISITES & PERMISSIONS:" -ForegroundColor Yellow
@@ -271,8 +280,8 @@ Log Destination  : $($Script:LogFilePath)
         Write-Host "  # Audit by SharePoint Online site URL"
         Write-Host "  .\Get-TeamsAndUsers.ps1 -Site ""https://contoso.sharepoint.com/sites/Marketing""" -ForegroundColor Green
         Write-Host ""
-        Write-Host "  # Pipeline integration: filter only guest users"
-        Write-Host "  .\Get-TeamsAndUsers.ps1 -All | Where-Object { `$_.Role -eq 'Guest' } | Out-GridView" -ForegroundColor Green
+        Write-Host "  # Pipeline integration: emit objects and filter only guest users"
+        Write-Host "  .\Get-TeamsAndUsers.ps1 -All -PassThru | Where-Object { `$_.Role -eq 'Guest' } | Out-GridView" -ForegroundColor Green
         Write-Host ""
         Write-Host "================================================================================" -ForegroundColor Cyan
     }
@@ -689,6 +698,113 @@ Log Destination  : $($Script:LogFilePath)
         }
     }
 
+    function Show-TeamsReportConsole {
+        [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns', '')]
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Collections.Generic.List[PSCustomObject]]$Teams,
+
+            [Parameter(Mandatory = $true)]
+            [System.Collections.Generic.List[PSCustomObject]]$Users
+        )
+
+        $teamCount = @($Teams).Count
+        if ($teamCount -eq 0) { return }
+
+        $teamIdx = 0
+        foreach ($team in $Teams) {
+            $teamIdx++
+            $teamUsers = @($Users | Where-Object { $_.GroupId -eq $team.GroupId })
+            $tOwners = @($teamUsers | Where-Object { $_.Role -eq 'Owner' }).Count
+            $tMembers = @($teamUsers | Where-Object { $_.Role -eq 'Member' }).Count
+            $tGuests = @($teamUsers | Where-Object { $_.Role -eq 'Guest' }).Count
+            $tDisabled = @($teamUsers | Where-Object { $_.AccountStatus -eq 'Disabled' }).Count
+
+            $padIdx = $teamIdx.ToString().PadLeft(2, '0')
+            $padTotal = $teamCount.ToString().PadLeft(2, '0')
+
+            Write-Host ""
+            Write-Host ("=" * 115) -ForegroundColor DarkCyan
+            Write-Host " [$padIdx/$padTotal] " -ForegroundColor Cyan -NoNewline
+            Write-Host "Team: " -ForegroundColor Gray -NoNewline
+            Write-Host ("{0,-28}" -f $team.TeamName) -ForegroundColor White -NoNewline
+            Write-Host " | Privacy: " -ForegroundColor Gray -NoNewline
+            if ($team.Privacy -eq 'Public') {
+                Write-Host ("{0,-7}" -f $team.Privacy) -ForegroundColor Green -NoNewline
+            } else {
+                Write-Host ("{0,-7}" -f $team.Privacy) -ForegroundColor Yellow -NoNewline
+            }
+            Write-Host " | Members: " -ForegroundColor Gray -NoNewline
+            Write-Host ("{0} " -f $teamUsers.Count) -ForegroundColor White -NoNewline
+            Write-Host ("(Owners: {0}, Members: {1}, Guests: {2}" -f $tOwners, $tMembers, $tGuests) -ForegroundColor DarkCyan -NoNewline
+            if ($tDisabled -gt 0) {
+                Write-Host (", Disabled: {0}" -f $tDisabled) -ForegroundColor Red -NoNewline
+            }
+            Write-Host ")" -ForegroundColor DarkCyan
+            Write-Host "       SharePoint Site : " -ForegroundColor Gray -NoNewline
+            Write-Host "$($team.SiteUrl)" -ForegroundColor DarkGray
+            Write-Host ("-" * 115) -ForegroundColor DarkGray
+
+            if ($teamUsers.Count -eq 0) {
+                Write-Host "   (No user memberships or permissions found in this team)" -ForegroundColor DarkGray
+                continue
+            }
+
+            # Calculate dynamic column widths for optimal formatting
+            $maxNameLen = 22
+            $maxUpnLen = 32
+            foreach ($u in $teamUsers) {
+                if ($u.DisplayName -and $u.DisplayName.Length -gt $maxNameLen) {
+                    $maxNameLen = [Math]::Min(36, $u.DisplayName.Length)
+                }
+                if ($u.UserPrincipalName -and $u.UserPrincipalName.Length -gt $maxUpnLen) {
+                    $maxUpnLen = [Math]::Min(45, $u.UserPrincipalName.Length)
+                }
+            }
+
+            $headerFmt = "  {0,3}  {1,-$maxNameLen}  {2,-$maxUpnLen}  {3,-9}  {4,-9}  {5,-8}"
+            Write-Host ($headerFmt -f "#", "Display Name", "User Principal Name", "Role", "User Type", "Status") -ForegroundColor DarkYellow
+            Write-Host ($headerFmt -f "---", ("-" * $maxNameLen), ("-" * $maxUpnLen), ("-" * 9), ("-" * 9), ("-" * 8)) -ForegroundColor DarkGray
+
+            $uIdx = 0
+            foreach ($u in $teamUsers) {
+                $uIdx++
+                $padUIdx = $uIdx.ToString().PadLeft(3, ' ')
+
+                Write-Host "  $padUIdx  " -ForegroundColor DarkGray -NoNewline
+
+                $safeName = if ($u.DisplayName.Length -gt $maxNameLen) { $u.DisplayName.Substring(0, $maxNameLen) } else { $u.DisplayName.PadRight($maxNameLen) }
+                Write-Host "$safeName  " -ForegroundColor White -NoNewline
+
+                $safeUpn = if ($u.UserPrincipalName.Length -gt $maxUpnLen) { $u.UserPrincipalName.Substring(0, $maxUpnLen) } else { $u.UserPrincipalName.PadRight($maxUpnLen) }
+                Write-Host "$safeUpn  " -ForegroundColor Gray -NoNewline
+
+                switch ($u.Role) {
+                    'Owner'  { Write-Host ("{0,-9}  " -f $u.Role) -ForegroundColor Green -NoNewline }
+                    'Member' { Write-Host ("{0,-9}  " -f $u.Role) -ForegroundColor Cyan -NoNewline }
+                    'Guest'  { Write-Host ("{0,-9}  " -f $u.Role) -ForegroundColor Magenta -NoNewline }
+                    default  { Write-Host ("{0,-9}  " -f $u.Role) -ForegroundColor Gray -NoNewline }
+                }
+
+                if ($u.UserType -eq 'Guest') {
+                    Write-Host ("{0,-9}  " -f $u.UserType) -ForegroundColor Magenta -NoNewline
+                } else {
+                    Write-Host ("{0,-9}  " -f $u.UserType) -ForegroundColor DarkGray -NoNewline
+                }
+
+                if ($u.AccountStatus -eq 'Disabled') {
+                    Write-Host ("{0,-8}" -f $u.AccountStatus) -ForegroundColor Red
+                } elseif ($u.AccountStatus -eq 'Enabled') {
+                    Write-Host ("{0,-8}" -f $u.AccountStatus) -ForegroundColor DarkGreen
+                } else {
+                    Write-Host ("{0,-8}" -f $u.AccountStatus) -ForegroundColor Gray
+                }
+            }
+        }
+    }
+
     # ==============================================================================
     # INITIALIZATION & EXECUTION PRE-FLIGHT
     # ==============================================================================
@@ -762,21 +878,8 @@ end {
         $totalGuests = @($Script:AllAuditResults | Where-Object { $_.Role -eq 'Guest' }).Count
         $totalDisabled = @($Script:AllAuditResults | Where-Object { $_.AccountStatus -eq 'Disabled' }).Count
 
-        if ($Script:AllAuditResults.Count -gt 0) {
-            $tableColumns = @(
-                @{ Label = 'Team Name'; Expression = { $_.TeamName }; Width = 22 },
-                @{ Label = 'Display Name'; Expression = { $_.DisplayName }; Width = 22 },
-                @{ Label = 'User Principal Name'; Expression = { $_.UserPrincipalName }; Width = 32 },
-                @{ Label = 'Role'; Expression = { $_.Role }; Width = 10 },
-                @{ Label = 'User Type'; Expression = { $_.UserType }; Width = 10 },
-                @{ Label = 'Status'; Expression = { $_.AccountStatus }; Width = 10 },
-                @{ Label = 'Privacy'; Expression = { $_.Privacy }; Width = 10 },
-                @{ Label = 'SharePoint Site URL'; Expression = { $_.SiteUrl } }
-            )
-
-            Write-Host ""
-            $Script:AllAuditResults | Format-Table -Property $tableColumns -AutoSize | Out-Host
-        }
+        # Render rich, colored, grouped console report with spacing and numbering
+        Show-TeamsReportConsole -Teams $Script:TeamsInventory -Users $Script:AllAuditResults
 
         # Executive Console Summary Card
         Write-Host ""
@@ -801,8 +904,10 @@ end {
         $elapsedFormatted = "{0:mm\:ss\.fff}" -f $elapsed
         Write-Log -Message "Audit completed successfully in $elapsedFormatted. Total records: $totalUsers." -Level 'SUCCESS'
 
-        # Emit structured objects to the PowerShell pipeline for downstream cmdlets
-        Write-Output -InputObject $Script:AllAuditResults
+        # Emit structured objects to the PowerShell pipeline only when captured, piped, or -PassThru is requested
+        if ($PassThru -or ($MyInvocation.PipelinePosition -lt $MyInvocation.PipelineLength)) {
+            Write-Output -InputObject $Script:AllAuditResults
+        }
     }
     catch {
         Write-Log -Message "Error during report generation / finalization: $($_.Exception.Message)" -Level 'ERROR'

@@ -112,6 +112,7 @@ Recommended Administrator Roles: **Global Reader**, **Teams Administrator**, or 
 | `-Site` | `String` | Optional* | `$null` | `-Team`, `-TeamName`, `-Identity` | Audits a specific Team/Site by Team Name, Display Name, MailNickName, Group GUID, or SharePoint site URL. |
 | `-ExportCsv` | `Switch` | Optional | `$false` | `-Csv`, `-Export` | Exports all audited user permission mappings to a timestamped CSV report. |
 | `-ExportPath` | `String` | Optional | `C:\Logs` | `-OutputPath`, `-Path` | Target folder where generated CSV reports are saved. Defaults to `C:\Logs\` (or script directory if inaccessible). |
+| `-PassThru` | `Switch` | Optional | `$false` | *None* | Emits raw structured `[PSCustomObject]` records to the pipeline for downstream cmdlets (`Where-Object`, `Out-GridView`). When omitted, displays only the visual console report. |
 | `-Help` | `Switch` | Optional | `$false` | `-h` | Displays detailed built-in command help, parameter syntax, prerequisites, and examples. |
 
 *\*Note: Execution requires either `-All` or `-Site <String>`. Running without parameters displays the help screen and terminates with code 0.*
@@ -130,7 +131,7 @@ Recommended Administrator Roles: **Global Reader**, **Teams Administrator**, or 
 ```powershell
 .\Get-TeamsAndUsers.ps1 -All
 ```
-*Queries all Microsoft Teams across the tenant, resolves associated SharePoint site URLs, maps all users (Owners, Members, Guests), and displays a clean table in the console.*
+*Queries all Microsoft Teams across the tenant, resolves associated SharePoint site URLs, maps all users (Owners, Members, Guests) grouped by team with rich coloring and numbering, and displays an executive summary.*
 
 ### Example 3: Audit a Specific Team by Name
 ```powershell
@@ -153,10 +154,10 @@ Recommended Administrator Roles: **Global Reader**, **Teams Administrator**, or 
 ### Example 6: Pipeline Integration & Filtering
 ```powershell
 # Filter only external guest accounts across all teams and view in Out-GridView
-.\Get-TeamsAndUsers.ps1 -All | Where-Object { $_.Role -eq 'Guest' } | Out-GridView -Title "External Guests in Teams"
+.\Get-TeamsAndUsers.ps1 -All -PassThru | Where-Object { $_.Role -eq 'Guest' } | Out-GridView -Title "External Guests in Teams"
 
 # Identify all teams where disabled user accounts retain membership
-.\Get-TeamsAndUsers.ps1 -All | Where-Object { $_.AccountStatus -eq 'Disabled' } | Select-Object TeamName, DisplayName, UserPrincipalName, Role
+.\Get-TeamsAndUsers.ps1 -All -PassThru | Where-Object { $_.AccountStatus -eq 'Disabled' } | Select-Object TeamName, DisplayName, UserPrincipalName, Role
 ```
 
 ---
@@ -173,14 +174,25 @@ Recommended Administrator Roles: **Global Reader**, **Teams Administrator**, or 
 [INFO] [1/2] Auditing Team: 'Executive Leadership' (Group ID: 7f8a9b0c-1d2e-3f4a-5b6c-7d8e9f0a1b2c)...
 [INFO] [2/2] Auditing Team: 'Global Marketing' (Group ID: 3a4b5c6d-7e8f-9a0b-1c2d-3e4f5a6b7c8d)...
 
-Team Name            Display Name         User Principal Name              Role       User Type  Status     Privacy    SharePoint Site URL
----------            ------------         -------------------              ----       ---------  ------     -------    -------------------
-Executive Leadership Megan Bowen          mbowen@contoso.com               Owner      Member     Enabled    Private    https://contoso.sharepoint.com/sites/ExecutiveLeadership
-Executive Leadership Alex Wilber          awilber@contoso.com              Member     Member     Enabled    Private    https://contoso.sharepoint.com/sites/ExecutiveLeadership
-Executive Leadership Jane Doe (Partner)   jdoe_partner.com#EXT#@contoso... Guest      Guest      Enabled    Private    https://contoso.sharepoint.com/sites/ExecutiveLeadership
-Global Marketing     Adele Vance          avance@contoso.com               Owner      Member     Enabled    Public     https://contoso.sharepoint.com/sites/GlobalMarketing
-Global Marketing     Diego Siciliani      dsiciliani@contoso.com           Member     Member     Enabled    Public     https://contoso.sharepoint.com/sites/GlobalMarketing
-Global Marketing     Patti Fernandez      pfernandez@contoso.com           Member     Member     Disabled   Public     https://contoso.sharepoint.com/sites/GlobalMarketing
+===================================================================================================================
+ [01/02] Team: Executive Leadership         | Privacy: Private | Members: 3 (Owners: 1, Members: 1, Guests: 1)
+       SharePoint Site : https://contoso.sharepoint.com/sites/ExecutiveLeadership
+-------------------------------------------------------------------------------------------------------------------
+    #  Display Name                  User Principal Name                  Role       User Type  Status  
+  ---  ----------------------------  -----------------------------------  ---------  ---------  --------
+    1  Megan Bowen                   mbowen@contoso.com                   Owner      Member     Enabled 
+    2  Alex Wilber                   awilber@contoso.com                  Member     Member     Enabled 
+    3  Jane Doe (Partner)            jdoe_partner.com#EXT#@contoso.com    Guest      Guest      Enabled 
+
+===================================================================================================================
+ [02/02] Team: Global Marketing             | Privacy: Public  | Members: 3 (Owners: 1, Members: 2, Guests: 0, Disabled: 1)
+       SharePoint Site : https://contoso.sharepoint.com/sites/GlobalMarketing
+-------------------------------------------------------------------------------------------------------------------
+    #  Display Name                  User Principal Name                  Role       User Type  Status  
+  ---  ----------------------------  -----------------------------------  ---------  ---------  --------
+    1  Adele Vance                   avance@contoso.com                   Owner      Member     Enabled 
+    2  Diego Siciliani               dsiciliani@contoso.com               Member     Member     Enabled 
+    3  Patti Fernandez               pfernandez@contoso.com               Member     Member     Disabled
 
 ================================================================================
                         AUDIT EXECUTION SUMMARY                                 
