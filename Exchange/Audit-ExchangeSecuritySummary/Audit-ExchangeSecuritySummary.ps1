@@ -351,6 +351,7 @@ function New-AuditFindingObject {
 function Export-ExchangeSecurityHtmlReport {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.Generic.List[PSCustomObject]]$Findings,
 
         [Parameter(Mandatory = $true)]
@@ -1161,6 +1162,7 @@ function Export-ExchangeSecurityHtmlReport {
 function Get-AuditModernAuth {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.Generic.List[PSCustomObject]]$FindingsList,
         [Parameter(Mandatory = $true)]
         $OrgConfig,
@@ -1364,6 +1366,7 @@ function Get-AuditModernAuth {
 function Get-AuditMailRouting {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.Generic.List[PSCustomObject]]$FindingsList,
         [switch]$ShowDetails
     )
@@ -1661,6 +1664,7 @@ function Get-AuditMailRouting {
 function Get-AuditGovernance {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.Generic.List[PSCustomObject]]$FindingsList,
         [Parameter(Mandatory = $true)]
         $OrgConfig,
@@ -1820,6 +1824,7 @@ function Get-AuditGovernance {
 function Get-AuditDelegation {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.Generic.List[PSCustomObject]]$FindingsList,
         [switch]$ShowDetails
     )
@@ -1932,6 +1937,7 @@ function Get-AuditDelegation {
 function Get-AuditRbac {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.Generic.List[PSCustomObject]]$FindingsList,
         [switch]$ShowDetails
     )
