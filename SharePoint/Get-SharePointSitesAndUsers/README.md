@@ -35,11 +35,43 @@ Managing permissions across dozens or thousands of SharePoint Online site collec
    - **Owners / Full Control** (Site Owners and full control assignments)
    - **Members / Write** (Contribute, Edit, and modification rights)
    - **Visitors / Read** (Read-only viewers and guests)
-2. **Dual Execution Modes**: Seamlessly switching between targeted inspection of an individual site collection (`-Site <Url>`) and tenant-wide comprehensive discovery (`-All`).
-3. **Pipeline-First Architecture**: Streaming structured objects directly to the output pipeline for instant filtering, sorting, or CSV export.
-4. **Fault-Tolerant Resilience**: Safely isolating access denied errors (HTTP 401/403) on individual private sites without terminating bulk audit execution.
-5. **Rate-Limiting Protection**: Exponential backoff retry engine handling Microsoft Graph and SharePoint Online HTTP 429/503 throttling.
-6. **Enterprise Audit Logging**: Synchronous timestamped logging in `C:\Logs\Get-SharePointSitesAndUsers\` with automatic fallback to user profile storage.
+2. **One-Time Seamless Authentication**: Authenticates once at the tenant/admin level and caches the bearer access token to inspect every site collection silently in the background without repeated browser logins.
+3. **Rich PowerShell Console Presentation**: Renders grouped, color-coded site cards in the terminal and concludes with an Executive Console Summary Card containing tenant-wide security totals.
+4. **Automated Standalone HTML Reporting**: Automatically generates an enterprise dark-mode HTML audit dashboard in `C:\Logs` (`Get-SharePointSitesAndUsers_yyyyMMdd_HHmmss.html`) with live instant search, SCA quick-filter, table-to-CSV export, and print formatting.
+5. **Flexible Output Channels**: Directly supports `-ExportCsv` (`-Csv`) to save a CSV report to `C:\Logs` or a custom path, and `-PassThru` to emit structured pipeline objects for downstream cmdlets (`Out-GridView`, `Where-Object`).
+6. **Dual Execution Modes**: Seamlessly switching between targeted inspection of an individual site collection (`-Site <Url>`) and tenant-wide comprehensive discovery (`-All`).
+7. **Fault-Tolerant Resilience**: Safely isolating access denied errors (HTTP 401/403) on individual private sites without terminating bulk audit execution.
+8. **Rate-Limiting Protection**: Exponential backoff retry engine handling Microsoft Graph and SharePoint Online HTTP 429/503 throttling.
+9. **Enterprise Audit Logging**: Synchronous timestamped logging in `C:\Logs\Get-SharePointSitesAndUsers\` with automatic fallback to user profile storage.
+
+---
+
+## 📸 Visual Overview & Live Execution
+
+### 1. Interactive Help Banner & Syntax
+Executing `Get-SharePointSitesAndUsers.ps1 -Help` displays the built-in guide, parameter sets, parameter descriptions, and operational usage examples:
+
+![Get-SharePointSitesAndUsers Help Banner](assets/StandardRun.jpg)
+
+### 2. Modern Session Authentication & Site Discovery
+Authenticates once against the SharePoint Online Admin Center, caches the OAuth bearer token, and discovers all tenant site collections:
+
+![Get-SharePointSitesAndUsers Session Authentication](assets/StandardRun2.jpg)
+
+### 3. Color-Coded Console Security Cards
+Renders formatted, numbered console cards for each site collection with role breakdown across Site Collection Admins, Full Control, Write, and Read:
+
+![Get-SharePointSitesAndUsers Console Report](assets/Raport.jpg)
+
+### 4. Single-Site Targeted Inspection
+Detailed inspection of specific site collections displaying identity lists and permission mapping:
+
+![Get-SharePointSitesAndUsers Site Report](assets/RaportForSite.jpg)
+
+### 5. Standalone Interactive HTML Report Dashboard
+Automatically generated in `C:\Logs`, featuring dark-mode KPI metrics, live instant search, quick filtering, and browser table-to-CSV export:
+
+![Get-SharePointSitesAndUsers HTML Report](assets/RarpotHTML.jpg)
 
 ---
 
@@ -57,7 +89,7 @@ flowchart TD
     SetCheck -->|"SingleSite (-Site)"| ResolveAdmin["Derive SharePoint Admin Center URL"]
     SetCheck -->|"AllSites (-All)"| ResolveAdmin
 
-    ResolveAdmin --> ConnectSession["Connect-SharePointSession (PnP / SPO fallback)"]
+    ResolveAdmin --> ConnectSession["Connect-SharePointSession: Authenticate ONCE & Cache Bearer Token"]
     ConnectSession --> BranchCheck{"Target Scope"}
 
     BranchCheck -->|"SingleSite"| AuditSingle["Audit Single Site Collection"]
@@ -70,18 +102,27 @@ flowchart TD
     ExcludeMy --> SiteLoop["Iterate Sites + Write-Progress"]
     IncludeAll --> SiteLoop
 
-    SiteLoop --> CheckAdmins["1. Enumerate Site Collection Administrators"]
+    SiteLoop --> CheckAdmins["1. Enumerate Site Collection Administrators (SCA)"]
     CheckAdmins --> CheckGroups["2. Enumerate Associated Groups (Owners/Members/Visitors)"]
     CheckGroups --> CheckRoles["3. Inspect Role Assignments & Role Definitions"]
     CheckRoles --> ExpandM365["4. Resolve Nested M365 / Entra ID Group Claims"]
-    ExpandM365 --> Deduplicate["5. Deduplicate, Sort, and Format Identities (; delimiter)"]
+    ExpandM365 --> Deduplicate["5. Deduplicate, Sort, and Aggregate Identities"]
 
     AuditSingle --> CheckAdmins
-    Deduplicate --> EmitObject["Emit [PSCustomObject] to Pipeline (Stream 1)"]
+    Deduplicate --> StoreRecord["Store Record in $Script:AuditRecords"]
 
-    EmitObject --> NextSite{"More Sites?"}
+    StoreRecord --> NextSite{"More Sites?"}
     NextSite -->|"Yes"| SiteLoop
-    NextSite -->|"No"| Finalize["Write Summary Telemetry to Log & Exit"]
+    NextSite -->|"No"| RenderConsole["Render Color Console Report & Summary Card"]
+
+    RenderConsole --> GenerateHTML["Auto-Generate Standalone HTML Dashboard in C:\\Logs"]
+    GenerateHTML --> CheckCSV{"-ExportCsv?"}
+    CheckCSV -->|"Yes"| WriteCSV["Export CSV Report to Target Folder"]
+    CheckCSV -->|"No"| CheckPipe{"-PassThru or Piped?"}
+    WriteCSV --> CheckPipe
+    CheckPipe -->|"Yes"| EmitObjects["Emit [PSCustomObject] Records to Pipeline"]
+    CheckPipe -->|"No"| Finalize["Write Telemetry to Log & Disconnect Session"]
+    EmitObjects --> Finalize
     Finalize --> Done(["Audit Completed Successfully"])
 ```
 
@@ -100,9 +141,9 @@ flowchart TD
 |                                     │                                                   |
 |                                     ▼                                                   |
 |  [ 2. AUTHENTICATION & SESSION BINDING ]                                                |
-|    - Interactive OAuth (Browser + MFA)                                                  |
-|    - App-Only Daemon (X.509 Certificate Thumbprint or File + Client ID)                 |
-|    - Local cached Client ID retrieval (AppData\Local\SharePoint-Audit)                  |
+|    - Modern OAuth (Browser + MFA) or App-Only Daemon (Certificate Thumbprint/File)       |
+|    - Connects ONCE to Admin Center and captures reusable Bearer Access Token            |
+|    - Caches token ($Script:CachedSharePointToken) to query all sites non-interactively  |
 |                                                                                         |
 |                                     │                                                   |
 |                                     ▼                                                   |
@@ -125,10 +166,11 @@ flowchart TD
 |                                                                                         |
 |                                     │                                                   |
 |                                     ▼                                                   |
-|  [ 5. PIPELINE STREAMING & REPORTING ]                                                  |
-|    - Emits strongly-typed [PSCustomObject] to Stream 1 (Standard Output)                |
-|    - Clean pipeline: Write-Host and progress bars do NOT contaminate CSV / Grid exports |
-|    - Fully compatible with: Export-Csv, Out-GridView, Format-Table                      |
+|  [ 5. REPORTING, HTML DASHBOARD & PIPELINE ]                                            |
+|    - Colored PowerShell console cards and Executive Summary Card                        |
+|    - Automated standalone responsive dark-mode HTML report in C:\Logs                   |
+|    - Optional CSV export via -ExportCsv (-Csv) to -ExportPath (-Path)                   |
+|    - Pipeline emission: Emits [PSCustomObject] records when piped or via -PassThru     |
 +-----------------------------------------------------------------------------------------+
 ```
 
@@ -177,6 +219,9 @@ Every audited record emitted to the pipeline has the following schema:
 | `-Site` | `[string]` | *None* | `SingleSite` | URL of a specific site collection to audit. Aliases: `-Url`, `-SiteUrl`. Supports pipeline input. |
 | `-AdminCenterUrl` | `[string]` | *Auto-derived* | Both | SharePoint Admin Center URL (e.g. `https://contoso-admin.sharepoint.com`). Derived automatically if omitted. |
 | `-LogPath` | `[string]` | `'C:\Logs\Get-SharePointSitesAndUsers'` | Both | Directory for audit transcript logs. Automatically falls back to user AppData if inaccessible. |
+| `-ExportPath` | `[string]` | `'C:\Logs'` | Both | Destination directory for generated HTML report and optional CSV exports. Aliases: `-OutputPath`, `-Path`. |
+| `-ExportCsv` | `[switch]` | `$false` | Both | Automatically exports audited records into a structured CSV file in `-ExportPath`. Aliases: `-Csv`, `-Export`. |
+| `-PassThru` | `[switch]` | `$false` | Both | Emits structured `[PSCustomObject]` records directly to the PowerShell pipeline for downstream processing. |
 | `-IncludePersonalSites` | `[switch]` | `$false` | Both | Includes OneDrive for Business personal sites (`/personal/`). Excluded by default. |
 | `-ClientId` | `[string]` | *Auto-discovered* | Both | Microsoft Entra ID Application (Client) ID. Aliases: `-AppId`. |
 | `-TenantId` | `[string]` | *Auto-discovered* | Both | Microsoft Entra ID Tenant ID or domain name (e.g. `contoso.onmicrosoft.com`). Aliases: `-Tenant`. |
@@ -191,39 +236,53 @@ Every audited record emitted to the pipeline has the following schema:
 
 ## 🚀 Practical Usage Scenarios
 
-### Scenario 1: Audit a Specific Site Collection
+### Scenario 1: Tenant-Wide Audit with Console Summary & Automated HTML Report
 
-Audits permissions for a single department site and displays the output formatted in the console:
+Authenticates once, audits all site collections, outputs rich color-coded cards and executive summary in PowerShell console, and automatically writes the standalone HTML dashboard into `C:\Logs`:
+
+```powershell
+.\Get-SharePointSitesAndUsers.ps1 -All
+```
+
+### Scenario 2: Audit with Direct CSV Export to Custom Folder
+
+Performs the audit, saves the HTML dashboard, and exports the data directly to a CSV report:
+
+```powershell
+.\Get-SharePointSitesAndUsers.ps1 -All -ExportCsv -ExportPath "C:\Reports"
+```
+
+### Scenario 3: Audit a Specific Site Collection
+
+Audits permissions for a single department site, renders console cards, summary, and HTML report:
 
 ```powershell
 .\Get-SharePointSitesAndUsers.ps1 -Site "https://contoso.sharepoint.com/sites/Marketing"
 ```
 
-### Scenario 2: Pipeline Binding from URL String
+### Scenario 4: Pipeline Binding with Interactive Out-GridView or Filtering
 
-Accepts target URLs directly from the pipeline and renders an interactive GUI table:
-
-```powershell
-"https://contoso.sharepoint.com/sites/Finance" | .\Get-SharePointSitesAndUsers.ps1 | Out-GridView
-```
-
-### Scenario 3: Tenant-Wide Bulk Audit Exported to CSV
-
-Discovers all organizational site collections across the tenant and exports the permission report into a clean, UTF-8 CSV:
+Emits structured objects to the pipeline using `-PassThru` or pipe chaining:
 
 ```powershell
-.\Get-SharePointSitesAndUsers.ps1 -All | Export-Csv -Path "C:\Reports\SharePointUsersAudit.csv" -NoTypeInformation -Encoding UTF8
+.\Get-SharePointSitesAndUsers.ps1 -All -PassThru | Out-GridView
 ```
 
-### Scenario 4: Bulk Audit Including OneDrive Personal Sites
+or filter directly:
+
+```powershell
+"https://contoso.sharepoint.com/sites/Finance" | .\Get-SharePointSitesAndUsers.ps1 -PassThru | Format-Table -AutoSize
+```
+
+### Scenario 5: Bulk Audit Including OneDrive Personal Sites
 
 Audits all site collections including personal OneDrive repositories (`/personal/`):
 
 ```powershell
-.\Get-SharePointSitesAndUsers.ps1 -All -IncludePersonalSites | Format-Table -AutoSize
+.\Get-SharePointSitesAndUsers.ps1 -All -IncludePersonalSites
 ```
 
-### Scenario 5: Unattended Scheduled Daemon via Certificate Authentication
+### Scenario 6: Unattended Scheduled Daemon via Certificate Authentication
 
 Executes non-interactively in scheduled CI/CD pipelines or Windows Task Scheduler:
 
@@ -232,8 +291,8 @@ Executes non-interactively in scheduled CI/CD pipelines or Windows Task Schedule
     -AdminCenterUrl "https://contoso-admin.sharepoint.com" `
     -ClientId "11111111-2222-3333-4444-555555555555" `
     -TenantId "contoso.onmicrosoft.com" `
-    -CertificateThumbprint "A1B2C3D4E5F67890123456789ABCDEF012345678" |
-    Export-Csv -Path "C:\Reports\TenantAudit.csv" -NoTypeInformation
+    -CertificateThumbprint "A1B2C3D4E5F67890123456789ABCDEF012345678" `
+    -ExportCsv -ExportPath "C:\Reports"
 ```
 
 ---

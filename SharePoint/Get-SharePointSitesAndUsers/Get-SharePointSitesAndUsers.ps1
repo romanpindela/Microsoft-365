@@ -112,6 +112,8 @@
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'AllSites')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns', '')]
 param(
     [Parameter(Mandatory = $true, ParameterSetName = 'AllSites', Position = 0)]
     [switch]$All,
@@ -152,6 +154,17 @@ param(
     [switch]$Interactive,
 
     [Parameter(Mandatory = $false)]
+    [Alias('Csv', 'Export')]
+    [switch]$ExportCsv,
+
+    [Parameter(Mandatory = $false)]
+    [Alias('OutputPath', 'Path')]
+    [string]$ExportPath = "C:\Logs",
+
+    [Parameter(Mandatory = $false)]
+    [switch]$PassThru,
+
+    [Parameter(Mandatory = $false)]
     [switch]$Force,
 
     [Parameter(Mandatory = $true, ParameterSetName = 'Help')]
@@ -178,15 +191,17 @@ begin {
         FallbackMod  = "Microsoft.Online.SharePoint.PowerShell"
     }
 
-    $Script:StartTime        = Get-Date
-    $Script:LogFilePath      = $null
-    $Script:ActiveConnection = $null
-    $Script:ActiveClientId   = $null
-    $Script:ActiveTenant     = $null
-    $Script:EngineMode       = $null
-    $Script:TotalSites       = 0
-    $Script:ProcessedSites   = 0
-    $Script:FailedSites      = 0
+    $Script:StartTime             = Get-Date
+    $Script:LogFilePath           = $null
+    $Script:ActiveConnection      = $null
+    $Script:ActiveClientId        = $null
+    $Script:ActiveTenant          = $null
+    $Script:CachedSharePointToken = $null
+    $Script:AuditRecords          = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $Script:EngineMode            = $null
+    $Script:TotalSites            = 0
+    $Script:ProcessedSites        = 0
+    $Script:FailedSites           = 0
 
     $Script:ScriptFilePath = if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
         $PSCommandPath
@@ -219,7 +234,8 @@ begin {
         Write-Host "`nDESCRIPTION:" -ForegroundColor White
         Write-Host "    Audits SharePoint Online site collections and aggregates user roles and permissions." -ForegroundColor Gray
         Write-Host "    Maps entitled users to 4 standardized tiers: SiteCollectionAdmins, FullControl, Write, Read." -ForegroundColor Gray
-        Write-Host "    Emits structured [PSCustomObject] records directly to the pipeline for CSV/Grid export." -ForegroundColor Gray
+        Write-Host "    Authenticates ONCE, prints a colored console summary, auto-generates an HTML report in C:\Logs," -ForegroundColor Gray
+        Write-Host "    and optionally exports to CSV or emits structured [PSCustomObject] pipeline records." -ForegroundColor Gray
         Write-Host "`nPARAMETER SETS:" -ForegroundColor Yellow
         Write-Host "    [AllSites]   : Get-SharePointSitesAndUsers.ps1 -All [-AdminCenterUrl <Url>] [-IncludePersonalSites] ..." -ForegroundColor Gray
         Write-Host "    [SingleSite] : Get-SharePointSitesAndUsers.ps1 -Site <Url> [-AdminCenterUrl <Url>] ..." -ForegroundColor Gray
@@ -229,6 +245,9 @@ begin {
         Write-Host "    -Site (-Url)           [String]  Target site collection URL (e.g. 'https://contoso.sharepoint.com/sites/hr')." -ForegroundColor Gray
         Write-Host "    -AdminCenterUrl        [String]  SharePoint Admin URL (e.g. 'https://contoso-admin.sharepoint.com')." -ForegroundColor Gray
         Write-Host "    -LogPath               [String]  Directory for transcript logs (Default: 'C:\Logs\Get-SharePointSitesAndUsers')." -ForegroundColor Gray
+        Write-Host "    -ExportPath (-Path)    [String]  Destination folder for HTML and CSV reports (Default: 'C:\Logs')." -ForegroundColor Gray
+        Write-Host "    -ExportCsv (-Csv)      [Switch]  Export audit results to a CSV report." -ForegroundColor Gray
+        Write-Host "    -PassThru              [Switch]  Emit [PSCustomObject] records to the pipeline for downstream cmdlets." -ForegroundColor Gray
         Write-Host "    -IncludePersonalSites  [Switch]  Include OneDrive for Business personal sites." -ForegroundColor Gray
         Write-Host "    -ClientId (-AppId)     [String]  Microsoft Entra ID Application (Client) ID." -ForegroundColor Gray
         Write-Host "    -TenantId (-Tenant)    [String]  Microsoft Entra ID Tenant ID or domain (contoso.onmicrosoft.com)." -ForegroundColor Gray
@@ -238,9 +257,10 @@ begin {
         Write-Host "    -Force                 [Switch]  Bypass confirmation prompts." -ForegroundColor Gray
         Write-Host "    -Help (-h)             [Switch]  Display this help screen and exit." -ForegroundColor Gray
         Write-Host "`nEXAMPLES:" -ForegroundColor Yellow
+        Write-Host "    .\Get-SharePointSitesAndUsers.ps1 -All" -ForegroundColor Green
         Write-Host "    .\Get-SharePointSitesAndUsers.ps1 -Site 'https://contoso.sharepoint.com/sites/Marketing'" -ForegroundColor Green
-        Write-Host "    .\Get-SharePointSitesAndUsers.ps1 -All | Export-Csv -Path 'SharePointAudit.csv' -NoTypeInformation" -ForegroundColor Green
-        Write-Host "    'https://contoso.sharepoint.com/sites/Finance' | .\Get-SharePointSitesAndUsers.ps1 | Out-GridView" -ForegroundColor Green
+        Write-Host "    .\Get-SharePointSitesAndUsers.ps1 -All -ExportCsv" -ForegroundColor Green
+        Write-Host "    .\Get-SharePointSitesAndUsers.ps1 -All -PassThru | Out-GridView" -ForegroundColor Green
         Write-Host "    .\Get-SharePointSitesAndUsers.ps1 -All -IncludePersonalSites | Format-Table -AutoSize" -ForegroundColor Green
         Write-Host "================================================================================`n" -ForegroundColor Cyan
     }
@@ -1001,8 +1021,8 @@ Please install the recommended PnP.PowerShell module:
 
             # 3.3 Wildcard fallback in cache folder if single cache file exists
             if ([string]::IsNullOrWhiteSpace($effectiveClientId) -and (Test-Path -Path $cacheDir)) {
-                $cachedFiles = Get-ChildItem -Path (Join-Path -Path $cacheDir -ChildPath "*_client_id.txt") -ErrorAction SilentlyContinue
-                if ($cachedFiles -and $cachedFiles.Count -eq 1) {
+                $cachedFiles = @(Get-ChildItem -Path (Join-Path -Path $cacheDir -ChildPath "*_client_id.txt") -ErrorAction SilentlyContinue)
+                if ($cachedFiles.Count -eq 1) {
                     try {
                         $cachedId = [System.IO.File]::ReadAllText($cachedFiles[0].FullName).Trim()
                         if ($cachedId -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
@@ -1067,6 +1087,30 @@ Then re-run this script with the generated Application ID:
             try {
                 $Script:ActiveConnection = Connect-PnPOnline @connectParams
                 Write-AuditLog -Level SUCCESS -Message "Connected successfully to $TargetAdminUrl via interactive PnP session."
+
+                # Pre-cache SharePoint Bearer Access Token for silent per-site connection reuse
+                $subdomain = ([System.Uri]$TargetAdminUrl).Host.Split('.')[0].Replace('-admin', '').Replace('-my', '')
+                $tenantRootUrl = "https://${subdomain}.sharepoint.com"
+
+                $Script:CachedSharePointToken = try {
+                    Get-PnPAccessToken -ResourceUrl $tenantRootUrl -Connection $Script:ActiveConnection -ErrorAction SilentlyContinue
+                } catch { $null }
+
+                if ([string]::IsNullOrWhiteSpace($Script:CachedSharePointToken)) {
+                    $Script:CachedSharePointToken = try {
+                        Get-PnPAccessToken -ResourceTypeName SharePoint -Connection $Script:ActiveConnection -ErrorAction SilentlyContinue
+                    } catch { $null }
+                }
+
+                if ([string]::IsNullOrWhiteSpace($Script:CachedSharePointToken)) {
+                    $Script:CachedSharePointToken = try {
+                        Get-PnPAccessToken -Connection $Script:ActiveConnection -ErrorAction SilentlyContinue
+                    } catch { $null }
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($Script:CachedSharePointToken)) {
+                    Write-AuditLog -Level SUCCESS -Message "SharePoint Online access token cached for silent per-site auditing."
+                }
             }
             catch {
                 if ($_.Exception.Message -match 'AADSTS700016' -or $_.Exception.Message -match 'was not found in the directory') {
@@ -1083,6 +1127,12 @@ Then re-run this script with the generated Application ID:
                             Write-AuditLog -Level INFO -Message "Retrying connection with new Application ID: $newId..."
                             $Script:ActiveConnection = Connect-PnPOnline @connectParams
                             Write-AuditLog -Level SUCCESS -Message "Connected successfully to $TargetAdminUrl via interactive session."
+
+                            $subdomain = ([System.Uri]$TargetAdminUrl).Host.Split('.')[0].Replace('-admin', '').Replace('-my', '')
+                            $tenantRootUrl = "https://${subdomain}.sharepoint.com"
+                            $Script:CachedSharePointToken = try {
+                                Get-PnPAccessToken -ResourceUrl $tenantRootUrl -Connection $Script:ActiveConnection -ErrorAction SilentlyContinue
+                            } catch { $null }
                             return
                         }
                     }
@@ -1102,6 +1152,777 @@ Then re-run this script with the generated Application ID:
                 Write-AuditLog -Level ERROR -Message "Connect-SPOService failed: $($_.Exception.Message)"
                 throw
             }
+        }
+    }
+
+    # ==============================================================================
+    # CONSOLE & REPORTING PRESENTATION LAYER
+    # ==============================================================================
+    function Show-SharePointReportConsole {
+        [CmdletBinding()]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Collections.Generic.List[PSCustomObject]]$Records
+        )
+
+        $totalCount = @($Records).Count
+        if ($totalCount -eq 0) { return }
+
+        $idx = 0
+        foreach ($rec in $Records) {
+            $idx++
+            $padIdx   = $idx.ToString().PadLeft(2, '0')
+            $padTotal = $totalCount.ToString().PadLeft(2, '0')
+
+            $isAccessDenied = ($rec.SiteCollectionAdmins -like '*Access Denied*') -or ($rec.FullControl -like '*Access Denied*')
+
+            $adminsArr = @(if (-not [string]::IsNullOrWhiteSpace($rec.SiteCollectionAdmins) -and $rec.SiteCollectionAdmins -ne 'None' -and -not $isAccessDenied) {
+                $rec.SiteCollectionAdmins.Split(';') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            })
+
+            $fullArr = @(if (-not [string]::IsNullOrWhiteSpace($rec.FullControl) -and $rec.FullControl -ne 'None' -and -not $isAccessDenied) {
+                $rec.FullControl.Split(';') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            })
+
+            $writeArr = @(if (-not [string]::IsNullOrWhiteSpace($rec.Write) -and $rec.Write -ne 'None' -and -not $isAccessDenied) {
+                $rec.Write.Split(';') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            })
+
+            $readArr = @(if (-not [string]::IsNullOrWhiteSpace($rec.Read) -and $rec.Read -ne 'None' -and -not $isAccessDenied) {
+                $rec.Read.Split(';') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            })
+
+            $titleDisplay = if (-not [string]::IsNullOrWhiteSpace($rec.SiteTitle)) { $rec.SiteTitle } else { "(Untitled Site)" }
+
+            Write-Host ""
+            Write-Host ("=" * 115) -ForegroundColor DarkCyan
+            Write-Host " [$padIdx/$padTotal] " -ForegroundColor Cyan -NoNewline
+            Write-Host "Site: " -ForegroundColor Gray -NoNewline
+            Write-Host ("{0,-32}" -f $titleDisplay) -ForegroundColor White -NoNewline
+            Write-Host " | Template: " -ForegroundColor Gray -NoNewline
+            Write-Host ("{0,-12}" -f $rec.Template) -ForegroundColor Yellow -NoNewline
+            Write-Host " | Storage: " -ForegroundColor Gray -NoNewline
+            Write-Host ("{0} MB" -f $rec.StorageUsedMB) -ForegroundColor White
+            Write-Host "       URL : " -ForegroundColor Gray -NoNewline
+            Write-Host "$($rec.SiteUrl)" -ForegroundColor DarkGray
+            Write-Host ("-" * 115) -ForegroundColor DarkGray
+
+            Write-Host "       Permissions: " -ForegroundColor Gray -NoNewline
+            if ($isAccessDenied) {
+                Write-Host "Access Denied / Insufficient Permissions" -ForegroundColor Red
+            }
+            else {
+                Write-Host "SCA: $($adminsArr.Count)  " -ForegroundColor Yellow -NoNewline
+                Write-Host "FullControl: $($fullArr.Count)  " -ForegroundColor Green -NoNewline
+                Write-Host "Write: $($writeArr.Count)  " -ForegroundColor Cyan -NoNewline
+                Write-Host "Read: $($readArr.Count)" -ForegroundColor Magenta
+            }
+
+            if ($adminsArr.Count -gt 0) {
+                Write-Host "         [SCA]         : " -ForegroundColor Yellow -NoNewline
+                Write-Host ($adminsArr -join ', ') -ForegroundColor White
+            }
+            if ($fullArr.Count -gt 0) {
+                Write-Host "         [FullControl] : " -ForegroundColor Green -NoNewline
+                Write-Host ($fullArr -join ', ') -ForegroundColor White
+            }
+            if ($writeArr.Count -gt 0) {
+                $writeDisplay = if ($writeArr.Count -gt 8) { ($writeArr[0..7] -join ', ') + " ... (+$($writeArr.Count - 8) more)" } else { $writeArr -join ', ' }
+                Write-Host "         [Write]       : " -ForegroundColor Cyan -NoNewline
+                Write-Host $writeDisplay -ForegroundColor Gray
+            }
+            if ($readArr.Count -gt 0) {
+                $readDisplay = if ($readArr.Count -gt 8) { ($readArr[0..7] -join ', ') + " ... (+$($readArr.Count - 8) more)" } else { $readArr -join ', ' }
+                Write-Host "         [Read]        : " -ForegroundColor Magenta -NoNewline
+                Write-Host $readDisplay -ForegroundColor DarkGray
+            }
+        }
+    }
+
+    function Export-SharePointCsvReport {
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Collections.Generic.List[PSCustomObject]]$Records,
+
+            [Parameter(Mandatory = $false)]
+            [string]$DestinationPath
+        )
+
+        $targetFolder = $DestinationPath
+        if ([string]::IsNullOrWhiteSpace($targetFolder)) {
+            $targetFolder = if (Test-Path -Path "C:\Logs") { "C:\Logs" } else { $PSScriptRoot }
+        }
+
+        try {
+            if (-not (Test-Path -Path $targetFolder)) {
+                $null = New-Item -Path $targetFolder -ItemType Directory -Force
+            }
+        }
+        catch {
+            $targetFolder = $PSScriptRoot
+        }
+
+        $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
+        $csvPath   = Join-Path -Path $targetFolder -ChildPath "Get-SharePointSitesAndUsers_${timestamp}.csv"
+
+        try {
+            $Records | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
+            Write-AuditLog -Level SUCCESS -Message "Audit report successfully exported to CSV: $csvPath"
+        }
+        catch {
+            Write-AuditLog -Level ERROR -Message "Failed to export audit report to CSV: $($_.Exception.Message)"
+        }
+    }
+
+    function Export-SharePointHtmlReport {
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Collections.Generic.List[PSCustomObject]]$Records,
+
+            [Parameter(Mandatory = $true)]
+            [string]$FilePath,
+
+            [Parameter(Mandatory = $false)]
+            [string]$Tenant = "SharePoint Online",
+
+            [Parameter(Mandatory = $false)]
+            [string]$Duration = "",
+
+            [Parameter(Mandatory = $false)]
+            [string]$LogFile = ""
+        )
+
+        Write-AuditLog -Level INFO -Message "Generating standalone HTML audit report: $FilePath"
+
+        $targetFolder = [System.IO.Path]::GetDirectoryName($FilePath)
+        if (-not [string]::IsNullOrWhiteSpace($targetFolder) -and -not (Test-Path -Path $targetFolder)) {
+            try {
+                $null = New-Item -Path $targetFolder -ItemType Directory -Force
+            } catch { $null = $_ }
+        }
+
+        $totalSites     = @($Records).Count
+        $totalStorageMB = ($Records | Measure-Object -Property StorageUsedMB -Sum).Sum
+        if ($null -eq $totalStorageMB) { $totalStorageMB = 0 }
+        $totalStorageGB = [Math]::Round(($totalStorageMB / 1024), 2)
+
+        $allAdmins = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $allOwners = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $allWrite  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $allRead   = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+        foreach ($r in $Records) {
+            if ($r.SiteCollectionAdmins -and $r.SiteCollectionAdmins -ne 'None' -and $r.SiteCollectionAdmins -notlike '*Access Denied*') {
+                foreach ($u in $r.SiteCollectionAdmins.Split(';')) {
+                    $trimmed = $u.Trim()
+                    if ($trimmed) { $null = $allAdmins.Add($trimmed) }
+                }
+            }
+            if ($r.FullControl -and $r.FullControl -ne 'None' -and $r.FullControl -notlike '*Access Denied*') {
+                foreach ($u in $r.FullControl.Split(';')) {
+                    $trimmed = $u.Trim()
+                    if ($trimmed) { $null = $allOwners.Add($trimmed) }
+                }
+            }
+            if ($r.Write -and $r.Write -ne 'None' -and $r.Write -notlike '*Access Denied*') {
+                foreach ($u in $r.Write.Split(';')) {
+                    $trimmed = $u.Trim()
+                    if ($trimmed) { $null = $allWrite.Add($trimmed) }
+                }
+            }
+            if ($r.Read -and $r.Read -ne 'None' -and $r.Read -notlike '*Access Denied*') {
+                foreach ($u in $r.Read.Split(';')) {
+                    $trimmed = $u.Trim()
+                    if ($trimmed) { $null = $allRead.Add($trimmed) }
+                }
+            }
+        }
+
+        # Build table rows HTML
+        $tableHtmlBuilder = [System.Text.StringBuilder]::new()
+        $rowIdx = 0
+        foreach ($r in $Records) {
+            $rowIdx++
+            $titleDisplay = if (-not [string]::IsNullOrWhiteSpace($r.SiteTitle)) { $r.SiteTitle } else { "(Untitled Site)" }
+            $encodedTitle = [System.Net.WebUtility]::HtmlEncode($titleDisplay)
+            $encodedUrl   = [System.Net.WebUtility]::HtmlEncode($r.SiteUrl)
+            $encodedTpl   = [System.Net.WebUtility]::HtmlEncode($r.Template)
+
+            # Build badge pills for SCA
+            $scaPills = [System.Text.StringBuilder]::new()
+            if ($r.SiteCollectionAdmins -like '*Access Denied*') {
+                $null = $scaPills.Append('<span class="badge badge-danger">Access Denied</span>')
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($r.SiteCollectionAdmins) -and $r.SiteCollectionAdmins -ne 'None') {
+                foreach ($u in $r.SiteCollectionAdmins.Split(';')) {
+                    $tu = $u.Trim()
+                    if ($tu) {
+                        $null = $scaPills.Append("<span class=`"badge badge-sca`">$([System.Net.WebUtility]::HtmlEncode($tu))</span>")
+                    }
+                }
+            }
+            else {
+                $null = $scaPills.Append('<span class="text-muted">None</span>')
+            }
+
+            # Build badge pills for FullControl
+            $fullPills = [System.Text.StringBuilder]::new()
+            if ($r.FullControl -like '*Access Denied*') {
+                $null = $fullPills.Append('<span class="badge badge-danger">Access Denied</span>')
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($r.FullControl) -and $r.FullControl -ne 'None') {
+                foreach ($u in $r.FullControl.Split(';')) {
+                    $tu = $u.Trim()
+                    if ($tu) {
+                        $null = $fullPills.Append("<span class=`"badge badge-owners`">$([System.Net.WebUtility]::HtmlEncode($tu))</span>")
+                    }
+                }
+            }
+            else {
+                $null = $fullPills.Append('<span class="text-muted">None</span>')
+            }
+
+            # Build badge pills for Write
+            $writePills = [System.Text.StringBuilder]::new()
+            if ($r.Write -like '*Access Denied*') {
+                $null = $writePills.Append('<span class="badge badge-danger">Access Denied</span>')
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($r.Write) -and $r.Write -ne 'None') {
+                foreach ($u in $r.Write.Split(';')) {
+                    $tu = $u.Trim()
+                    if ($tu) {
+                        $null = $writePills.Append("<span class=`"badge badge-write`">$([System.Net.WebUtility]::HtmlEncode($tu))</span>")
+                    }
+                }
+            }
+            else {
+                $null = $writePills.Append('<span class="text-muted">None</span>')
+            }
+
+            # Build badge pills for Read
+            $readPills = [System.Text.StringBuilder]::new()
+            if ($r.Read -like '*Access Denied*') {
+                $null = $readPills.Append('<span class="badge badge-danger">Access Denied</span>')
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($r.Read) -and $r.Read -ne 'None') {
+                foreach ($u in $r.Read.Split(';')) {
+                    $tu = $u.Trim()
+                    if ($tu) {
+                        $null = $readPills.Append("<span class=`"badge badge-read`">$([System.Net.WebUtility]::HtmlEncode($tu))</span>")
+                    }
+                }
+            }
+            else {
+                $null = $readPills.Append('<span class="text-muted">None</span>')
+            }
+
+            $hasScaAttr = if ($r.SiteCollectionAdmins -and $r.SiteCollectionAdmins -ne 'None' -and $r.SiteCollectionAdmins -notlike '*Access Denied*') { 'true' } else { 'false' }
+
+            $rowHtml = @"
+            <tr class="audit-row" data-template="$encodedTpl" data-has-sca="$hasScaAttr">
+                <td class="text-center font-bold text-muted">$rowIdx</td>
+                <td>
+                    <div class="site-title">$encodedTitle</div>
+                    <div class="site-url"><a href="$encodedUrl" target="_blank" rel="noopener noreferrer">$encodedUrl</a></div>
+                </td>
+                <td><span class="badge badge-template">$encodedTpl</span></td>
+                <td class="text-right font-mono">$($r.StorageUsedMB) MB</td>
+                <td>$($scaPills.ToString())</td>
+                <td>$($fullPills.ToString())</td>
+                <td>$($writePills.ToString())</td>
+                <td>$($readPills.ToString())</td>
+            </tr>
+"@
+            $null = $tableHtmlBuilder.AppendLine($rowHtml)
+        }
+
+        $scanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+        $htmlContent = @"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SharePoint Online Sites & Users Audit - $Tenant</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border-color: #334155;
+            --color-sca: #f59e0b;
+            --color-owners: #10b981;
+            --color-write: #06b6d4;
+            --color-read: #8b5cf6;
+            --color-danger: #ef4444;
+            --color-info: #3b82f6;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 1680px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .header-title h1 {
+            font-size: 1.85rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-title p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            margin-top: 4px;
+        }
+
+        .header-meta {
+            text-align: right;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .header-meta strong {
+            color: var(--text-secondary);
+        }
+
+        /* METRICS */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .metric-card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 18px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.15s ease;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--text-muted);
+        }
+
+        .card-sites::before { background: var(--color-info); }
+        .card-storage::before { background: #6366f1; }
+        .card-sca::before { background: var(--color-sca); }
+        .card-owners::before { background: var(--color-owners); }
+        .card-write::before { background: var(--color-write); }
+        .card-read::before { background: var(--color-read); }
+
+        .metric-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .metric-value {
+            font-size: 2.1rem;
+            font-weight: 700;
+        }
+
+        .metric-sub {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* CONTROLS */
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 14px 18px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+
+        .search-box {
+            display: flex;
+            align-items: center;
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px 14px;
+            min-width: 320px;
+            flex: 1;
+            max-width: 500px;
+        }
+
+        .search-box input {
+            background: transparent;
+            border: none;
+            outline: none;
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            width: 100%;
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            background-color: var(--bg-hover);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-weight: 500;
+        }
+
+        .btn:hover, .btn.active {
+            background-color: var(--color-info);
+            color: #ffffff;
+            border-color: var(--color-info);
+        }
+
+        .btn-action {
+            background-color: #334155;
+            color: var(--text-primary);
+        }
+
+        /* TABLE */
+        .table-container {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.88rem;
+        }
+
+        th {
+            background-color: #0f172a;
+            color: var(--text-secondary);
+            font-weight: 600;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border-color);
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+
+        th:hover {
+            color: var(--text-primary);
+        }
+
+        td {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: top;
+        }
+
+        tr.audit-row:hover {
+            background-color: rgba(51, 65, 85, 0.4);
+        }
+
+        .site-title {
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 0.95rem;
+        }
+
+        .site-url a {
+            color: var(--color-info);
+            text-decoration: none;
+            font-size: 0.8rem;
+            word-break: break-all;
+        }
+
+        .site-url a:hover {
+            text-decoration: underline;
+        }
+
+        /* BADGES */
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin: 2px;
+            word-break: break-all;
+        }
+
+        .badge-sca {
+            background-color: rgba(245, 158, 11, 0.18);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+        }
+
+        .badge-owners {
+            background-color: rgba(16, 185, 129, 0.18);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.35);
+        }
+
+        .badge-write {
+            background-color: rgba(6, 182, 212, 0.18);
+            color: #22d3ee;
+            border: 1px solid rgba(6, 182, 212, 0.35);
+        }
+
+        .badge-read {
+            background-color: rgba(139, 92, 246, 0.18);
+            color: #a78bfa;
+            border: 1px solid rgba(139, 92, 246, 0.35);
+        }
+
+        .badge-template {
+            background-color: #334155;
+            color: #cbd5e1;
+            font-family: monospace;
+            font-size: 0.72rem;
+        }
+
+        .badge-danger {
+            background-color: rgba(239, 68, 68, 0.2);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+        }
+
+        .font-mono { font-family: monospace; }
+        .font-bold { font-weight: 700; }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .text-muted { color: var(--text-muted); font-size: 0.8rem; }
+
+        .footer {
+            margin-top: 24px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.82rem;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        @media print {
+            body { background: #ffffff; color: #000000; padding: 0; }
+            .toolbar, .btn, .search-box { display: none; }
+            th { background: #f1f5f9; color: #000000; }
+            .metric-card, .table-container { border: 1px solid #cbd5e1; background: #ffffff; color: #000000; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <div class="header">
+            <div class="header-title">
+                <h1>SharePoint Sites & Users Audit</h1>
+                <p>Security role entitlement audit: Site Collection Admins, Full Control, Write, Read</p>
+            </div>
+            <div class="header-meta">
+                <div>Tenant: <strong>$Tenant</strong></div>
+                <div>Generated: <strong>$scanDate</strong></div>
+                <div>Duration: <strong>$Duration</strong></div>
+                <div>Log File: <strong>$([System.IO.Path]::GetFileName($LogFile))</strong></div>
+            </div>
+        </div>
+
+        <!-- METRICS -->
+        <div class="metrics-grid">
+            <div class="metric-card card-sites">
+                <div class="metric-label">Total Sites Audited</div>
+                <div class="metric-value">$totalSites</div>
+                <div class="metric-sub">Site collections evaluated</div>
+            </div>
+            <div class="metric-card card-storage">
+                <div class="metric-label">Total Storage Used</div>
+                <div class="metric-value">$totalStorageGB <span style="font-size:1.1rem;font-weight:400;">GB</span></div>
+                <div class="metric-sub">$totalStorageMB MB consumed</div>
+            </div>
+            <div class="metric-card card-sca">
+                <div class="metric-label">Site Collection Admins</div>
+                <div class="metric-value" style="color:var(--color-sca);">$($allAdmins.Count)</div>
+                <div class="metric-sub">Unique administrator accounts</div>
+            </div>
+            <div class="metric-card card-owners">
+                <div class="metric-label">Full Control (Owners)</div>
+                <div class="metric-value" style="color:var(--color-owners);">$($allOwners.Count)</div>
+                <div class="metric-sub">Unique owner accounts</div>
+            </div>
+            <div class="metric-card card-write">
+                <div class="metric-label">Write (Members)</div>
+                <div class="metric-value" style="color:var(--color-write);">$($allWrite.Count)</div>
+                <div class="metric-sub">Unique edit / contribute users</div>
+            </div>
+            <div class="metric-card card-read">
+                <div class="metric-label">Read (Visitors)</div>
+                <div class="metric-value" style="color:var(--color-read);">$($allRead.Count)</div>
+                <div class="metric-sub">Unique read-only users</div>
+            </div>
+        </div>
+
+        <!-- CONTROLS -->
+        <div class="toolbar">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search by site title, URL, template, or user email/login...">
+            </div>
+            <div class="filter-buttons">
+                <button class="btn active" onclick="filterTable('all', this)">All Sites</button>
+                <button class="btn" onclick="filterTable('sca', this)">Has SCA Admins</button>
+                <button class="btn btn-action" onclick="exportTableToCSV()">Export CSV</button>
+                <button class="btn btn-action" onclick="window.print()">Print Report</button>
+            </div>
+        </div>
+
+        <!-- TABLE -->
+        <div class="table-container">
+            <table id="auditTable">
+                <thead>
+                    <tr>
+                        <th style="width: 45px;">#</th>
+                        <th style="min-width: 260px;">Site Title & URL</th>
+                        <th style="width: 130px;">Template</th>
+                        <th style="width: 100px; text-align: right;">Storage</th>
+                        <th style="min-width: 220px;">Site Collection Admins (SCA)</th>
+                        <th style="min-width: 220px;">Full Control (Owners)</th>
+                        <th style="min-width: 220px;">Write (Members)</th>
+                        <th style="min-width: 200px;">Read (Visitors)</th>
+                    </tr>
+                </thead>
+                <tbody>
+$($tableHtmlBuilder.ToString())
+                </tbody>
+            </table>
+        </div>
+
+        <!-- FOOTER -->
+        <div class="footer">
+            <p>Report automatically generated by <strong>Get-SharePointSitesAndUsers.ps1</strong> &bull; Microsoft 365 Security Automation</p>
+        </div>
+    </div>
+
+    <script>
+        // Live client-side search across all columns
+        document.getElementById('searchInput').addEventListener('keyup', function() {
+            var filter = this.value.toLowerCase();
+            var rows = document.querySelectorAll('#auditTable tbody tr');
+            rows.forEach(function(row) {
+                var text = row.textContent.toLowerCase();
+                row.style.display = text.indexOf(filter) > -1 ? '' : 'none';
+            });
+        });
+
+        // Quick filter buttons
+        function filterTable(type, btn) {
+            document.querySelectorAll('.filter-buttons .btn').forEach(function(b) {
+                if (!b.classList.contains('btn-action')) b.classList.remove('active');
+            });
+            btn.classList.add('active');
+
+            var rows = document.querySelectorAll('#auditTable tbody tr');
+            rows.forEach(function(row) {
+                if (type === 'all') {
+                    row.style.display = '';
+                } else if (type === 'sca') {
+                    row.style.display = row.getAttribute('data-has-sca') === 'true' ? '' : 'none';
+                }
+            });
+        }
+
+        // Export table directly to CSV
+        function exportTableToCSV() {
+            var csv = [];
+            var rows = document.querySelectorAll("#auditTable tr");
+            for (var i = 0; i < rows.length; i++) {
+                if (rows[i].style.display === 'none') continue;
+                var row = [], cols = rows[i].querySelectorAll("td, th");
+                for (var j = 0; j < cols.length; j++) {
+                    var cellText = cols[j].innerText.replace(/(\r\n|\n|\r)/gm, " ").replace(/"/g, '""').trim();
+                    row.push('"' + cellText + '"');
+                }
+                csv.push(row.join(","));
+            }
+            var blob = new Blob([csv.join("\n")], { type: "text/csv;charset=utf-8;" });
+            var link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = "Get-SharePointSitesAndUsers_Report.csv";
+            link.click();
+        }
+    </script>
+</body>
+</html>
+"@
+
+        try {
+            [System.IO.File]::WriteAllText($FilePath, $htmlContent, [System.Text.Encoding]::UTF8)
+            Write-AuditLog -Level SUCCESS -Message "HTML audit report generated successfully at: $FilePath"
+        }
+        catch {
+            Write-AuditLog -Level ERROR -Message "Failed to write HTML audit report: $($_.Exception.Message)"
         }
     }
 
@@ -1143,37 +1964,56 @@ Then re-run this script with the generated Application ID:
         $siteConn = $null
         try {
             if ($Script:EngineMode -eq 'PnP') {
-                # Connect to specific site collection
-                $siteConnParams = @{
-                    Url              = $TargetSiteUrl
-                    ReturnConnection = $true
-                    ErrorAction      = 'Stop'
+                # Attempt silent connection via cached/acquired Access Token (ZERO interactive prompts)
+                $siteToken = $Script:CachedSharePointToken
+                if ([string]::IsNullOrWhiteSpace($siteToken)) {
+                    $siteToken = try {
+                        Get-PnPAccessToken -ResourceUrl $TargetSiteUrl -Connection $Script:ActiveConnection -ErrorAction SilentlyContinue
+                    } catch { $null }
                 }
-                if ($Interactive -or $null -ne $Script:ActiveClientId) {
-                    $siteConnParams['Interactive'] = $true
-                    if ($null -ne $Script:ActiveClientId) { $siteConnParams['ClientId'] = $Script:ActiveClientId }
-                    if ($null -ne $Script:ActiveTenant) { $siteConnParams['Tenant'] = $Script:ActiveTenant }
+                if ([string]::IsNullOrWhiteSpace($siteToken)) {
+                    $siteToken = try {
+                        Get-PnPAccessToken -ResourceTypeName SharePoint -Connection $Script:ActiveConnection -ErrorAction SilentlyContinue
+                    } catch { $null }
                 }
-                elseif (-not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
-                    $siteConnParams['ClientId'] = if (-not [string]::IsNullOrWhiteSpace($ClientId)) { $ClientId } else { $Script:ActiveClientId }
-                    $siteConnParams['Tenant'] = if (-not [string]::IsNullOrWhiteSpace($TenantId)) { $TenantId } else { $Script:ActiveTenant }
-                    $siteConnParams['Thumbprint'] = $CertificateThumbprint
+
+                if (-not [string]::IsNullOrWhiteSpace($siteToken)) {
+                    $siteConn = try {
+                        Connect-PnPOnline -Url $TargetSiteUrl -AccessToken $siteToken -ReturnConnection -ErrorAction Stop
+                    } catch { $null }
                 }
-                elseif (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
-                    $siteConnParams['ClientId'] = if (-not [string]::IsNullOrWhiteSpace($ClientId)) { $ClientId } else { $Script:ActiveClientId }
-                    $siteConnParams['Tenant'] = if (-not [string]::IsNullOrWhiteSpace($TenantId)) { $TenantId } else { $Script:ActiveTenant }
-                    $siteConnParams['CertificatePath'] = $CertificatePath
-                    if ($null -ne $CertificatePassword) {
-                        $siteConnParams['CertificatePassword'] = $CertificatePassword
+
+                if ($null -eq $siteConn) {
+                    if (-not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
+                        $siteConn = try {
+                            Connect-PnPOnline -Url $TargetSiteUrl `
+                                -ClientId (if (-not [string]::IsNullOrWhiteSpace($ClientId)) { $ClientId } else { $Script:ActiveClientId }) `
+                                -Tenant (if (-not [string]::IsNullOrWhiteSpace($TenantId)) { $TenantId } else { $Script:ActiveTenant }) `
+                                -Thumbprint $CertificateThumbprint `
+                                -ReturnConnection -ErrorAction Stop
+                        } catch { $null }
+                    }
+                    elseif (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
+                        $certParams = @{
+                            Url              = $TargetSiteUrl
+                            ClientId         = if (-not [string]::IsNullOrWhiteSpace($ClientId)) { $ClientId } else { $Script:ActiveClientId }
+                            Tenant           = if (-not [string]::IsNullOrWhiteSpace($TenantId)) { $TenantId } else { $Script:ActiveTenant }
+                            CertificatePath  = $CertificatePath
+                            ReturnConnection = $true
+                            ErrorAction      = 'Stop'
+                        }
+                        if ($null -ne $CertificatePassword) {
+                            $certParams['CertificatePassword'] = $CertificatePassword
+                        }
+                        $siteConn = try {
+                            Connect-PnPOnline @certParams
+                        } catch { $null }
                     }
                 }
 
-                $siteConn = try {
-                    Connect-PnPOnline @siteConnParams
-                }
-                catch {
-                    # Fallback to inheriting current default connection
-                    Get-PnPConnection -ErrorAction SilentlyContinue
+                if ($null -eq $siteConn) {
+                    # Fallback to inheriting current active admin connection
+                    $siteConn = $Script:ActiveConnection
                 }
 
                 # Retrieve site and web properties
@@ -1568,7 +2408,7 @@ process {
         }
 
         $record = Get-SiteSecurityRecord -TargetSiteUrl $cleanSite -SiteInventoryObject $inventoryObj
-        Write-Output $record
+        $Script:AuditRecords.Add($record)
         return
     }
 
@@ -1630,7 +2470,7 @@ process {
                 -PercentComplete $pct
 
             $secRecord = Get-SiteSecurityRecord -TargetSiteUrl $sUrl -SiteInventoryObject $siteItem
-            Write-Output $secRecord
+            $Script:AuditRecords.Add($secRecord)
         }
 
         Write-Progress -Activity "Auditing SharePoint Sites & Users" -Completed
@@ -1638,21 +2478,133 @@ process {
 }
 
 end {
-    if ($Script:ActiveConnection) {
-        try {
-            Disconnect-PnPOnline -Connection $Script:ActiveConnection -ErrorAction SilentlyContinue
+    try {
+        $totalSites = @($Script:AuditRecords).Count
+
+        # Render rich, colored console report
+        Show-SharePointReportConsole -Records $Script:AuditRecords
+
+        # Calculate Executive Console Summary metrics
+        $allAdminsSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $allOwnersSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $allWriteSet  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $allReadSet   = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $totalStorageMB = 0
+
+        foreach ($r in $Script:AuditRecords) {
+            $totalStorageMB += $r.StorageUsedMB
+            if ($r.SiteCollectionAdmins -and $r.SiteCollectionAdmins -ne 'None' -and $r.SiteCollectionAdmins -notlike '*Access Denied*') {
+                foreach ($u in $r.SiteCollectionAdmins.Split(';')) {
+                    $tu = $u.Trim()
+                    if ($tu) { $null = $allAdminsSet.Add($tu) }
+                }
+            }
+            if ($r.FullControl -and $r.FullControl -ne 'None' -and $r.FullControl -notlike '*Access Denied*') {
+                foreach ($u in $r.FullControl.Split(';')) {
+                    $tu = $u.Trim()
+                    if ($tu) { $null = $allOwnersSet.Add($tu) }
+                }
+            }
+            if ($r.Write -and $r.Write -ne 'None' -and $r.Write -notlike '*Access Denied*') {
+                foreach ($u in $r.Write.Split(';')) {
+                    $tu = $u.Trim()
+                    if ($tu) { $null = $allWriteSet.Add($tu) }
+                }
+            }
+            if ($r.Read -and $r.Read -ne 'None' -and $r.Read -notlike '*Access Denied*') {
+                foreach ($u in $r.Read.Split(';')) {
+                    $tu = $u.Trim()
+                    if ($tu) { $null = $allReadSet.Add($tu) }
+                }
+            }
         }
-        catch {
-            $null = $_
+
+        $totalStorageGB = [Math]::Round(($totalStorageMB / 1024), 2)
+        $duration = (Get-Date) - $Script:StartTime
+        $durFormatted = "{0:mm}m {0:ss}s" -f $duration
+
+        # Determine output directories for HTML and CSV
+        # Default destination is C:\Logs (or script directory if C:\Logs is inaccessible)
+        $exportTargetDir = if (-not [string]::IsNullOrWhiteSpace($ExportPath)) {
+            $ExportPath
+        } elseif (Test-Path -Path "C:\Logs") {
+            "C:\Logs"
+        } else {
+            $LogPath
+        }
+
+        if (-not (Test-Path -Path $exportTargetDir)) {
+            try {
+                $null = New-Item -ItemType Directory -Path $exportTargetDir -Force -ErrorAction Stop
+            } catch {
+                $exportTargetDir = $LogPath
+            }
+        }
+
+        # Automatic Standalone HTML Report Generation
+        $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
+        $htmlFileName = "Get-SharePointSitesAndUsers_${timestamp}.html"
+        $htmlPathMain = Join-Path -Path $exportTargetDir -ChildPath $htmlFileName
+        $htmlPathLog  = Join-Path -Path $LogPath -ChildPath $htmlFileName
+
+        $effectiveTenantDisplay = if (-not [string]::IsNullOrWhiteSpace($Script:ActiveTenant)) { $Script:ActiveTenant } else { "SharePoint Online" }
+        Export-SharePointHtmlReport -Records $Script:AuditRecords -FilePath $htmlPathMain -Tenant $effectiveTenantDisplay -Duration $durFormatted -LogFile $Script:LogFilePath
+        if ($htmlPathMain -ne $htmlPathLog -and (Test-Path -Path $LogPath)) {
+            try {
+                Copy-Item -Path $htmlPathMain -Destination $htmlPathLog -Force -ErrorAction SilentlyContinue
+            } catch {
+                $null = $_
+            }
+        }
+
+        # Executive Console Summary Card
+        Write-Host ""
+        Write-Host "================================================================================" -ForegroundColor Cyan
+        Write-Host "                    SHAREPOINT AUDIT EXECUTION SUMMARY                          " -ForegroundColor Cyan
+        Write-Host "================================================================================" -ForegroundColor Cyan
+        Write-Host "  Total Sites Audited        : $totalSites" -ForegroundColor White
+        Write-Host "  Sites Processed (Success)  : $Script:ProcessedSites" -ForegroundColor Green
+        Write-Host "  Sites Failed / Access Denied: $Script:FailedSites" -ForegroundColor $(if ($Script:FailedSites -gt 0) { 'Red' } else { 'DarkGray' })
+        Write-Host "  Total Storage Consumed     : $totalStorageGB GB ($totalStorageMB MB)" -ForegroundColor White
+        Write-Host "  Unique Security Principals :" -ForegroundColor White
+        Write-Host "    - Site Collection Admins : $($allAdminsSet.Count)" -ForegroundColor Yellow
+        Write-Host "    - Full Control (Owners)  : $($allOwnersSet.Count)" -ForegroundColor Green
+        Write-Host "    - Write (Members)        : $($allWriteSet.Count)" -ForegroundColor Cyan
+        Write-Host "    - Read (Visitors)        : $($allReadSet.Count)" -ForegroundColor Magenta
+        Write-Host "  Audit Log File             : $Script:LogFilePath" -ForegroundColor DarkGray
+        Write-Host "  HTML Report                : $htmlPathMain" -ForegroundColor White
+        Write-Host "================================================================================" -ForegroundColor Cyan
+        Write-Host ""
+
+        # Export CSV if requested
+        if ($ExportCsv) {
+            Export-SharePointCsvReport -Records $Script:AuditRecords -DestinationPath $exportTargetDir
+        }
+
+        Write-AuditLog -Level SUCCESS -Message "================================================================================"
+        Write-AuditLog -Level SUCCESS -Message "SharePoint Sites & Users audit completed in $durFormatted."
+        Write-AuditLog -Level SUCCESS -Message "Sites Processed: $Script:ProcessedSites | Failed/Skipped: $Script:FailedSites"
+        Write-AuditLog -Level SUCCESS -Message "HTML report saved to: $htmlPathMain"
+        Write-AuditLog -Level SUCCESS -Message "Detailed execution log saved to: $Script:LogFilePath"
+        Write-AuditLog -Level SUCCESS -Message "================================================================================"
+
+        # Emit structured objects to the PowerShell pipeline only when captured, piped, or -PassThru is requested
+        if ($PassThru -or ($MyInvocation.PipelinePosition -lt $MyInvocation.PipelineLength)) {
+            Write-Output -InputObject $Script:AuditRecords
         }
     }
-
-    $duration = (Get-Date) - $Script:StartTime
-    $durFormatted = "{0:mm}m {0:ss}s" -f $duration
-
-    Write-AuditLog -Level SUCCESS -Message "================================================================================"
-    Write-AuditLog -Level SUCCESS -Message "SharePoint Sites & Users audit completed in $durFormatted."
-    Write-AuditLog -Level SUCCESS -Message "Sites Processed: $Script:ProcessedSites | Failed/Skipped: $Script:FailedSites"
-    Write-AuditLog -Level SUCCESS -Message "Detailed execution log saved to: $Script:LogFilePath"
-    Write-AuditLog -Level SUCCESS -Message "================================================================================"
+    catch {
+        Write-AuditLog -Level ERROR -Message "Error during report generation / finalization: $($_.Exception.Message)"
+        throw
+    }
+    finally {
+        if ($Script:ActiveConnection) {
+            try {
+                Disconnect-PnPOnline -Connection $Script:ActiveConnection -ErrorAction SilentlyContinue
+            }
+            catch {
+                $null = $_
+            }
+        }
+    }
 }
