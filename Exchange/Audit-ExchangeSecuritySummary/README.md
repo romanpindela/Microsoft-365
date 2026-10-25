@@ -169,6 +169,20 @@ The generated dashboard (`Audit-ExchangeSecuritySummary_<Tenant>_<Timestamp>.htm
 
 ---
 
+## 📸 Visual Walkthrough & Screenshots
+
+### 1. Interactive PowerShell Console Audit (`AuditRun.jpg`)
+Real-time console execution with color-coded ANSI status indicators (`[OK]`, `[WARN]`, `[FAIL]`), baseline evaluations across all 5 security domains, and the final executive summary card:
+
+![Console Audit Execution](assets/AuditRun.jpg)
+
+### 2. Standalone Executive HTML Dashboard (`AuditRaportHTML.jpg`)
+Executive-ready dashboard featuring overall posture score %, metric KPI cards, real-time search and severity filters, plain-English risk rationales, copyable remediation cmdlets, and the Priority Remediation Roadmap:
+
+![Exchange Online Security HTML Report](assets/AuditRaportHTML.jpg)
+
+---
+
 ## 🔒 Security & Safe Script Execution
 
 ### Unblocking PowerShell Scripts on Windows
