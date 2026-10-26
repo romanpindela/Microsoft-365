@@ -832,7 +832,7 @@ function Invoke-ListAllSites {
     Add-OperationDetail -Step "06-ListSites" -Operation "Retrieve Site Collections" -Status "Running" -Details "Querying tenant sites"
 
     try {
-        $sites = Get-SPOSite -Limit All -IncludePersonalSite:$IncludePersonal -Detailed:$ShowDetailed -ErrorAction Stop
+        $sites = Get-SPOSite -Limit All -IncludePersonalSite:([bool]$IncludePersonal) -Detailed:$ShowDetailed -ErrorAction Stop
         
         if (-not [string]::IsNullOrWhiteSpace($Keyword)) {
             Write-ScriptLog -Level INFO -Message "Filtering sites by keyword: '$Keyword'..."
