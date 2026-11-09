@@ -96,7 +96,7 @@
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: https://github.com/romanpindela
-    Version: 1.3.0
+    Version: 1.3.1
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Default')]
@@ -146,11 +146,28 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# ==============================================================================
+# ENVIRONMENT & MODULE PATH BOOTSTRAP
+# ==============================================================================
+# Ensure %LOCALAPPDATA%\WindowsPowerShell\Modules is always in $env:PSModulePath
+# (bypasses Windows Defender Controlled Folder Access block on Documents)
+$localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+$global:LocalAppDataModules = $null
+if (-not [string]::IsNullOrWhiteSpace($localAppData)) {
+    $global:LocalAppDataModules = Join-Path -Path $localAppData -ChildPath "WindowsPowerShell\Modules"
+    if (-not (Test-Path -Path $global:LocalAppDataModules)) {
+        try { New-Item -Path $global:LocalAppDataModules -ItemType Directory -Force | Out-Null } catch {}
+    }
+    if ($env:PSModulePath -notlike "*$global:LocalAppDataModules*") {
+        $env:PSModulePath = "$global:LocalAppDataModules;$env:PSModulePath"
+    }
+}
+
 function Show-ScriptHelp {
     $helpLines = @(
         "================================================================================",
         "SCRIPT: Get-M365Users.ps1",
-        "VERSION: 1.3.0",
+        "VERSION: 1.3.1",
         "AUTHOR: Roman Pindela",
         "CONTACT: roman.pindela@gmail.com | https://github.com/romanpindela",
         "================================================================================",
@@ -313,9 +330,43 @@ function Format-DateValue {
 # ----------------------------------------------------------------------
 # Microsoft 365 Exchange Online Authentication
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Prerequisites & Module Checking
+# ----------------------------------------------------------------------
+$missingModules = @()
 if (-not (Get-Module -Name ExchangeOnlineManagement -ListAvailable)) {
-    Write-Error "ExchangeOnlineManagement module is not installed.`nRun: Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser"
-    exit 1
+    $missingModules += "ExchangeOnlineManagement"
+}
+
+if ($missingModules.Count -gt 0) {
+    Write-Host "[!] Missing required module(s): $($missingModules -join ', ')" -ForegroundColor Yellow
+    $installPrompt = Read-Host "[?] Do you want to install missing modules now from PSGallery? (Y/N)"
+    if ($installPrompt -match "^(Y|y|T|t)$") {
+        Write-Host "[*] Installing missing modules ($($missingModules -join ', '))..." -ForegroundColor Cyan
+        $targetModulePath = if ($global:LocalAppDataModules) { $global:LocalAppDataModules } else { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "WindowsPowerShell\Modules" }
+        foreach ($mod in $missingModules) {
+            try {
+                Write-Host "    -> Installing $mod via Install-Module..." -ForegroundColor Gray
+                Install-Module -Name $mod -Scope CurrentUser -Repository PSGallery -Force -ErrorAction Stop
+            } catch {
+                Write-Host "    [!] Install-Module failed ($($_.Exception.Message))." -ForegroundColor Yellow
+                Write-Host "    [*] Falling back to Save-Module into '$targetModulePath'..." -ForegroundColor Cyan
+                if (-not (Test-Path -Path $targetModulePath)) {
+                    try { New-Item -Path $targetModulePath -ItemType Directory -Force | Out-Null } catch {}
+                }
+                try {
+                    Save-Module -Name $mod -Path $targetModulePath -Repository PSGallery -Force -ErrorAction Stop
+                } catch {
+                    Write-Error "Failed to install required module '$mod': $_`nPlease install manually or verify Internet connection."
+                    exit 1
+                }
+            }
+        }
+        Write-Host "[+] All required modules installed successfully!" -ForegroundColor Green
+    } else {
+        Write-Error "Execution stopped. ExchangeOnlineManagement is required to run Get-M365Users.ps1."
+        exit 1
+    }
 }
 
 try {

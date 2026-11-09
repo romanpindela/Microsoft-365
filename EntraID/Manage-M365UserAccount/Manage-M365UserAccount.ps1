@@ -76,6 +76,15 @@
     Prompts interactively to auto-generate a random password or input a masked secure password.
 
 .EXAMPLE
+    .\Manage-M365UserAccount.ps1 -UserIdentity "john.doe@domain.com" -ResetPassword -NewPassword "StartoweHaslo123!" -Force
+    Sets a specific password for the user and forces a password change at next sign-in (silent execution with -Force).
+
+.EXAMPLE
+    $secPass = "StartoweHaslo123!" | ConvertTo-SecureString -AsPlainText -Force
+    .\Manage-M365UserAccount.ps1 -UserIdentity "john.doe@domain.com" -ResetPassword -NewPassword $secPass
+    Resets the user password using a SecureString object.
+
+.EXAMPLE
     .\Manage-M365UserAccount.ps1 -UserIdentity "john.doe@domain.com" -AddEmailAlias "jdoe.alias@domain.com"
     Adds an email alias to john.doe@domain.com in Exchange Online.
 
@@ -91,7 +100,7 @@
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: https://github.com/romanpindela
-    Version: 1.5.0
+    Version: 1.5.1
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'ManageAccount')]
@@ -108,7 +117,7 @@ param(
     [switch]$ResetPassword,
 
     [Parameter(ParameterSetName = 'ManageAccount')]
-    [System.Security.SecureString]$NewPassword,
+    [object]$NewPassword,
 
     [Parameter(ParameterSetName = 'ManageAccount')]
     [switch]$BlockSignIn,
@@ -138,11 +147,28 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# ==============================================================================
+# ENVIRONMENT & MODULE PATH BOOTSTRAP
+# ==============================================================================
+# Ensure %LOCALAPPDATA%\WindowsPowerShell\Modules is always in $env:PSModulePath
+# (bypasses Windows Defender Controlled Folder Access block on Documents)
+$localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+$global:LocalAppDataModules = $null
+if (-not [string]::IsNullOrWhiteSpace($localAppData)) {
+    $global:LocalAppDataModules = Join-Path -Path $localAppData -ChildPath "WindowsPowerShell\Modules"
+    if (-not (Test-Path -Path $global:LocalAppDataModules)) {
+        try { New-Item -Path $global:LocalAppDataModules -ItemType Directory -Force | Out-Null } catch {}
+    }
+    if ($env:PSModulePath -notlike "*$global:LocalAppDataModules*") {
+        $env:PSModulePath = "$global:LocalAppDataModules;$env:PSModulePath"
+    }
+}
+
 function Show-ScriptHelp {
     $helpLines = @(
         "================================================================================",
         "SCRIPT: Manage-M365UserAccount.ps1",
-        "VERSION: 1.5.0",
+        "VERSION: 1.5.1",
         "AUTHOR: Roman Pindela",
         "CONTACT: roman.pindela@gmail.com | https://github.com/romanpindela",
         "================================================================================",
@@ -174,6 +200,13 @@ function Show-ScriptHelp {
         "",
         "    # Reset password with interactive prompt (auto-generate vs secure masked input):",
         "    .\Manage-M365UserAccount.ps1 -UserIdentity `"user@domain.com`" -ResetPassword",
+        "",
+        "    # Set a specific password using plain string (forces change at next sign-in):",
+        "    .\Manage-M365UserAccount.ps1 -UserIdentity `"user@domain.com`" -ResetPassword -NewPassword `"StartoweHaslo123!`" -Force",
+        "",
+        "    # Set a specific password using SecureString object:",
+        "    `$secPass = `"StartoweHaslo123!`" | ConvertTo-SecureString -AsPlainText -Force",
+        "    .\Manage-M365UserAccount.ps1 -UserIdentity `"user@domain.com`" -ResetPassword -NewPassword `$secPass"
         "",
         "    # Add an email alias to a user account:",
         "    .\Manage-M365UserAccount.ps1 -UserIdentity `"user@domain.com`" -AddEmailAlias `"alias@domain.com`"",
@@ -225,6 +258,9 @@ if ($BlockSignIn -and $UnblockSignIn) {
     exit 1
 }
 
+if ($null -ne $NewPassword) {
+    $ResetPassword = $true
+}
 if (-not $View -and -not $ResetPassword -and -not $BlockSignIn -and -not $UnblockSignIn -and -not $RevokeSessions -and -not $AddEmailAlias -and -not $RemoveEmailAlias) {
     Write-Error "No action specified. Provide an action flag (-View, -ResetPassword, -BlockSignIn, -UnblockSignIn, -RevokeSessions, -AddEmailAlias, -RemoveEmailAlias)."
     exit 1
@@ -292,14 +328,27 @@ if ($missingModules.Count -gt 0) {
     Write-Host "[!] Missing required module(s): $($missingModules -join ', ')" -ForegroundColor Yellow
     $installPrompt = if ($Force) { "Y" } else { Read-Host "[?] Do you want to install missing modules now from PSGallery? (Y/N)" }
     if ($installPrompt -match "^(Y|y|T|t)$") {
-        try {
-            Write-Host "[*] Installing missing modules ($($missingModules -join ', '))..." -ForegroundColor Cyan
-            Install-Module -Name $missingModules -Scope CurrentUser -Repository PSGallery -Force -ErrorAction Stop
-            Write-Host "[+] Modules installed successfully!" -ForegroundColor Green
-        } catch {
-            Write-Error "Failed to install required modules: $_`nInstall manually: Install-Module -Name Microsoft.Graph.Users, Microsoft.Graph.Authentication -Scope CurrentUser"
-            exit 1
+        Write-Host "[*] Installing missing modules ($($missingModules -join ', ')))..." -ForegroundColor Cyan
+        $targetModulePath = if ($global:LocalAppDataModules) { $global:LocalAppDataModules } else { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "WindowsPowerShell\Modules" }
+        foreach ($mod in $missingModules) {
+            try {
+                Write-Host "    -> Installing $mod via Install-Module..." -ForegroundColor Gray
+                Install-Module -Name $mod -Scope CurrentUser -Repository PSGallery -Force -ErrorAction Stop
+            } catch {
+                Write-Host "    [!] Install-Module failed ($($_.Exception.Message))." -ForegroundColor Yellow
+                Write-Host "    [*] Falling back to Save-Module into '$targetModulePath'..." -ForegroundColor Cyan
+                if (-not (Test-Path -Path $targetModulePath)) {
+                    try { New-Item -Path $targetModulePath -ItemType Directory -Force | Out-Null } catch {}
+                }
+                try {
+                    Save-Module -Name $mod -Path $targetModulePath -Repository PSGallery -Force -ErrorAction Stop
+                } catch {
+                    Write-Error "Failed to install required module '$mod': $_`nPlease install manually or verify Internet connection."
+                    exit 1
+                }
+            }
         }
+        Write-Host "[+] Modules installed successfully!" -ForegroundColor Green
     } else {
         Write-Error "Execution stopped. Required modules must be installed to continue."
         exit 1
@@ -610,7 +659,15 @@ $isAutoGenerated = $false
 
 if ($ResetPassword) {
     if ($null -ne $NewPassword) {
-        $plainPasswordToApply = Convert-SecureStringToString -Secure $NewPassword
+        if ($NewPassword -is [System.Security.SecureString]) {
+            $plainPasswordToApply = Convert-SecureStringToString -Secure $NewPassword
+        } else {
+            $plainPasswordToApply = [string]$NewPassword
+        }
+        if ([string]::IsNullOrWhiteSpace($plainPasswordToApply)) {
+            Write-Error "Password cannot be empty or whitespace."
+            exit 1
+        }
     } else {
         Write-Host "[?] Password Reset Options:" -ForegroundColor Cyan
         Write-Host "    [1] Auto-generate strong 16-character random password (Recommended)" -ForegroundColor White

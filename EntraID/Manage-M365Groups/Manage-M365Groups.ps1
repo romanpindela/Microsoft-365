@@ -225,10 +225,27 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# ==============================================================================
+# ENVIRONMENT & MODULE PATH BOOTSTRAP
+# ==============================================================================
+# Ensure %LOCALAPPDATA%\WindowsPowerShell\Modules is always in $env:PSModulePath
+# (bypasses Windows Defender Controlled Folder Access block on Documents)
+$localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+$global:LocalAppDataModules = $null
+if (-not [string]::IsNullOrWhiteSpace($localAppData)) {
+    $global:LocalAppDataModules = Join-Path -Path $localAppData -ChildPath "WindowsPowerShell\Modules"
+    if (-not (Test-Path -Path $global:LocalAppDataModules)) {
+        try { New-Item -Path $global:LocalAppDataModules -ItemType Directory -Force | Out-Null } catch {}
+    }
+    if ($env:PSModulePath -notlike "*$global:LocalAppDataModules*") {
+        $env:PSModulePath = "$global:LocalAppDataModules;$env:PSModulePath"
+    }
+}
+
 # Metadata declaration
 $ScriptMetadata = @{
     Title   = "Manage-M365Groups.ps1"
-    Version = "1.0.0"
+    Version = "1.0.1"
     Author  = "Roman Pindela"
     Email   = "roman.pindela@gmail.com"
     GitHub  = "https://github.com/romanpindela"
@@ -396,12 +413,24 @@ function Connect-ExchangeEnvironment {
     if (-not (Get-Module -Name ExchangeOnlineManagement -ListAvailable)) {
         Write-Host "[!] ExchangeOnlineManagement module is not installed." -ForegroundColor Yellow
         Write-Host "[*] Installing ExchangeOnlineManagement module for CurrentUser..." -ForegroundColor Cyan
+        $targetModulePath = if ($global:LocalAppDataModules) { $global:LocalAppDataModules } else { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "WindowsPowerShell\Modules" }
         try {
+            Write-Host "    -> Installing ExchangeOnlineManagement via Install-Module..." -ForegroundColor Gray
             Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser -Repository PSGallery -Force -AllowClobber -ErrorAction Stop
             Write-Host "[+] ExchangeOnlineManagement module installed successfully." -ForegroundColor Green
         } catch {
-            Write-Error "Failed to install ExchangeOnlineManagement module: $_`nPlease install manually via: Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser"
-            exit 1
+            Write-Host "    [!] Standard Install-Module failed ($($_.Exception.Message))." -ForegroundColor Yellow
+            Write-Host "    [*] Falling back to Save-Module into '$targetModulePath'..." -ForegroundColor Cyan
+            if (-not (Test-Path -Path $targetModulePath)) {
+                try { New-Item -Path $targetModulePath -ItemType Directory -Force | Out-Null } catch {}
+            }
+            try {
+                Save-Module -Name ExchangeOnlineManagement -Path $targetModulePath -Repository PSGallery -Force -ErrorAction Stop
+                Write-Host "[+] ExchangeOnlineManagement module saved successfully." -ForegroundColor Green
+            } catch {
+                Write-Error "Failed to install ExchangeOnlineManagement module: $_`nPlease install manually or verify Internet connection."
+                exit 1
+            }
         }
     }
 

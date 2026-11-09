@@ -105,9 +105,17 @@ Unblock-File -Path .\Manage-M365UserAccount.ps1
 .\Manage-M365UserAccount.ps1 -UserIdentity "alex.wilber@yourtenant.com" -ResetPassword
 ```
 
-### 8. Reset Password with Custom Plaintext and Block Simultaneously
+### 8. Reset Password with a Predefined Password
 
 ```powershell
+# Set a specific password directly as a string (with -Force for silent execution):
+.\Manage-M365UserAccount.ps1 -UserIdentity "alex.wilber@yourtenant.com" -ResetPassword -NewPassword "TempSummer2026!#" -Force
+
+# Or pass a SecureString object:
+$secPass = "TempSummer2026!#" | ConvertTo-SecureString -AsPlainText -Force
+.\Manage-M365UserAccount.ps1 -UserIdentity "alex.wilber@yourtenant.com" -ResetPassword -NewPassword $secPass
+
+# Reset password and simultaneously block user sign-in:
 .\Manage-M365UserAccount.ps1 -UserIdentity "alex.wilber@yourtenant.com" -ResetPassword -NewPassword "TempSummer2026!#" -BlockSignIn
 ```
 
