@@ -887,8 +887,8 @@ function Get-TenantUserLicenseData {
         }
 
         if ($userLicensesList.Count -gt 0) {
-            $licenseNames = @($userLicensesList | ForEach-Object { $_.FriendlyName })
-            $assignmentDetails = @($userLicensesList | ForEach-Object { "$($_.FriendlyName) [$($_.AssignmentType)]" })
+            $licenseNames = @($userLicensesList | ForEach-Object { "$($_.FriendlyName) [$($_.SkuPartNumber)]" })
+            $assignmentDetails = @($userLicensesList | ForEach-Object { "$($_.FriendlyName) [$($_.SkuPartNumber)] [$($_.AssignmentType)]" })
 
             $processedUsers.Add([PSCustomObject]@{
                 UserPrincipalName = $user.UserPrincipalName
@@ -1038,7 +1038,7 @@ function Export-ReportFiles {
                     @{ Label = "DisplayName"; Expression = { $_.DisplayName }; Width = 22 },
                     @{ Label = "Department"; Expression = { $_.Department }; Width = 18 },
                     @{ Label = "Enabled"; Expression = { $_.AccountEnabled }; Width = 8 },
-                    @{ Label = "Licenses"; Expression = { $_.AssignedLicenses }; Width = 45 }
+                    @{ Label = "Licenses"; Expression = { $_.AssignedLicenses }; Width = 55 }
                 ) | Out-String
                 [void]$txtBuilder.AppendLine($tbl.TrimEnd())
             }
@@ -1719,7 +1719,7 @@ try {
                 @{ Label = "DisplayName"; Expression = { $_.DisplayName }; Width = 22 },
                 @{ Label = "Department"; Expression = { $_.Department }; Width = 18 },
                 @{ Label = "Count"; Expression = { $_.LicenseCount }; Alignment = "Right"; Width = 6 },
-                @{ Label = "Assigned Licenses"; Expression = { $_.AssignedLicenses }; Width = 45 }
+                @{ Label = "Assigned Licenses"; Expression = { $_.AssignedLicenses }; Width = 55 }
             ) | Out-Host
 
             if (@($userData).Count -gt $sampleCount) {

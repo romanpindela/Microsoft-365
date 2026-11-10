@@ -94,11 +94,12 @@
 
 .NOTES
     Script: New-M365User.ps1
-    Version: 1.1.0
+    Version: 1.1.2
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: https://github.com/romanpindela
-    Required Modules: Microsoft.Graph.Users, Microsoft.Graph.Identity.DirectoryManagement, Microsoft.Graph.Groups
+    Required Modules: Microsoft.Graph.Users, Microsoft.Graph.Authentication
+    Optional Modules: Microsoft.Graph.Identity.DirectoryManagement, Microsoft.Graph.Groups
     Required Scopes: User.ReadWrite.All, Directory.ReadWrite.All, Group.ReadWrite.All
 #>
 
@@ -166,12 +167,19 @@ if (-not [string]::IsNullOrWhiteSpace($localAppData)) {
     }
 }
 
+# Try importing available Graph modules silently
+@('Microsoft.Graph.Authentication', 'Microsoft.Graph.Users', 'Microsoft.Graph.Identity.DirectoryManagement', 'Microsoft.Graph.Groups') | ForEach-Object {
+    if (-not (Get-Module -Name $_)) {
+        try { Import-Module -Name $_ -ErrorAction SilentlyContinue } catch {}
+    }
+}
+
 # ==============================================================================
 # SCRIPT METADATA & TRACKING
 # ==============================================================================
 $Script:Metadata = @{
     Name        = 'New-M365User'
-    Version     = '1.1.0'
+    Version     = '1.1.2'
     Author      = 'Roman Pindela'
     StartTime   = Get-Date
     LogFileName = "New-M365User_{0}.log" -f (Get-Date -Format 'yyyy-MM-dd')
@@ -181,13 +189,81 @@ $Script:Metadata = @{
 $Script:LogFilePath = Join-Path -Path $LogDirectory -ChildPath $Script:Metadata.LogFileName
 
 # ==============================================================================
+# HELPER: SAFE OBJECT PROPERTY RESOLVER (Set-StrictMode Safe)
+# ==============================================================================
+function Get-ObjectPropertyValue {
+    param(
+        [object]$InputObject,
+        [string]$PropertyName,
+        [object]$DefaultValue = $null
+    )
+    if ($null -eq $InputObject) { return $DefaultValue }
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        if ($InputObject.Contains($PropertyName) -and $null -ne $InputObject[$PropertyName]) {
+            return $InputObject[$PropertyName]
+        }
+        return $DefaultValue
+    }
+
+    $prop = $InputObject.PSObject.Properties[$PropertyName]
+    if ($null -ne $prop -and $null -ne $prop.Value) {
+        return $prop.Value
+    }
+    return $DefaultValue
+}
+
+# ==============================================================================
+# LOGGING MODULE (Write-M365Log)
+# ==============================================================================
+function Write-M365Log {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$Message,
+
+        [Parameter(Mandatory = $false, Position = 1)]
+        [ValidateSet('INFO', 'SUCCESS', 'WARN', 'ERROR', 'DEBUG')]
+        [string]$Level = 'INFO'
+    )
+
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $levelTag = "[$Level]".PadRight(9) + " "
+    $logEntry = "[$timestamp] $levelTag$Message"
+
+    $consoleColor = switch ($Level) {
+        'INFO'    { [ConsoleColor]::Cyan }
+        'SUCCESS' { [ConsoleColor]::Green }
+        'WARN'    { [ConsoleColor]::Yellow }
+        'ERROR'   { [ConsoleColor]::Red }
+        'DEBUG'   { [ConsoleColor]::DarkGray }
+        Default   { [ConsoleColor]::White }
+    }
+
+    Write-Host $logEntry -ForegroundColor $consoleColor
+
+    if ($Level -eq 'WARN') {
+        $Script:Metadata.HasWarnings = $true
+    }
+
+    try {
+        if (-not (Test-Path -Path $LogDirectory)) {
+            New-Item -Path $LogDirectory -ItemType Directory -Force | Out-Null
+        }
+        [System.IO.File]::AppendAllLines($Script:LogFilePath, [string[]]@($logEntry), [System.Text.Encoding]::UTF8)
+    } catch {
+        Write-Warning "Could not write log entry to '$Script:LogFilePath': $($_.Exception.Message)"
+    }
+}
+
+# ==============================================================================
 # INTERACTIVE HELP MODULE (Show-ScriptHelp)
 # ==============================================================================
 function Show-ScriptHelp {
     $helpLines = @(
         "================================================================================",
         "SCRIPT  : New-M365User.ps1",
-        "VERSION : 1.1.0",
+        "VERSION : 1.1.2",
         "AUTHOR  : Roman Pindela",
         "CONTACT : roman.pindela@gmail.com | https://github.com/romanpindela",
         "================================================================================",
@@ -274,7 +350,7 @@ function Show-ScriptHelp {
         "                        -WhatIf",
         "",
         "REQUIRED MODULES & GRAPH API PERMISSIONS:",
-        "    Modules: Microsoft.Graph.Users, Microsoft.Graph.Identity.DirectoryManagement, Microsoft.Graph.Groups",
+        "    Modules: Microsoft.Graph.Users, Microsoft.Graph.Authentication",
         "    Scopes : User.ReadWrite.All, Directory.ReadWrite.All, Group.ReadWrite.All",
         "    Sign-in: Connect-MgGraph -Scopes 'User.ReadWrite.All','Directory.ReadWrite.All','Group.ReadWrite.All'",
         "================================================================================"
@@ -289,7 +365,6 @@ if ($Help -or $PSBoundParameters.Count -eq 0) {
     exit 0
 }
 
-# If only LogDirectory was bound and no user details given
 if ($PSBoundParameters.Count -eq 1 -and $PSBoundParameters.ContainsKey('LogDirectory')) {
     Show-ScriptHelp
     exit 0
@@ -306,7 +381,7 @@ if ($null -eq $InitialPassword) {
     $missingParams += "-InitialPassword (or alias -Password as [SecureString])"
 }
 if ([string]::IsNullOrWhiteSpace($LicenseSku)) {
-    $missingParams += "-LicenseSku (or alias -License / -Sku, e.g. 'SPE_E3', 'ENTERPRISEPACK')"
+    $missingParams += "-LicenseSku (or alias -License / -Sku, e.g. 'SPE_E3', 'O365_BUSINESS_PREMIUM')"
 }
 
 if ($missingParams.Count -gt 0) {
@@ -331,53 +406,6 @@ if ([string]::IsNullOrWhiteSpace($DisplayName)) {
 }
 
 # ==============================================================================
-# LOGGING MODULE (Write-M365Log)
-# ==============================================================================
-function Write-M365Log {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true, Position = 0)]
-        [string]$Message,
-
-        [Parameter(Mandatory = $false, Position = 1)]
-        [ValidateSet('INFO', 'SUCCESS', 'WARN', 'ERROR', 'DEBUG')]
-        [string]$Level = 'INFO'
-    )
-
-    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    # Format level tag with standard width matching specification:
-    # [INFO]    (10 chars), [SUCCESS] (10 chars), [WARN]    (10 chars), [ERROR]   (10 chars)
-    $levelTag = "[$Level]".PadRight(9) + " "
-    $logEntry = "[$timestamp] $levelTag$Message"
-
-    # Console color mapping
-    $consoleColor = switch ($Level) {
-        'INFO'    { [ConsoleColor]::Cyan }
-        'SUCCESS' { [ConsoleColor]::Green }
-        'WARN'    { [ConsoleColor]::Yellow }
-        'ERROR'   { [ConsoleColor]::Red }
-        'DEBUG'   { [ConsoleColor]::DarkGray }
-        Default   { [ConsoleColor]::White }
-    }
-
-    Write-Host $logEntry -ForegroundColor $consoleColor
-
-    if ($Level -eq 'WARN') {
-        $Script:Metadata.HasWarnings = $true
-    }
-
-    # Append to file
-    try {
-        if (-not (Test-Path -Path $LogDirectory)) {
-            New-Item -Path $LogDirectory -ItemType Directory -Force | Out-Null
-        }
-        [System.IO.File]::AppendAllLines($Script:LogFilePath, [string[]]@($logEntry), [System.Text.Encoding]::UTF8)
-    } catch {
-        Write-Warning "Could not write log entry to '$Script:LogFilePath': $($_.Exception.Message)"
-    }
-}
-
-# ==============================================================================
 # SECURE PASSWORD HELPER (Zero memory leak)
 # ==============================================================================
 function Convert-SecureStringToPlainText {
@@ -395,6 +423,145 @@ function Convert-SecureStringToPlainText {
             [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
         }
     }
+}
+
+# ==============================================================================
+# RESILIENT GRAPH SKUS & GROUPS RESOLVERS (Works with or without sub-modules)
+# ==============================================================================
+function Get-TenantSubscribedSkus {
+    # 1. Try cmdlet from Microsoft.Graph.Identity.DirectoryManagement
+    if (Get-Command Get-MgSubscribedSku -ErrorAction SilentlyContinue) {
+        try {
+            return @(Get-MgSubscribedSku -All -ErrorAction Stop)
+        } catch {
+            Write-M365Log "Get-MgSubscribedSku failed ($($_.Exception.Message)), attempting REST fallback..." -Level 'DEBUG'
+        }
+    }
+
+    # 2. Resilient fallback via Invoke-MgGraphRequest (Microsoft.Graph.Authentication)
+    if (Get-Command Invoke-MgGraphRequest -ErrorAction SilentlyContinue) {
+        $uri = "https://graph.microsoft.com/v1.0/subscribedSkus"
+        $allSkus = @()
+        while (-not [string]::IsNullOrWhiteSpace($uri)) {
+            $response = Invoke-MgGraphRequest -Method GET -Uri $uri -ErrorAction Stop
+            $items = Get-ObjectPropertyValue -InputObject $response -PropertyName 'value' -DefaultValue $response
+            if ($null -ne $items) {
+                foreach ($item in $items) {
+                    $partNumber = Get-ObjectPropertyValue -InputObject $item -PropertyName 'skuPartNumber'
+                    if ($null -eq $partNumber) {
+                        $partNumber = Get-ObjectPropertyValue -InputObject $item -PropertyName 'SkuPartNumber'
+                    }
+
+                    $skuGuid = Get-ObjectPropertyValue -InputObject $item -PropertyName 'skuId'
+                    if ($null -eq $skuGuid) {
+                        $skuGuid = Get-ObjectPropertyValue -InputObject $item -PropertyName 'SkuId'
+                    }
+
+                    $consumed = Get-ObjectPropertyValue -InputObject $item -PropertyName 'consumedUnits'
+                    if ($null -eq $consumed) {
+                        $consumed = Get-ObjectPropertyValue -InputObject $item -PropertyName 'ConsumedUnits' -DefaultValue 0
+                    }
+
+                    $prepObj = Get-ObjectPropertyValue -InputObject $item -PropertyName 'prepaidUnits'
+                    if ($null -eq $prepObj) {
+                        $prepObj = Get-ObjectPropertyValue -InputObject $item -PropertyName 'PrepaidUnits'
+                    }
+
+                    $enabled = 0
+                    if ($null -ne $prepObj) {
+                        $en = Get-ObjectPropertyValue -InputObject $prepObj -PropertyName 'enabled'
+                        if ($null -eq $en) {
+                            $en = Get-ObjectPropertyValue -InputObject $prepObj -PropertyName 'Enabled' -DefaultValue 0
+                        }
+                        $enabled = $en
+                    }
+
+                    $allSkus += [pscustomobject]@{
+                        SkuPartNumber = $partNumber
+                        SkuId         = $skuGuid
+                        ConsumedUnits = [int]$consumed
+                        PrepaidUnits  = [pscustomobject]@{ Enabled = [int]$enabled }
+                    }
+                }
+            }
+
+            $uri = Get-ObjectPropertyValue -InputObject $response -PropertyName '@odata.nextLink'
+        }
+        return $allSkus
+    }
+
+    throw "Neither 'Get-MgSubscribedSku' nor 'Invoke-MgGraphRequest' is available in current session."
+}
+
+function Find-TenantGroup {
+    param([string]$DisplayName)
+
+    # 1. Try cmdlet from Microsoft.Graph.Groups
+    if (Get-Command Get-MgGroup -ErrorAction SilentlyContinue) {
+        try {
+            $escaped = $DisplayName.Replace("'", "''")
+            return @(Get-MgGroup -Filter "displayName eq '$escaped'" -ErrorAction Stop)
+        } catch {
+            Write-M365Log "Get-MgGroup failed ($($_.Exception.Message)), attempting REST fallback..." -Level 'DEBUG'
+        }
+    }
+
+    # 2. Resilient fallback via Invoke-MgGraphRequest
+    if (Get-Command Invoke-MgGraphRequest -ErrorAction SilentlyContinue) {
+        $escaped = [System.Uri]::EscapeDataString($DisplayName.Replace("'", "''"))
+        $uri = "https://graph.microsoft.com/v1.0/groups?`$filter=displayName eq '$escaped'"
+        $response = Invoke-MgGraphRequest -Method GET -Uri $uri -ErrorAction Stop
+        $items = Get-ObjectPropertyValue -InputObject $response -PropertyName 'value' -DefaultValue $response
+        $results = @()
+        if ($null -ne $items) {
+            foreach ($item in $items) {
+                $gId = Get-ObjectPropertyValue -InputObject $item -PropertyName 'id'
+                if ($null -eq $gId) { $gId = Get-ObjectPropertyValue -InputObject $item -PropertyName 'Id' }
+                $gName = Get-ObjectPropertyValue -InputObject $item -PropertyName 'displayName'
+                if ($null -eq $gName) { $gName = Get-ObjectPropertyValue -InputObject $item -PropertyName 'DisplayName' }
+                $results += [pscustomobject]@{ Id = $gId; DisplayName = $gName }
+            }
+        }
+        return $results
+    }
+
+    throw "Neither 'Get-MgGroup' nor 'Invoke-MgGraphRequest' is available in current session."
+}
+
+function Add-TenantGroupMember {
+    param(
+        [string]$GroupId,
+        [string]$UserId
+    )
+
+    $memberOdataId = "https://graph.microsoft.com/v1.0/directoryObjects/$UserId"
+
+    # 1. Try cmdlet from Microsoft.Graph.Groups
+    if (Get-Command New-MgGroupMemberByRef -ErrorAction SilentlyContinue) {
+        try {
+            $byRefCmd = Get-Command New-MgGroupMemberByRef
+            if ($byRefCmd.Parameters.ContainsKey('OdataId')) {
+                New-MgGroupMemberByRef -GroupId $GroupId -OdataId $memberOdataId -ErrorAction Stop | Out-Null
+                return
+            } elseif ($byRefCmd.Parameters.ContainsKey('BodyParameter')) {
+                $bodyParam = @{ "@odata.id" = $memberOdataId }
+                New-MgGroupMemberByRef -GroupId $GroupId -BodyParameter $bodyParam -ErrorAction Stop | Out-Null
+                return
+            }
+        } catch {
+            Write-M365Log "New-MgGroupMemberByRef failed ($($_.Exception.Message)), attempting REST fallback..." -Level 'DEBUG'
+        }
+    }
+
+    # 2. Resilient fallback via Invoke-MgGraphRequest
+    if (Get-Command Invoke-MgGraphRequest -ErrorAction SilentlyContinue) {
+        $uri = "https://graph.microsoft.com/v1.0/groups/$GroupId/members/`$ref"
+        $body = @{ "@odata.id" = $memberOdataId } | ConvertTo-Json
+        Invoke-MgGraphRequest -Method POST -Uri $uri -Body $body -ContentType "application/json" -ErrorAction Stop | Out-Null
+        return
+    }
+
+    throw "Neither 'New-MgGroupMemberByRef' nor 'Invoke-MgGraphRequest' is available in current session."
 }
 
 # ==============================================================================
@@ -434,8 +601,9 @@ Write-M365Log "Active Graph session detected for tenant: $($mgContext.TenantId) 
 # Check required scopes
 $requiredScopes = @('User.ReadWrite.All', 'Directory.ReadWrite.All', 'Group.ReadWrite.All')
 $activeScopes = @()
-if ($mgContext.Scopes) {
-    $activeScopes = $mgContext.Scopes
+$ctxScopes = Get-ObjectPropertyValue -InputObject $mgContext -PropertyName 'Scopes'
+if ($null -ne $ctxScopes) {
+    $activeScopes = $ctxScopes
 }
 
 $missingScopes = @()
@@ -455,7 +623,7 @@ $resolvedSkuId = $null
 $resolvedSkuPartNumber = $null
 
 try {
-    $allSkus = Get-MgSubscribedSku -All -ErrorAction Stop
+    $allSkus = Get-TenantSubscribedSkus
     $targetSku = $allSkus | Where-Object {
         $_.SkuPartNumber -ieq $LicenseSku -or "$($_.SkuId)" -ieq $LicenseSku
     } | Select-Object -First 1
@@ -574,9 +742,7 @@ if ($TeamGroupNames -and $TeamGroupNames.Count -gt 0) {
 
         Write-M365Log "Searching for Teams/M365 group: '$trimmedGroup'..." -Level 'DEBUG'
         try {
-            # Filter groups by displayName
-            $escapedGroupName = $trimmedGroup.Replace("'", "''")
-            $foundGroups = Get-MgGroup -Filter "displayName eq '$escapedGroupName'" -ErrorAction Stop
+            $foundGroups = Find-TenantGroup -DisplayName $trimmedGroup
 
             if ($null -eq $foundGroups -or ($foundGroups | Measure-Object).Count -eq 0) {
                 Write-M365Log "Group '$trimmedGroup' was not found in the tenant." -Level 'WARN'
@@ -588,19 +754,7 @@ if ($TeamGroupNames -and $TeamGroupNames.Count -gt 0) {
             $targetGroup = $foundGroups | Select-Object -First 1
 
             if ($PSCmdlet.ShouldProcess("$trimmedGroup ($($targetGroup.Id))", "Add user $UserPrincipalName as member")) {
-                $memberOdataId = "https://graph.microsoft.com/v1.0/directoryObjects/$($createdUser.Id)"
-                
-                # Check cmdlet parameter compatibility across Graph SDK versions
-                $byRefCmd = Get-Command New-MgGroupMemberByRef -ErrorAction SilentlyContinue
-                if ($null -ne $byRefCmd -and $byRefCmd.Parameters.ContainsKey('OdataId')) {
-                    New-MgGroupMemberByRef -GroupId $targetGroup.Id -OdataId $memberOdataId -ErrorAction Stop | Out-Null
-                } else {
-                    $bodyParam = @{
-                        "@odata.id" = $memberOdataId
-                    }
-                    New-MgGroupMemberByRef -GroupId $targetGroup.Id -BodyParameter $bodyParam -ErrorAction Stop | Out-Null
-                }
-
+                Add-TenantGroupMember -GroupId $targetGroup.Id -UserId $createdUser.Id
                 Write-M365Log "Added user to group '$trimmedGroup' (ID: $($targetGroup.Id))." -Level 'SUCCESS'
                 $groupResults += "[$($trimmedGroup): ADDED]"
             } else {

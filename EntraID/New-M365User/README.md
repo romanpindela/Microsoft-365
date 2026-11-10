@@ -125,6 +125,10 @@ Connect-MgGraph -Scopes "User.ReadWrite.All", "Directory.ReadWrite.All", "Group.
 ## Usage Examples
 
 ### 1. View Interactive Help (No parameters or -Help)
+Executing the script without parameters or with `-Help` / `-h` renders interactive syntax guidance and parameter documentation:
+
+![Interactive Help](assets/Standard_run.jpg)
+
 ```powershell
 # Display help:
 .\New-M365User.ps1 -Help
@@ -135,6 +139,10 @@ Connect-MgGraph -Scopes "User.ReadWrite.All", "Directory.ReadWrite.All", "Group.
 ```
 
 ### 2. Complete User Provisioning with Department & Teams Groups
+Live execution telemetry with ISO 3166-1 licensing validation, role verification, and Teams group onboarding:
+
+![User Provisioning Telemetry](assets/Creating_user.jpg)
+
 ```powershell
 $secPass = "InitialPass123!" | ConvertTo-SecureString -AsPlainText -Force
 

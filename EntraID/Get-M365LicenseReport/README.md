@@ -51,7 +51,7 @@ Displays the tenant subscription inventory:
 Audits licenses grouped by user account:
 - **Tenant-Wide (`-All`)**: Audits all licensed users across the organization.
 - **Targeted User (`-User <UPN/Name>`)**: Performs an instantaneous lookup of a single user without scanning the entire tenant.
-- Attributes: UPN, Display Name, Department, Job Title, Account Enabled status, License Count, and Assigned Plans.
+- Attributes: UPN, Display Name, Department, Job Title, Account Enabled status, License Count, and Assigned Plans (displaying both commercial names and SKU Part Numbers, e.g. `Microsoft 365 Business Standard [O365_BUSINESS_PREMIUM]`).
 
 ![Report 2 - User-Centric License Audit](assets/Raport_user.jpg)
 
