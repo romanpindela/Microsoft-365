@@ -126,6 +126,9 @@ Audits users grouped by license type:
 - **HTML (`-ExportFormat HTML`)**: Modern, self-contained single-file HTML dashboard with KPI metric cards, progress bars, and client-side instant search.
 - **JSON (`-ExportFormat JSON`)**: Hierarchical JSON structure with full metadata depth.
 
+### Standalone Interactive HTML Dashboard
+![Interactive HTML Dashboard](assets/Raport_html.jpg)
+
 ---
 
 ## 💻 Usage Examples

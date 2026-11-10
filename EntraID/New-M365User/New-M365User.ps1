@@ -8,24 +8,28 @@
     (forceChangePasswordNextSignIn = $true), assigns a specified license plan
     (supporting both friendly SkuPartNumber and GUID SkuId), enforces ISO 3166-1
     country usage location, assigns standard user privileges (no privileged roles),
+    sets user profile attributes (GivenName, Surname, Department),
     and optionally adds the user to designated Microsoft 365 / Microsoft Teams groups.
 
-    The script provides real-time color-coded console telemetry, structured file
-    logging (C:\Logs\Microsoft-365\New-M365User_YYYY-MM-DD.log), simulation mode
-    via -WhatIf / -Confirm, and tenant license capacity validation.
+    Running the script without parameters or with -Help / -h displays comprehensive usage
+    instructions, parameter details, and copy-paste ready examples.
 
 .PARAMETER UserPrincipalName
-    The UserPrincipalName / primary email address of the new user (e.g. jan.kowalski@domena.pl).
-    Mandatory parameter.
+    The UserPrincipalName / primary email address of the new user (e.g. john.doe@domain.com).
+    Aliases: -Email, -UPN, -User.
 
 .PARAMETER DisplayName
-    The full display name of the user (e.g. Jan Kowalski). Mandatory parameter.
+    The full display name of the user (e.g. John Doe). If omitted, it is automatically
+    composed from GivenName and Surname, or derived from the prefix of UserPrincipalName.
 
 .PARAMETER GivenName
-    The first name of the user (e.g. Jan). Optional.
+    The first name of the user (e.g. John). Aliases: -FirstName, -Imie.
 
 .PARAMETER Surname
-    The last name / surname of the user (e.g. Kowalski). Optional.
+    The last name / surname of the user (e.g. Doe). Aliases: -LastName, -Nazwisko.
+
+.PARAMETER Department
+    The organizational department of the user (e.g. 'IT / Helpdesk', 'Sales'). Aliases: -Dzial.
 
 .PARAMETER MailNickname
     The mail alias / nickname of the user. If omitted, it is automatically derived
@@ -37,19 +41,22 @@
 
 .PARAMETER InitialPassword
     The initial account password as a [SecureString]. Passwords in plain text are strictly
-    rejected to comply with enterprise credential security standards. Mandatory parameter.
+    rejected to comply with enterprise credential security standards. Aliases: -Password, -Haslo.
 
 .PARAMETER LicenseSku
     The license SKU to assign. Accepts friendly SkuPartNumber (e.g. 'ENTERPRISEPACK', 'SPE_E3',
-    'O365_BUSINESS_PREMIUM') or direct SkuId GUID. Mandatory parameter.
+    'O365_BUSINESS_PREMIUM') or direct SkuId GUID. Aliases: -License, -Sku, -Licencja.
 
 .PARAMETER TeamGroupNames
     One or more Microsoft 365 / Teams group display names to which the new user should be added.
-    Accepts string array or comma-separated list. Optional.
+    Accepts string array or comma-separated list. Aliases: -TeamGroupName, -TeamsGroup, -GrupyTeams, -GrupaTeams.
 
 .PARAMETER LogDirectory
     Path to the directory where operational audit logs will be saved.
     Defaults to 'C:\Logs\Microsoft-365'.
+
+.PARAMETER Help
+    Displays custom help, usage instructions, author information, and exits. Aliases: -h.
 
 .PARAMETER WhatIf
     Simulates script execution without making changes in Entra ID or Teams.
@@ -58,33 +65,36 @@
     Prompts for confirmation before executing state-changing operations.
 
 .EXAMPLE
-    $secPass = "P@ssw0rd2026!" | ConvertTo-SecureString -AsPlainText -Force
-    .\New-M365User.ps1 -UserPrincipalName "jan.kowalski@domena.pl" -DisplayName "Jan Kowalski" -InitialPassword $secPass -LicenseSku "SPE_E3"
-    Provisions a new user with Microsoft 365 E3 license and PL usage location.
+    # Complete user provisioning (Email, Name, Department, Teams, License, Password):
+    $secPass = "InitialPass123!" | ConvertTo-SecureString -AsPlainText -Force
+    .\New-M365User.ps1 -UserPrincipalName "john.doe@domain.com" `
+                       -GivenName "John" `
+                       -Surname "Doe" `
+                       -Department "IT / Helpdesk" `
+                       -TeamGroupNames "Technical Support", "General" `
+                       -LicenseSku "SPE_E3" `
+                       -InitialPassword $secPass
 
 .EXAMPLE
-    $secPass = Read-Host "Wprowadz haslo poczatkowe" -AsSecureString
-    .\New-M365User.ps1 -UserPrincipalName "anna.nowak@domena.pl" `
-                       -DisplayName "Anna Nowak" `
-                       -GivenName "Anna" `
-                       -Surname "Nowak" `
-                       -InitialPassword $secPass `
+    # Masked console password input (Read-Host):
+    $secPass = Read-Host "Enter initial password" -AsSecureString
+    .\New-M365User.ps1 -Email "jane.smith@domain.com" `
+                       -GivenName "Jane" `
+                       -Surname "Smith" `
+                       -Department "Sales" `
+                       -TeamGroupNames "Global Sales", "Commercial" `
                        -LicenseSku "ENTERPRISEPACK" `
-                       -TeamGroupNames "Dzial Handlowy", "Ogolny"
-    Provisions a user with Office 365 E3 and automatically adds them to two Teams groups.
+                       -InitialPassword $secPass
 
 .EXAMPLE
-    $secPass = "Startowe123!" | ConvertTo-SecureString -AsPlainText -Force
-    .\New-M365User.ps1 -UserPrincipalName "tomasz.wisniewski@domena.pl" `
-                       -DisplayName "Tomasz Wisniewski" `
-                       -InitialPassword $secPass `
-                       -LicenseSku "c707743b-110d-45b0-802c-1c83b2162703" `
-                       -WhatIf
-    Performs a dry-run simulation of user provisioning and license assignment.
+    # Display help instructions:
+    .\New-M365User.ps1 -Help
+    # or simply run without parameters:
+    .\New-M365User.ps1
 
 .NOTES
     Script: New-M365User.ps1
-    Version: 1.0.0
+    Version: 1.1.0
     Author: Roman Pindela
     Email: roman.pindela@gmail.com
     GitHub: https://github.com/romanpindela
@@ -92,42 +102,52 @@
     Required Scopes: User.ReadWrite.All, Directory.ReadWrite.All, Group.ReadWrite.All
 #>
 
-[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+[CmdletBinding(DefaultParameterSetName = 'ProvisionUser', SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
-    [Parameter(Mandatory = $true, Position = 0, HelpMessage = "UserPrincipalName / primary email address of the new user.")]
-    [ValidateNotNullOrEmpty()]
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, Position = 0, HelpMessage = "UserPrincipalName / primary email address of the new user.")]
+    [Alias('Email', 'UPN', 'User')]
     [string]$UserPrincipalName,
 
-    [Parameter(Mandatory = $true, Position = 1, HelpMessage = "Full display name of the new user.")]
-    [ValidateNotNullOrEmpty()]
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, Position = 1, HelpMessage = "Full display name of the user (DisplayName).")]
     [string]$DisplayName,
 
-    [Parameter(Mandatory = $false, HelpMessage = "First name of the user.")]
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, HelpMessage = "First name of the user (GivenName).")]
+    [Alias('FirstName', 'Imie')]
     [string]$GivenName,
 
-    [Parameter(Mandatory = $false, HelpMessage = "Last name / surname of the user.")]
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, HelpMessage = "Last name / surname of the user (Surname).")]
+    [Alias('LastName', 'Nazwisko')]
     [string]$Surname,
 
-    [Parameter(Mandatory = $false, HelpMessage = "Mail alias / nickname. Defaults to prefix of UPN.")]
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, HelpMessage = "Organizational department / division (Department).")]
+    [Alias('Dzial')]
+    [string]$Department,
+
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, HelpMessage = "Mail alias / nickname (MailNickname). Defaults to UPN prefix.")]
     [string]$MailNickname,
 
-    [Parameter(Mandatory = $false, HelpMessage = "Two-letter ISO 3166-1 alpha-2 country code for licensing (e.g. PL).")]
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, HelpMessage = "ISO 3166-1 alpha-2 country code for licensing (defaults to PL).")]
     [ValidatePattern('^[A-Za-z]{2}$')]
     [string]$UsageLocation = 'PL',
 
-    [Parameter(Mandatory = $true, HelpMessage = "Initial password as a SecureString.")]
-    [ValidateNotNull()]
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, HelpMessage = "Initial account password as a SecureString.")]
+    [Alias('Password', 'Haslo')]
     [securestring]$InitialPassword,
 
-    [Parameter(Mandatory = $true, HelpMessage = "License SkuPartNumber (e.g. SPE_E3) or SkuId GUID.")]
-    [ValidateNotNullOrEmpty()]
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, HelpMessage = "License plan name (SkuPartNumber) or SkuId GUID.")]
+    [Alias('License', 'Sku', 'Licencja')]
     [string]$LicenseSku,
 
-    [Parameter(Mandatory = $false, HelpMessage = "Microsoft 365 / Teams group display names to add user to.")]
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, HelpMessage = "Microsoft 365 / Teams group display names.")]
+    [Alias('TeamGroupName', 'TeamsGroup', 'GrupyTeams', 'GrupaTeams')]
     [string[]]$TeamGroupNames = @(),
 
-    [Parameter(Mandatory = $false, HelpMessage = "Directory path for operational audit logs.")]
-    [string]$LogDirectory = 'C:\Logs\Microsoft-365'
+    [Parameter(ParameterSetName = 'ProvisionUser', Mandatory = $false, HelpMessage = "Directory path for operational audit logs.")]
+    [string]$LogDirectory = 'C:\Logs\Microsoft-365',
+
+    [Parameter(ParameterSetName = 'Help', Mandatory = $false)]
+    [Alias('h')]
+    [switch]$Help
 )
 
 Set-StrictMode -Version Latest
@@ -151,7 +171,7 @@ if (-not [string]::IsNullOrWhiteSpace($localAppData)) {
 # ==============================================================================
 $Script:Metadata = @{
     Name        = 'New-M365User'
-    Version     = '1.0.0'
+    Version     = '1.1.0'
     Author      = 'Roman Pindela'
     StartTime   = Get-Date
     LogFileName = "New-M365User_{0}.log" -f (Get-Date -Format 'yyyy-MM-dd')
@@ -159,6 +179,156 @@ $Script:Metadata = @{
 }
 
 $Script:LogFilePath = Join-Path -Path $LogDirectory -ChildPath $Script:Metadata.LogFileName
+
+# ==============================================================================
+# INTERACTIVE HELP MODULE (Show-ScriptHelp)
+# ==============================================================================
+function Show-ScriptHelp {
+    $helpLines = @(
+        "================================================================================",
+        "SCRIPT  : New-M365User.ps1",
+        "VERSION : 1.1.0",
+        "AUTHOR  : Roman Pindela",
+        "CONTACT : roman.pindela@gmail.com | https://github.com/romanpindela",
+        "================================================================================",
+        "",
+        "DESCRIPTION:",
+        "    Automates the secure provisioning of a new user identity in Microsoft",
+        "    Entra ID / Microsoft 365. Configures a secure initial password with mandatory",
+        "    change at next sign-in, assigns the specified license plan, populates user",
+        "    profile attributes (Given Name, Surname, Department), and automatically adds",
+        "    the account to designated Microsoft Teams / Microsoft 365 groups.",
+        "",
+        "PARAMETERS:",
+        "    -UserPrincipalName, -Email, -UPN",
+        "        Primary email address / login of the new user (e.g. john.doe@domain.com). [REQUIRED]",
+        "",
+        "    -GivenName, -FirstName",
+        "        First name of the user (e.g. John). [OPTIONAL]",
+        "",
+        "    -Surname, -LastName",
+        "        Last name / surname of the user (e.g. Doe). [OPTIONAL]",
+        "",
+        "    -Department",
+        "        Organizational department or unit (e.g. 'IT / Helpdesk', 'Sales'). [OPTIONAL]",
+        "",
+        "    -DisplayName",
+        "        Full display name of the user (e.g. 'John Doe').",
+        "        If omitted, automatically assembled from GivenName + Surname or derived",
+        "        from the prefix of UserPrincipalName.",
+        "",
+        "    -TeamGroupNames, -TeamsGroup, -TeamGroupName",
+        "        Array of Microsoft 365 / Teams group display names to which the user",
+        "        will be added (e.g. 'Technical Support', 'General'). [OPTIONAL]",
+        "",
+        "    -LicenseSku, -License, -Sku",
+        "        License SKU plan name (e.g. 'SPE_E3', 'ENTERPRISEPACK',",
+        "        'O365_BUSINESS_PREMIUM') or direct GUID (SkuId). [REQUIRED]",
+        "",
+        "    -InitialPassword, -Password",
+        "        Initial account password provided as a [SecureString]. [REQUIRED]",
+        "",
+        "    -UsageLocation",
+        "        Two-letter ISO 3166-1 alpha-2 country code (default: 'PL').",
+        "",
+        "    -LogDirectory",
+        "        Directory path for operational audit log files (default: C:\Logs\Microsoft-365).",
+        "",
+        "    -WhatIf",
+        "        Simulation switch - displays planned actions without making actual changes.",
+        "",
+        "    -Help, -h",
+        "        Displays this help screen and exits.",
+        "",
+        "USAGE EXAMPLES:",
+        "",
+        "  1. Complete user provisioning (Email, First Name, Last Name, Department, Teams, License):",
+        "     `$secPass = `"InitialPass123!`" | ConvertTo-SecureString -AsPlainText -Force",
+        "     .\New-M365User.ps1 -UserPrincipalName `"john.doe@domain.com`" ``",
+        "                        -GivenName `"John`" ``",
+        "                        -Surname `"Doe`" ``",
+        "                        -Department `"IT / Helpdesk`" ``",
+        "                        -TeamGroupNames `"Technical Support`", `"General`" ``",
+        "                        -LicenseSku `"SPE_E3`" ``",
+        "                        -InitialPassword `$secPass",
+        "",
+        "  2. Interactive masked password input (Read-Host):",
+        "     `$secPass = Read-Host `"Enter initial password`" -AsSecureString",
+        "     .\New-M365User.ps1 -Email `"jane.smith@domain.com`" ``",
+        "                        -GivenName `"Jane`" ``",
+        "                        -Surname `"Smith`" ``",
+        "                        -Department `"Sales`" ``",
+        "                        -TeamGroupNames `"Global Sales`", `"Commercial`" ``",
+        "                        -LicenseSku `"ENTERPRISEPACK`" ``",
+        "                        -InitialPassword `$secPass",
+        "",
+        "  3. Safe dry-run simulation (-WhatIf):",
+        "     `$secPass = `"Test1234!`" | ConvertTo-SecureString -AsPlainText -Force",
+        "     .\New-M365User.ps1 -UserPrincipalName `"alex.turner@domain.com`" ``",
+        "                        -GivenName `"Alex`" ``",
+        "                        -Surname `"Turner`" ``",
+        "                        -Department `"Finance`" ``",
+        "                        -TeamGroupNames `"Finance and Accounting`" ``",
+        "                        -LicenseSku `"SPE_E3`" ``",
+        "                        -InitialPassword `$secPass ``",
+        "                        -WhatIf",
+        "",
+        "REQUIRED MODULES & GRAPH API PERMISSIONS:",
+        "    Modules: Microsoft.Graph.Users, Microsoft.Graph.Identity.DirectoryManagement, Microsoft.Graph.Groups",
+        "    Scopes : User.ReadWrite.All, Directory.ReadWrite.All, Group.ReadWrite.All",
+        "    Sign-in: Connect-MgGraph -Scopes 'User.ReadWrite.All','Directory.ReadWrite.All','Group.ReadWrite.All'",
+        "================================================================================"
+    )
+
+    Write-Host ($helpLines -join "`n") -ForegroundColor Cyan
+}
+
+# Check if help is requested or script is executed without parameters
+if ($Help -or $PSBoundParameters.Count -eq 0) {
+    Show-ScriptHelp
+    exit 0
+}
+
+# If only LogDirectory was bound and no user details given
+if ($PSBoundParameters.Count -eq 1 -and $PSBoundParameters.ContainsKey('LogDirectory')) {
+    Show-ScriptHelp
+    exit 0
+}
+
+# ==============================================================================
+# VALIDATION OF REQUIRED PARAMETERS
+# ==============================================================================
+$missingParams = @()
+if ([string]::IsNullOrWhiteSpace($UserPrincipalName)) {
+    $missingParams += "-UserPrincipalName (or alias -Email / -UPN)"
+}
+if ($null -eq $InitialPassword) {
+    $missingParams += "-InitialPassword (or alias -Password as [SecureString])"
+}
+if ([string]::IsNullOrWhiteSpace($LicenseSku)) {
+    $missingParams += "-LicenseSku (or alias -License / -Sku, e.g. 'SPE_E3', 'ENTERPRISEPACK')"
+}
+
+if ($missingParams.Count -gt 0) {
+    Write-Host "`n[ERROR] Missing mandatory parameters for user provisioning:" -ForegroundColor Red
+    foreach ($mp in $missingParams) {
+        Write-Host "  * $mp" -ForegroundColor Yellow
+    }
+    Write-Host "`nTo display full help instructions and usage examples, run the script with -Help:" -ForegroundColor White
+    Write-Host "    .\New-M365User.ps1 -Help`n" -ForegroundColor Cyan
+    exit 1
+}
+
+# Auto-compute DisplayName if omitted
+if ([string]::IsNullOrWhiteSpace($DisplayName)) {
+    if (-not [string]::IsNullOrWhiteSpace($GivenName) -and -not [string]::IsNullOrWhiteSpace($Surname)) {
+        $DisplayName = "$GivenName $Surname".Trim()
+    } elseif (-not [string]::IsNullOrWhiteSpace($GivenName)) {
+        $DisplayName = $GivenName.Trim()
+    } else {
+        $DisplayName = ($UserPrincipalName -split '@')[0]
+    }
+}
 
 # ==============================================================================
 # LOGGING MODULE (Write-M365Log)
@@ -203,7 +373,7 @@ function Write-M365Log {
         }
         [System.IO.File]::AppendAllLines($Script:LogFilePath, [string[]]@($logEntry), [System.Text.Encoding]::UTF8)
     } catch {
-        Write-Warning "Nie mozna zapisac logu do '$Script:LogFilePath': $($_.Exception.Message)"
+        Write-Warning "Could not write log entry to '$Script:LogFilePath': $($_.Exception.Message)"
     }
 }
 
@@ -230,12 +400,12 @@ function Convert-SecureStringToPlainText {
 # ==============================================================================
 # MAIN PROVISIONING LOGIC
 # ==============================================================================
-Write-M365Log "Inicjalizacja tworzenia uzytkownika: $UserPrincipalName" -Level 'INFO'
+Write-M365Log "Initializing user provisioning for: $UserPrincipalName" -Level 'INFO'
 
 # 1. Validation of UPN format
 $emailRegex = '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 if ($UserPrincipalName -notmatch $emailRegex) {
-    Write-M365Log "Niepoprawny format UserPrincipalName: '$UserPrincipalName'." -Level 'ERROR'
+    Write-M365Log "Invalid UserPrincipalName format: '$UserPrincipalName'." -Level 'ERROR'
     exit 1
 }
 
@@ -253,13 +423,13 @@ try {
 }
 
 if ($null -eq $mgContext -or [string]::IsNullOrWhiteSpace($mgContext.TenantId)) {
-    Write-M365Log "Brak aktywnej sesji Microsoft Graph. Polacz sie uzywajac Connect-MgGraph." -Level 'ERROR'
-    Write-Host "`nAby nawiazac sesje z wymaganymi uprawnieniami, wykonaj:" -ForegroundColor Yellow
+    Write-M365Log "No active Microsoft Graph session detected. Please connect using Connect-MgGraph." -Level 'ERROR'
+    Write-Host "`nTo establish a session with the required permissions, run:" -ForegroundColor Yellow
     Write-Host "    Connect-MgGraph -Scopes 'User.ReadWrite.All', 'Directory.ReadWrite.All', 'Group.ReadWrite.All'`n" -ForegroundColor White
     exit 1
 }
 
-Write-M365Log "Wykryto aktywna sesje Graph dla tenanta: $($mgContext.TenantId) (Konto: $($mgContext.Account))" -Level 'DEBUG'
+Write-M365Log "Active Graph session detected for tenant: $($mgContext.TenantId) (Account: $($mgContext.Account))" -Level 'DEBUG'
 
 # Check required scopes
 $requiredScopes = @('User.ReadWrite.All', 'Directory.ReadWrite.All', 'Group.ReadWrite.All')
@@ -276,11 +446,11 @@ foreach ($reqScope in $requiredScopes) {
 }
 
 if ($missingScopes.Count -gt 0) {
-    Write-M365Log "Aktywna sesja Graph nie posiada wszystkich zalecanych uprawnien (brak: $($missingScopes -join ', ')). Niektore operacje moga zwrocic 403 Forbidden." -Level 'WARN'
+    Write-M365Log "Active Graph session lacks recommended permissions (missing: $($missingScopes -join ', ')). Some operations may fail with 403 Forbidden." -Level 'WARN'
 }
 
 # 3. Validate and resolve License SKU in Tenant
-Write-M365Log "Weryfikacja dostepnosci pakietu licencyjnego: $LicenseSku..." -Level 'INFO'
+Write-M365Log "Validating availability of license SKU: $LicenseSku..." -Level 'INFO'
 $resolvedSkuId = $null
 $resolvedSkuPartNumber = $null
 
@@ -291,8 +461,8 @@ try {
     } | Select-Object -First 1
 
     if ($null -eq $targetSku) {
-        Write-M365Log "Pakiet licencyjny '$LicenseSku' nie zostal odnaleziony w dzierzawie." -Level 'ERROR'
-        Write-Host "`nDostepne pakiety licencyjne w biezacym tenancie:" -ForegroundColor Yellow
+        Write-M365Log "License SKU '$LicenseSku' was not found in tenant." -Level 'ERROR'
+        Write-Host "`nAvailable license SKUs in the current tenant:" -ForegroundColor Yellow
         $allSkus | Select-Object SkuPartNumber, SkuId, ConsumedUnits, @{Name='TotalUnits'; Expression={$_.PrepaidUnits.Enabled}} | Format-Table -AutoSize | Out-String | Write-Host -ForegroundColor Gray
         exit 1
     }
@@ -306,25 +476,25 @@ try {
     $availableUnits = $totalUnits - $consumedUnits
 
     if ($availableUnits -le 0) {
-        Write-M365Log "Wszystkie jednostki licencji $resolvedSkuPartNumber zostaly juz wykorzystane ($consumedUnits/$totalUnits). Przypisanie licencji moze zakonczyc sie niepowodzeniem." -Level 'WARN'
+        Write-M365Log "All units for license $resolvedSkuPartNumber have been consumed ($consumedUnits/$totalUnits). License assignment may fail." -Level 'WARN'
     } else {
-        Write-M365Log "Rozpoznano licencje: $resolvedSkuPartNumber ($resolvedSkuId). Wolne jednostki: $availableUnits/$totalUnits." -Level 'DEBUG'
+        Write-M365Log "Resolved license: $resolvedSkuPartNumber ($resolvedSkuId). Available units: $availableUnits/$totalUnits." -Level 'DEBUG'
     }
 } catch {
-    Write-M365Log "Blad podczas pobierania licencji dzierzawy: $($_.Exception.Message)" -Level 'ERROR'
+    Write-M365Log "Error retrieving tenant licenses: $($_.Exception.Message)" -Level 'ERROR'
     exit 1
 }
 
 # 4. Check if User already exists in Entra ID
-Write-M365Log "Sprawdzanie unikalnosci UserPrincipalName: $UserPrincipalName..." -Level 'DEBUG'
+Write-M365Log "Checking UserPrincipalName uniqueness: $UserPrincipalName..." -Level 'DEBUG'
 try {
     $existingUser = Get-MgUser -Filter "userPrincipalName eq '$UserPrincipalName'" -ErrorAction SilentlyContinue
     if ($null -ne $existingUser) {
-        Write-M365Log "Uzytkownik o UserPrincipalName '$UserPrincipalName' juz istnieje w dzierzawie (UserId: $($existingUser.Id)). Operacja przerwana." -Level 'ERROR'
+        Write-M365Log "User with UserPrincipalName '$UserPrincipalName' already exists in the tenant (UserId: $($existingUser.Id)). Operation aborted." -Level 'ERROR'
         exit 1
     }
 } catch {
-    Write-M365Log "Blad podczas weryfikacji istnienia konta: $($_.Exception.Message)" -Level 'ERROR'
+    Write-M365Log "Error checking account existence: $($_.Exception.Message)" -Level 'ERROR'
     exit 1
 }
 
@@ -350,11 +520,14 @@ if (-not [string]::IsNullOrWhiteSpace($GivenName)) {
 if (-not [string]::IsNullOrWhiteSpace($Surname)) {
     $userParams['Surname'] = $Surname
 }
+if (-not [string]::IsNullOrWhiteSpace($Department)) {
+    $userParams['Department'] = $Department
+}
 
 try {
-    if ($PSCmdlet.ShouldProcess($UserPrincipalName, "Utworzenie konta uzytkownika Entra ID (Standard User)")) {
+    if ($PSCmdlet.ShouldProcess($UserPrincipalName, "Create Entra ID User Account (Standard User)")) {
         $createdUser = New-MgUser @userParams -ErrorAction Stop
-        Write-M365Log "Konto uzytkownika utworzone (ID: $($createdUser.Id))" -Level 'SUCCESS'
+        Write-M365Log "User account successfully created (ID: $($createdUser.Id))" -Level 'SUCCESS'
     } else {
         # WhatIf / Simulation mock
         $createdUser = [pscustomobject]@{
@@ -362,15 +535,15 @@ try {
             DisplayName       = $DisplayName
             UserPrincipalName = $UserPrincipalName
         }
-        Write-M365Log "[WHAT-IF] Symulacja utworzenia uzytkownika: $UserPrincipalName (ID mock: $($createdUser.Id))" -Level 'INFO'
+        Write-M365Log "[WHAT-IF] Simulated user account creation: $UserPrincipalName (Mock ID: $($createdUser.Id))" -Level 'INFO'
     }
 } catch {
-    Write-M365Log "Blad krytyczny podczas tworzenia uzytkownika '$UserPrincipalName': $($_.Exception.Message)" -Level 'ERROR'
+    Write-M365Log "Fatal error while creating user '$UserPrincipalName': $($_.Exception.Message)" -Level 'ERROR'
     exit 1
 }
 
 # 6. Assign License
-Write-M365Log "Przypisywanie licencji: $resolvedSkuPartNumber..." -Level 'INFO'
+Write-M365Log "Assigning license: $resolvedSkuPartNumber..." -Level 'INFO'
 $licenseAssigned = $false
 
 try {
@@ -378,16 +551,16 @@ try {
         SkuId = [guid]$resolvedSkuId
     }
 
-    if ($PSCmdlet.ShouldProcess($UserPrincipalName, "Przypisanie licencji $resolvedSkuPartNumber ($resolvedSkuId)")) {
+    if ($PSCmdlet.ShouldProcess($UserPrincipalName, "Assign License $resolvedSkuPartNumber ($resolvedSkuId)")) {
         Set-MgUserLicense -UserId $createdUser.Id -AddLicenses @($licenseAdd) -RemoveLicenses @() -ErrorAction Stop
-        Write-M365Log "Licencja przypisana pomyslnie." -Level 'SUCCESS'
+        Write-M365Log "License assigned successfully." -Level 'SUCCESS'
         $licenseAssigned = $true
     } else {
-        Write-M365Log "[WHAT-IF] Symulacja przypisania licencji: $resolvedSkuPartNumber" -Level 'INFO'
+        Write-M365Log "[WHAT-IF] Simulated license assignment: $resolvedSkuPartNumber" -Level 'INFO'
         $licenseAssigned = $true
     }
 } catch {
-    Write-M365Log "Nie udalo sie przypisac licencji do konta ($($createdUser.Id)): $($_.Exception.Message)" -Level 'WARN'
+    Write-M365Log "Failed to assign license to user account ($($createdUser.Id)): $($_.Exception.Message)" -Level 'WARN'
     $licenseAssigned = $false
 }
 
@@ -399,22 +572,22 @@ if ($TeamGroupNames -and $TeamGroupNames.Count -gt 0) {
         $trimmedGroup = $groupName.Trim()
         if ([string]::IsNullOrWhiteSpace($trimmedGroup)) { continue }
 
-        Write-M365Log "Wyszukiwanie grupy Teams/M365: '$trimmedGroup'..." -Level 'DEBUG'
+        Write-M365Log "Searching for Teams/M365 group: '$trimmedGroup'..." -Level 'DEBUG'
         try {
             # Filter groups by displayName
             $escapedGroupName = $trimmedGroup.Replace("'", "''")
             $foundGroups = Get-MgGroup -Filter "displayName eq '$escapedGroupName'" -ErrorAction Stop
 
             if ($null -eq $foundGroups -or ($foundGroups | Measure-Object).Count -eq 0) {
-                Write-M365Log "Grupa '$trimmedGroup' nie zostala znaleziona w dzierzawie." -Level 'WARN'
-                $groupResults += "[$($trimmedGroup): NIE ZNALEZIONO]"
+                Write-M365Log "Group '$trimmedGroup' was not found in the tenant." -Level 'WARN'
+                $groupResults += "[$($trimmedGroup): NOT FOUND]"
                 continue
             }
 
             # Select target group
             $targetGroup = $foundGroups | Select-Object -First 1
 
-            if ($PSCmdlet.ShouldProcess("$trimmedGroup ($($targetGroup.Id))", "Dodanie uzytkownika $UserPrincipalName jako czlonka")) {
+            if ($PSCmdlet.ShouldProcess("$trimmedGroup ($($targetGroup.Id))", "Add user $UserPrincipalName as member")) {
                 $memberOdataId = "https://graph.microsoft.com/v1.0/directoryObjects/$($createdUser.Id)"
                 
                 # Check cmdlet parameter compatibility across Graph SDK versions
@@ -428,55 +601,62 @@ if ($TeamGroupNames -and $TeamGroupNames.Count -gt 0) {
                     New-MgGroupMemberByRef -GroupId $targetGroup.Id -BodyParameter $bodyParam -ErrorAction Stop | Out-Null
                 }
 
-                Write-M365Log "Dodano uzytkownika do grupy '$trimmedGroup' (ID: $($targetGroup.Id))." -Level 'SUCCESS'
-                $groupResults += "[$($trimmedGroup): DODANY]"
+                Write-M365Log "Added user to group '$trimmedGroup' (ID: $($targetGroup.Id))." -Level 'SUCCESS'
+                $groupResults += "[$($trimmedGroup): ADDED]"
             } else {
-                Write-M365Log "[WHAT-IF] Symulacja dodania uzytkownika do grupy: $trimmedGroup" -Level 'INFO'
-                $groupResults += "[$($trimmedGroup): SYMULACJA]"
+                Write-M365Log "[WHAT-IF] Simulated adding user to group: $trimmedGroup" -Level 'INFO'
+                $groupResults += "[$($trimmedGroup): SIMULATED]"
             }
         } catch {
-            Write-M365Log "Nie udalo sie dodac uzytkownika do grupy '$trimmedGroup': $($_.Exception.Message)" -Level 'WARN'
-            $groupResults += "[$($trimmedGroup): BLAD]"
+            Write-M365Log "Failed to add user to group '$trimmedGroup': $($_.Exception.Message)" -Level 'WARN'
+            $groupResults += "[$($trimmedGroup): ERROR]"
         }
     }
 }
 
 # 8. Final Status Evaluation
 $finalStatus = if ($Script:Metadata.HasWarnings) {
-    "SUKCES (Z OSTRZEZENIAMI)"
+    "SUCCESS (WITH WARNINGS)"
 } else {
-    "SUKCES"
+    "SUCCESS"
 }
 
-$finalLogMessage = "Zakonczenie procesu. Status koncowy: $finalStatus."
+$finalLogMessage = "Process completed. Final status: $finalStatus."
 Write-M365Log $finalLogMessage -Level 'INFO'
 
 # 9. Console Summary Presentation (Section 7 Specification Format)
 $groupsDisplayString = if ($groupResults.Count -gt 0) {
     $groupResults -join ', '
 } else {
-    "Brak (nie wskazano)"
+    "None (not specified)"
 }
 
 $licenseDisplayString = if ($licenseAssigned) {
-    "$resolvedSkuPartNumber (Wymuszone UsageLocation: $UsageLocation)"
+    "$resolvedSkuPartNumber (Enforced UsageLocation: $UsageLocation)"
 } else {
-    "$resolvedSkuPartNumber (BLAD PRZYPISANIA)"
+    "$resolvedSkuPartNumber (LICENSE ASSIGNMENT FAILED)"
+}
+
+$departmentDisplay = if (-not [string]::IsNullOrWhiteSpace($Department)) {
+    $Department
+} else {
+    "Not specified"
 }
 
 $summaryLines = @(
     "================================================================================",
-    "                    PODSUMOWANIE PROVISIONINGU UZYTKOWNIKA",
+    "                    USER PROVISIONING SUMMARY",
     "================================================================================",
     ("UserPrincipalName    : " + $UserPrincipalName),
     ("DisplayName          : " + $DisplayName),
     ("UserId (GUID)        : " + $createdUser.Id),
-    ("Rola                 : Standard User (brak rol uprzywilejowanych)"),
-    ("Licencja             : " + $licenseDisplayString),
-    ("Wymuszenie hasla     : Tak (przy pierwszym logowaniu)"),
-    ("Grupy Teams          : " + $groupsDisplayString),
-    ("Plik Logu            : " + $Script:LogFilePath),
-    ("Status Koncowy       : " + $finalStatus),
+    ("Department           : " + $departmentDisplay),
+    ("Role                 : Standard User (no privileged directory roles)"),
+    ("License              : " + $licenseDisplayString),
+    ("Force Password Change: Yes (at next sign-in)"),
+    ("Teams Groups         : " + $groupsDisplayString),
+    ("Log File             : " + $Script:LogFilePath),
+    ("Final Status         : " + $finalStatus),
     "================================================================================"
 )
 

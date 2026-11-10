@@ -11,17 +11,20 @@ Enterprise-grade PowerShell provisioning script for creating, licensing, and con
 ## Overview
 
 `New-M365User.ps1` standardizes and automates onboarding and identity provisioning in Microsoft Entra ID. It enforces organizational security baselines:
-- Mandatory password reset on first sign-in (`forceChangePasswordNextSignIn = $true`).
-- Least privilege model: new accounts are created strictly as standard users without administrative Entra directory roles.
-- Flexible licensing assignment supporting both friendly license plan names (`SkuPartNumber` such as `ENTERPRISEPACK`, `SPE_E3`, `O365_BUSINESS_PREMIUM`) and direct GUID identifiers (`SkuId`).
-- Automated enforcement of the two-letter ISO 3166-1 alpha-2 `UsageLocation` country code (defaults to `PL`).
-- Group and team onboarding: automatically resolves Microsoft 365 / Teams groups by `DisplayName` and adds the new user as a member.
-- Real-time color-coded console telemetry and persistent audit logging to `C:\Logs\Microsoft-365\New-M365User_YYYY-MM-DD.log`.
+- **Interactive Console Help (`-Help`, `-h`, or executing without arguments)**: Running the script without parameters displays comprehensive usage instructions, parameter details, and copy-paste ready examples.
+- **Mandatory password reset on first sign-in** (`forceChangePasswordNextSignIn = $true`).
+- **Profile Configuration**: Populates GivenName, Surname, Department, and automatically calculates DisplayName and MailNickname if omitted.
+- **Least privilege model**: New accounts are created strictly as standard users without administrative Entra directory roles.
+- **Flexible licensing assignment**: Supports both friendly license plan names (`SkuPartNumber` such as `ENTERPRISEPACK`, `SPE_E3`, `O365_BUSINESS_PREMIUM`) and direct GUID identifiers (`SkuId`).
+- **Automated UsageLocation**: Enforces the two-letter ISO 3166-1 alpha-2 country code (defaults to `PL`).
+- **Microsoft Teams Onboarding**: Automatically resolves Microsoft 365 / Teams groups by `DisplayName` and adds the new user as a member.
+- **Audit Logging**: Real-time color-coded console telemetry and persistent audit logging to `C:\Logs\Microsoft-365\New-M365User_YYYY-MM-DD.log`.
 
 ---
 
 ## Key Features
 
+- **Built-in Interactive Help**: Running `.\New-M365User.ps1` without arguments, or using `-Help` / `-h`, displays usage, parameter descriptions, and examples without throwing errors.
 - **Strict Credential Security**: Initial password must be provided as a `[SecureString]`. Passwords never leak into plain-text PowerShell console history (`PSReadLine`), Script Block Logging, or disk log files.
 - **Tenant License Capacity Validation**: Queries available tenant licenses (`Get-MgSubscribedSku`), verifies plan existence, and alerts administrators if all purchased units are consumed.
 - **Fault-Tolerant Execution**:
@@ -36,39 +39,41 @@ Enterprise-grade PowerShell provisioning script for creating, licensing, and con
 ## Workflow Architecture
 
 ```
-[Script Initialization & Environment Validation]
-                   │
-                   ▼
+[Script Execution]
+       │
+       ├──> [No Parameters or -Help/-h] ──> [Display Formatted Help Screen & Exit]
+       ▼
 [Verify/Initialize Logging Directory: C:\Logs\Microsoft-365\]
-                   │
-                   ▼
+       │
+       ▼
 [Verify Active Microsoft Graph Session & Scopes]
-                   │
-                   ▼
+       │
+       ▼
 [Validate License SKU (SkuPartNumber or SkuId) & Capacity]
-                   │
-                   ▼
+       │
+       ▼
 [Verify UserPrincipalName Uniqueness in Tenant]
-                   │
-                   ├──> [UPN Exists: Terminating error, log, exit]
-                   ▼
+       │
+       ├──> [UPN Exists: Terminating error, log, exit]
+       ▼
 [Create Entra ID User (New-MgUser)]
    - AccountEnabled: $true
+   - Profile: GivenName, Surname, Department, DisplayName
    - ForceChangePasswordNextSignIn: $true
    - Role: Standard User (no privileged roles)
-                   │
-                   ▼
+       │
+       ▼
 [Set UsageLocation & Assign License (Set-MgUserLicense)]
-                   │
-                   ▼
+       │
+       ▼
 [Iterate over Microsoft Teams Groups (TeamGroupNames)]
    - Find Group ID by DisplayName
    - Add Member (New-MgGroupMemberByRef)
-                   │
-                   ▼
+       │
+       ▼
 [Display Formatted Console Summary]
-                   │
-                   ▼
+       │
+       ▼
 [Finalize Audit Log & Return Exit Code]
 ```
 
@@ -99,55 +104,73 @@ Connect-MgGraph -Scopes "User.ReadWrite.All", "Directory.ReadWrite.All", "Group.
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-| :--- | :--- | :---: | :--- | :--- |
-| `UserPrincipalName` | `[string]` | **Yes** | - | UPN / primary email of the new user (e.g. `jan.kowalski@domena.pl`). |
-| `DisplayName` | `[string]` | **Yes** | - | Full display name (e.g. `Jan Kowalski`). |
-| `GivenName` | `[string]` | No | `$null` | First name (e.g. `Jan`). |
-| `Surname` | `[string]` | No | `$null` | Last name / surname (e.g. `Kowalski`). |
-| `MailNickname` | `[string]` | No | Derived from UPN | Mail alias (default: prefix before `@` in UPN). |
-| `UsageLocation` | `[string]` | No | `'PL'` | Two-letter ISO 3166-1 alpha-2 country code required for licensing. |
-| `InitialPassword` | `[securestring]` | **Yes** | - | Initial password provided as a `SecureString`. |
-| `LicenseSku` | `[string]` | **Yes** | - | License plan name (`SkuPartNumber` e.g. `SPE_E3`) or GUID (`SkuId`). |
-| `TeamGroupNames` | `[string[]]` | No | `@()` | Array of Teams / M365 Group display names to add the user to. |
-| `LogDirectory` | `[string]` | No | `'C:\Logs\Microsoft-365'` | Directory path for persistent audit logs. |
-| `WhatIf` | `[switch]` | No | `$false` | Simulates provisioning without making real changes. |
+| Parameter | Type | Required | Default | Aliases | Description |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `UserPrincipalName` | `[string]` | **Yes** | - | `Email`, `UPN`, `User` | UPN / primary email address of the new user. |
+| `GivenName` | `[string]` | No | `$null` | `FirstName`, `Imie` | First name of the user. |
+| `Surname` | `[string]` | No | `$null` | `LastName`, `Nazwisko` | Last name / surname of the user. |
+| `Department` | `[string]` | No | `$null` | `Dzial` | Organizational department or business unit. |
+| `DisplayName` | `[string]` | No | Auto | - | Full display name (auto-composed if omitted). |
+| `MailNickname` | `[string]` | No | Derived | - | Mail alias (default: prefix before `@` in UPN). |
+| `UsageLocation` | `[string]` | No | `'PL'` | - | ISO 3166-1 alpha-2 country code for licensing. |
+| `InitialPassword` | `[securestring]` | **Yes** | - | `Password`, `Haslo` | Initial password provided as a `SecureString`. |
+| `LicenseSku` | `[string]` | **Yes** | - | `License`, `Sku`, `Licencja` | License plan (`SkuPartNumber` or `SkuId` GUID). |
+| `TeamGroupNames` | `[string[]]` | No | `@()` | `TeamGroupName`, `TeamsGroup`, `GrupyTeams` | Array of Teams / M365 Group display names. |
+| `LogDirectory` | `[string]` | No | `'C:\Logs\Microsoft-365'` | - | Directory path for persistent audit logs. |
+| `WhatIf` | `[switch]` | No | `$false` | - | Simulates provisioning without making real changes. |
+| `Help` | `[switch]` | No | `$false` | `h` | Displays custom help screen with examples and exits. |
 
 ---
 
 ## Usage Examples
 
-### 1. Basic User Provisioning with License
+### 1. View Interactive Help (No parameters or -Help)
 ```powershell
-$secPass = "P@ssw0rd2026!" | ConvertTo-SecureString -AsPlainText -Force
-
-.\New-M365User.ps1 -UserPrincipalName "jan.kowalski@domena.pl" `
-                   -DisplayName "Jan Kowalski" `
-                   -InitialPassword $secPass `
-                   -LicenseSku "SPE_E3"
+# Display help:
+.\New-M365User.ps1 -Help
+# Or with alias:
+.\New-M365User.ps1 -h
+# Or simply execute without parameters:
+.\New-M365User.ps1
 ```
 
-### 2. Full Provisioning with GivenName, Surname, and Teams Groups
+### 2. Complete User Provisioning with Department & Teams Groups
 ```powershell
-$secPass = Read-Host "Wprowadz haslo poczatkowe" -AsSecureString
+$secPass = "InitialPass123!" | ConvertTo-SecureString -AsPlainText -Force
 
-.\New-M365User.ps1 -UserPrincipalName "anna.nowak@domena.pl" `
-                   -DisplayName "Anna Nowak" `
-                   -GivenName "Anna" `
-                   -Surname "Nowak" `
-                   -InitialPassword $secPass `
+.\New-M365User.ps1 -UserPrincipalName "john.doe@domain.com" `
+                   -GivenName "John" `
+                   -Surname "Doe" `
+                   -Department "IT / Helpdesk" `
+                   -TeamGroupNames "Technical Support", "General" `
+                   -LicenseSku "SPE_E3" `
+                   -InitialPassword $secPass
+```
+
+### 3. Interactive Masked Password Input
+```powershell
+$secPass = Read-Host "Enter initial password" -AsSecureString
+
+.\New-M365User.ps1 -Email "jane.smith@domain.com" `
+                   -GivenName "Jane" `
+                   -Surname "Smith" `
+                   -Department "Sales" `
+                   -TeamGroupNames "Global Sales", "Commercial" `
                    -LicenseSku "ENTERPRISEPACK" `
-                   -TeamGroupNames "Dzial Handlowy", "Ogolny"
+                   -InitialPassword $secPass
 ```
 
-### 3. Dry-Run Simulation (`-WhatIf`)
+### 4. Dry-Run Simulation (`-WhatIf`)
 ```powershell
-$secPass = "Startowe123!" | ConvertTo-SecureString -AsPlainText -Force
+$secPass = "Test1234!" | ConvertTo-SecureString -AsPlainText -Force
 
-.\New-M365User.ps1 -UserPrincipalName "tomasz.wisniewski@domena.pl" `
-                   -DisplayName "Tomasz Wisniewski" `
+.\New-M365User.ps1 -UserPrincipalName "alex.turner@domain.com" `
+                   -GivenName "Alex" `
+                   -Surname "Turner" `
+                   -Department "Finance" `
+                   -TeamGroupNames "Finance and Accounting" `
+                   -LicenseSku "SPE_E3" `
                    -InitialPassword $secPass `
-                   -LicenseSku "c707743b-110d-45b0-802c-1c83b2162703" `
                    -WhatIf
 ```
 
@@ -157,28 +180,29 @@ $secPass = "Startowe123!" | ConvertTo-SecureString -AsPlainText -Force
 
 ### Persistent File Log (`C:\Logs\Microsoft-365\New-M365User_YYYY-MM-DD.log`)
 ```text
-[2026-11-10 08:35:12] [INFO]    Inicjalizacja tworzenia uzytkownika: jan.kowalski@domena.pl
-[2026-11-10 08:35:13] [SUCCESS] Konto uzytkownika utworzone (ID: 11111111-2222-3333-4444-555555555555)
-[2026-11-10 08:35:14] [INFO]    Przypisywanie licencji: ENTERPRISEPACK...
-[2026-11-10 08:35:15] [SUCCESS] Licencja przypisana pomyslnie.
-[2026-11-10 08:35:16] [WARN]    Grupa 'Dzial Sprzedazy' nie zostala znaleziona w dzierzawie.
-[2026-11-10 08:35:17] [INFO]    Zakonczenie procesu. Status koncowy: Sukces (z ostrzezeniami).
+[2026-11-10 08:35:12] [INFO]    Initializing user provisioning for: john.doe@domain.com
+[2026-11-10 08:35:13] [SUCCESS] User account successfully created (ID: 11111111-2222-3333-4444-555555555555)
+[2026-11-10 08:35:14] [INFO]    Assigning license: ENTERPRISEPACK...
+[2026-11-10 08:35:15] [SUCCESS] License assigned successfully.
+[2026-11-10 08:35:16] [WARN]    Group 'Sales Department' was not found in the tenant.
+[2026-11-10 08:35:17] [INFO]    Process completed. Final status: SUCCESS (WITH WARNINGS).
 ```
 
 ### Console Executive Summary
 ```text
 ================================================================================
-                    PODSUMOWANIE PROVISIONINGU UZYTKOWNIKA
+                    USER PROVISIONING SUMMARY
 ================================================================================
-UserPrincipalName    : jan.kowalski@domena.pl
-DisplayName          : Jan Kowalski
+UserPrincipalName    : john.doe@domain.com
+DisplayName          : John Doe
 UserId (GUID)        : 11111111-2222-3333-4444-555555555555
-Rola                 : Standard User (brak rol uprzywilejowanych)
-Licencja             : SPE_E3 (Wymuszone UsageLocation: PL)
-Wymuszenie hasla     : Tak (przy pierwszym logowaniu)
-Grupy Teams          : [Dzial Handlowy: DODANY], [Ogolny: DODANY]
-Plik Logu            : C:\Logs\Microsoft-365\New-M365User_2026-11-10.log
-Status Koncowy       : SUKCES
+Department           : IT / Helpdesk
+Role                 : Standard User (no privileged directory roles)
+License              : SPE_E3 (Enforced UsageLocation: PL)
+Force Password Change: Yes (at next sign-in)
+Teams Groups         : [Technical Support: ADDED], [General: ADDED]
+Log File             : C:\Logs\Microsoft-365\New-M365User_2026-11-10.log
+Final Status         : SUCCESS
 ================================================================================
 ```
 
