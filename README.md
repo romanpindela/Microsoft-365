@@ -18,10 +18,12 @@ This toolkit is organized into modular functional domains:
 Microsoft 365/
 ├── EntraID/                         # Identity, user accounts, licensing, and security groups
 │   ├── Audit-EntraIDSecuritySummary/ # Security posture audit against CIS Benchmark with HTML dashboard
+│   ├── Get-M365LicenseReport/       # Comprehensive tenant license inventory, quota auditing & user drilldown
 │   ├── Get-M365UserAccessAudit/     # Deep user access matrix across Entra ID, Roles, Teams, SPO & EXO
 │   ├── Get-M365Users/               # Comprehensive user auditing and executive license summary
 │   ├── Manage-M365Groups/           # Lifecycle management of M365 Groups, DLs, and Security Groups
-│   └── Manage-M365UserAccount/      # User password reset, account lock/unlock, and alias control
+│   ├── Manage-M365UserAccount/      # User password reset, account lock/unlock, and alias control
+│   └── New-M365User/                # Automated user provisioning, license assignment, and Teams onboarding
 ├── Exchange/                        # Exchange Online administration, mailflow, and archiving
 │   ├── Audit-ExchangeSecuritySummary/ # Security posture audit, risk rationales, and standalone HTML dashboard
 │   ├── Enable-OnlineArchive/        # Provisioning online archive mailboxes
@@ -68,12 +70,14 @@ Microsoft 365/
 * [**Get-M365MessageTrace**](Exchange/Get-M365MessageTrace/README.md) — Queries message delivery traces, spam verdicts, and quarantine statuses.
 * [**Send-M365Mail**](Exchange/Send-M365Mail/README.md) — Enterprise email dispatcher for Microsoft 365 / Exchange Online via Microsoft Graph API. Supports automated X.509 certificate authentication (App-Only daemon) or interactive sign-in with MFA, client configuration deployment, Base64 MIME attachment encoding, rich HTML bodies, and mandatory execution logging to `C:\Logs`.
 
-### 3. Microsoft Entra ID (/EntraID)
+### 3. Microsoft Entra ID & Licensing (/EntraID, /Get-M365LicenseReport)
+* [**Get-M365LicenseReport**](EntraID/Get-M365LicenseReport/README.md) - Comprehensive tenant-wide license audit, quota consumption tracking, SKU commercial name translation, group-based license inheritance forensics (`Direct` vs `Inherited`), and multi-format exports (CSV UTF-8 BOM, JSON, standalone interactive HTML dashboard).
 * [**Audit-EntraIDSecuritySummary**](EntraID/Audit-EntraIDSecuritySummary/README.md) — Read-only security posture audit aligned with CIS Microsoft 365 Foundations Benchmark standards, evaluating user & app settings, guest access, authentication methods/SSPR, Conditional Access, and Global Administrator break-glass hygiene with an interactive HTML executive dashboard.
 * [**Get-M365UserAccessAudit**](EntraID/Get-M365UserAccessAudit/README.md) — Comprehensive user access matrix mapping direct and transitive group memberships, directory roles, PIM schedules, Teams, SharePoint sites, and Exchange mailbox delegations with interactive HTML dashboard.
 * [**Manage-M365UserAccount**](EntraID/Manage-M365UserAccount/README.md) — Password resets, sign-in blocking/unblocking, active session revocation, alias management, and user auditing via Microsoft Graph.
 * [**Get-M365Users**](EntraID/Get-M365Users/README.md) — Comprehensive tenant-wide user auditing, licensing SKU breakdowns, and mailbox status reporting.
 * [**Manage-M365Groups**](EntraID/Manage-M365Groups/README.md) — Management and membership auditing for M365 Unified Groups, Distribution Lists, and Security Groups.
+* [**New-M365User**](EntraID/New-M365User/README.md) — Automated Entra ID user provisioning, secure password configuration, friendly license assignment, and Microsoft Teams group onboarding.
 
 ### 4. Helpdesk & Endpoint Remediation (/Helpdesk)
 * [**Reset-TeamsIdentityCache**](Helpdesk/Reset-TeamsIdentityCache/README.md) — Comprehensive remediation tool for Microsoft Teams authentication loops, token expiration, stale tenant profiles, and WAM/IdentityCache corruption. Purges New Teams (MSIX) and Classic Teams caches, OneAuth tokens, Web Account Manager broker state, and Windows Credential Manager entries with detailed feature cataloging (-ListFeatures), simulation mode (-WhatIf), and structured logging.
