@@ -86,8 +86,9 @@ Enterprise-grade PowerShell provisioning script for creating, licensing, and con
 
 ### 2. Microsoft Graph PowerShell SDK Modules
 ```powershell
-Install-Module -Name Microsoft.Graph.Users, Microsoft.Graph.Identity.DirectoryManagement, Microsoft.Graph.Groups -Scope CurrentUser
+Install-Module -Name Microsoft.Graph.Users, Microsoft.Graph.Authentication -Scope CurrentUser
 ```
+*(Optional: `Microsoft.Graph.Identity.DirectoryManagement` and `Microsoft.Graph.Groups` are supported natively; if not installed, the script automatically uses built-in REST API fallbacks via `Microsoft.Graph.Authentication`.)*
 
 ### 3. Microsoft Graph API Permissions (Scopes)
 The executing administrator requires consent for the following scopes:
@@ -213,6 +214,16 @@ Log File             : C:\Logs\Microsoft-365\New-M365User_2026-11-10.log
 Final Status         : SUCCESS
 ================================================================================
 ```
+
+---
+
+## Screenshots & Examples
+
+### Standard Run
+![Standard Run](assets/Standard_run.jpg)
+
+### Creating User
+![Creating User](assets/Creating_user.jpg)
 
 ---
 
